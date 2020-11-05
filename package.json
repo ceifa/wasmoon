@@ -4,8 +4,8 @@
   "description": "There is nothing to see here",
   "main": "src/index.ts",
   "scripts": {
-    "test": "npm run build && node test",
-    "build": "./build.sh & tsc"
+    "test": "(./build.sh 0 & tsc) && node test",
+    "build": "./build.sh 3 & tsc"
   },
   "repository": {
     "type": "git",
