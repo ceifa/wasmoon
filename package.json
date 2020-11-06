@@ -1,6 +1,6 @@
 {
   "name": "wasmoon",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "There is nothing to see here",
   "main": "dist/index.js",
   "scripts": {
