@@ -2,7 +2,7 @@
 mkdir -p dist
 
 cd lua
-make MYLIBS= MYCFLAGS= CC="emcc -O$1 -s WASM=1 -o ../dist/lua.wasm"
+make MYLIBS= MYCFLAGS= CC="emcc -O$1 -s WASM=1"
 
 extension=$1
 if [ "$extension" == "3" ];
@@ -12,12 +12,14 @@ fi
 
 cd ..
 emcc -Ilua glue/main.c lua/liblua.a \
-    -s WASM=1 -O$1 -o dist/glue.js \
+    -s WASM=1 -O$1 -o src/glue/index.js \
     -s EXTRA_EXPORTED_RUNTIME_METHODS="['cwrap', 'addFunction']" \
     -s MODULARIZE=1 \
     -s ALLOW_TABLE_GROWTH \
     -s EXPORT_NAME="initWasmModule" \
     -s ALLOW_MEMORY_GROWTH=1 \
+    -s STRICT=1 \
+    -s MALLOC=emmalloc \
     -s EXPORTED_FUNCTIONS="[
         '_luaL_newstate', \
         '_luaL_openlibs', \

@@ -1,4 +1,4 @@
-const initialize: EmscriptenModuleFactory = require("./glue");
+import * as initialize from './glue/index.js';
 
 interface LuaEmscriptenModule extends EmscriptenModule {
     cwrap: typeof cwrap;
