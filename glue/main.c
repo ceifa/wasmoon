@@ -27,6 +27,16 @@ void clua_pop(lua_State *L, int idx)
     lua_pop(L, idx);
 }
 
+void clua_pushcfunction(lua_State *L, int (*func)(struct lua_State *))
+{
+    lua_pushcfunction(L, func);
+}
+
+void clua_newtable(lua_State *L)
+{
+    lua_newtable(L);
+}
+
 void clua_dump_stack(lua_State *L)
 {
     int top = lua_gettop(L);

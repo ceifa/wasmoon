@@ -2,6 +2,7 @@ const initialize: EmscriptenModuleFactory = require("./glue");
 
 interface LuaEmscriptenModule extends EmscriptenModule {
     cwrap: typeof cwrap;
+    addFunction: typeof addFunction;
 }
 
 export class LuaWasm {
@@ -47,6 +48,11 @@ export class LuaWasm {
     protected static lua_pushstring: (L: LuaState, string: string) => void;
     protected static lua_pushboolean: (L: LuaState, boolean: boolean) => void;
     protected static lua_setglobal: (L: LuaState, name: string) => void;
+    protected static clua_newtable: (L: LuaState) => void;
+    protected static lua_gettop: (L: LuaState) => number;
+    protected static lua_settable: (L: LuaState, idx: number) => void;
+    protected static lua_callk: (L: LuaState, nargs: number, nresults: number, ctx: number, func: number) => void;
+    protected static clua_pushcfunction: (L: LuaState, cfunction: number) => void;
     protected static lua_close: (L: LuaState) => void;
 
     private static bindWrappedFunctions() {
@@ -62,7 +68,7 @@ export class LuaWasm {
         LuaWasm.lua_type = LuaWasm.module.cwrap('lua_type', 'number', ['number', 'number'])
         LuaWasm.clua_pop = LuaWasm.module.cwrap('clua_pop', undefined, ['number', 'number'])
         LuaWasm.clua_dump_stack = LuaWasm.module.cwrap('clua_dump_stack', undefined, ['number'])
-        LuaWasm.lua_topointer = LuaWasm.module.cwrap('lua_topointer', 'number',  ['number', 'number']);
+        LuaWasm.lua_topointer = LuaWasm.module.cwrap('lua_topointer', 'number', ['number', 'number']);
         LuaWasm.lua_pushnil = LuaWasm.module.cwrap('lua_pushnil', undefined, ['number'])
         LuaWasm.lua_pushvalue = LuaWasm.module.cwrap('lua_pushvalue', undefined, ['number', 'number'])
         LuaWasm.lua_pushinteger = LuaWasm.module.cwrap('lua_pushinteger', undefined, ['number', 'number']);
@@ -70,6 +76,11 @@ export class LuaWasm {
         LuaWasm.lua_pushstring = LuaWasm.module.cwrap('lua_pushstring', undefined, ['number', 'string']);
         LuaWasm.lua_pushboolean = LuaWasm.module.cwrap('lua_pushboolean', undefined, ['number', 'boolean']);
         LuaWasm.lua_setglobal = LuaWasm.module.cwrap('lua_setglobal', undefined, ['number', 'string'])
+        LuaWasm.clua_newtable = LuaWasm.module.cwrap('clua_newtable', undefined, ['number'])
+        LuaWasm.lua_gettop = LuaWasm.module.cwrap('lua_gettop', 'number', ['number'])
+        LuaWasm.lua_settable = LuaWasm.module.cwrap('lua_settable', undefined, ['number', 'number'])
+        LuaWasm.lua_callk = LuaWasm.module.cwrap('lua_callk', undefined, ['number', 'number', 'number', 'number', 'number'])
+        LuaWasm.clua_pushcfunction = LuaWasm.module.cwrap('clua_pushcfunction', undefined, ['number', 'number'])
         LuaWasm.lua_close = LuaWasm.module.cwrap('lua_close', undefined, ['number']);
     }
 }

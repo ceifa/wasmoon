@@ -31,5 +31,10 @@ emcc -Ilua glue/main.c lua/liblua.a \
         '_lua_pushstring', \
         '_lua_pushboolean', \
         '_lua_setglobal', \
+        '_clua_newtable', \
+        '_lua_gettop', \
+        '_lua_settable', \
+        '_lua_callk', \
+        '_clua_pushcfunction', \
         '_lua_close' \
     ]"
