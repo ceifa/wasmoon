@@ -11,7 +11,12 @@ const { Lua } = require('../dist');
         return x + y;
     });
     state.doString(`
-        print(sum(10, 50))
+        print(sum(10, 50) == 60)
+        function sum2(x, y)
+            return x + y
+        end
     `);
+    const sum2 = state.getGlobal('sum2');
+    console.log(sum2(10, 50) === 60)
     state.close();
 })();

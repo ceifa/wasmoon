@@ -10,6 +10,7 @@ emcc -Ilua glue/main.c lua/liblua.a \
     -s MODULARIZE=1 \
     -s ALLOW_TABLE_GROWTH \
     -s EXPORT_NAME="initWasmModule" \
+    -s ALLOW_MEMORY_GROWTH=1 \
     -s EXPORTED_FUNCTIONS="[
         '_luaL_newstate', \
         '_luaL_openlibs', \
