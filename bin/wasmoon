@@ -1,13 +1,24 @@
 #!/usr/bin/env node
 const { Lua } = require('../dist');
 const fs = require('fs');
-const data = fs.readFileSync(0, 'utf-8');
-console.log(data);
+
+const snippets = process.argv.splice(2);
+let code;
+
+if (snippets.length === 2 && snippets[0] === '-f') {
+    code = fs.readFileSync(snippets[1], 'utf-8')
+} else {
+    code = fs.readFileSync(0, 'utf-8');
+}
 
 (async () => {
     await Lua.ensureInitialization();
     const lua = new Lua();
-    lua.registerStandardLib();
-    lua.doString(data);
-    lua.close();
+
+    try {
+        lua.registerStandardLib();
+        lua.doString(data);
+    } finally {
+        lua.close();
+    }
 })();
