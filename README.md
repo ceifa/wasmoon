@@ -5,16 +5,28 @@ This package aims to provide a way to:
 * Embed Lua to any Node.js, Deno and modern browsers.
 * Run lua code in any operational system
 
+## Installation
+
+#### Globally via `npm`
+
+```sh
+$: npm install -g wasmoon
+```
+This will install `wasmoon` globally so that it may be run from the command line anywhere.
+
+#### Running on-demand:
+
+Using `npx` you can run the script without installing it first:
+
+```sh
+$: npx wasmoon
+```
+
 ## CLI Usage
 Wasmoon by default reads and execute code from stdin, but you can force it to read from file passing the `-f` argument:
 
 ```sh
 $: wasmoon -f file.lua
-```
-
-Or using npx:
-```
-$: npx wasmoon -f file.lua
 ```
 
 ## Api documentation
