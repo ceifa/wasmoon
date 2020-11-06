@@ -1,7 +1,14 @@
+#!/bin/bash
 mkdir -p dist
 
 cd lua
 make MYLIBS= MYCFLAGS= CC="emcc -O$1 -s WASM=1 -o ../dist/lua.wasm"
+
+extension=$1
+if [ "$extension" == "3" ];
+then
+    extension="$extension --closure 1"
+fi
 
 cd ..
 emcc -Ilua glue/main.c lua/liblua.a \

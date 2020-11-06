@@ -1,7 +1,6 @@
-/glue
-/lua
-/src
-/test
-/build.sh
-/README.md
-/tsconfig.json
+glue
+lua
+test
+src
+tsconfig.json
+build.sh
