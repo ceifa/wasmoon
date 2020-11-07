@@ -1,3 +1,8 @@
+declare module "*.wasm" {
+	const value: string;
+	export default value;
+}
+
 type LuaState = number;
 
 const enum LuaReturn {

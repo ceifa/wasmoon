@@ -1,11 +1,12 @@
-import * as initialize from './glue/index.js';
+import * as initialize from './lua/glue.js';
+import wasmModule from './lua/glue.wasm';
 
 interface LuaEmscriptenModule extends EmscriptenModule {
     cwrap: typeof cwrap;
     addFunction: typeof addFunction;
 }
 
-export class LuaWasm {
+export default class LuaWasm {
     protected static module: LuaEmscriptenModule;
 
     constructor() {
@@ -16,7 +17,13 @@ export class LuaWasm {
         if (!LuaWasm.module) {
             LuaWasm.module = <LuaEmscriptenModule>await initialize({
                 print: console.log,
-                printErr: console.error
+                printErr: console.error,
+                locateFile(path) {
+                    if (path.endsWith('.wasm')) {
+                        return wasmModule;
+                    }
+                    return path;
+                }
             });
             LuaWasm.bindWrappedFunctions();
         }

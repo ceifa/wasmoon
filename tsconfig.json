@@ -1,11 +1,10 @@
 {
     "compilerOptions": {
-        "module": "UMD",
+        "module": "CommonJS",
         "outDir": "./dist",
         "removeComments": true,
         "declaration": true,
-        "sourceMap": true,
-        "allowJs": true
+        "sourceMap": true
     },
     "include": [
         "src/**/*"

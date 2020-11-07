@@ -1,5 +1,5 @@
 #!/bin/bash
-mkdir -p dist
+mkdir -p src/lua
 
 cd lua
 make MYLIBS= MYCFLAGS= CC="emcc -O$1 -s WASM=1"
@@ -8,11 +8,14 @@ extension=$1
 if [ "$extension" == "3" ];
 then
     extension="$extension --closure 1"
+elif [ "$extension" == "3" ];
+then
+    extension="$extension -s ASSERTIONS=1"
 fi
 
 cd ..
 emcc -Ilua glue/main.c lua/liblua.a \
-    -s WASM=1 -O$1 -o src/glue/index.js \
+    -s WASM=1 -O$1 -o src/lua/glue.js \
     -s EXTRA_EXPORTED_RUNTIME_METHODS="['cwrap', 'addFunction']" \
     -s MODULARIZE=1 \
     -s ALLOW_TABLE_GROWTH \
