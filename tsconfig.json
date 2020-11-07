@@ -1,10 +1,6 @@
 {
     "compilerOptions": {
-        "module": "CommonJS",
-        "outDir": "./dist",
-        "removeComments": true,
-        "declaration": true,
-        "sourceMap": true
+        "noImplicitAny": true
     },
     "include": [
         "src/**/*"

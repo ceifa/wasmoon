@@ -1,7 +1,7 @@
 
 var initWasmModule = (function() {
-  var _scriptDir = typeof document !== 'undefined' && document.currentScript ? document.currentScript.src : undefined;
-  if (typeof __filename !== 'undefined') _scriptDir = _scriptDir || __filename;
+  var _scriptDir = import.meta.url;
+  
   return (
 function(initWasmModule) {
   initWasmModule = initWasmModule || {};
@@ -13,10 +13,4 @@ null;var Module=typeof initWasmModule!=="undefined"?initWasmModule:{};var readyP
 }
 );
 })();
-if (typeof exports === 'object' && typeof module === 'object')
-      module.exports = initWasmModule;
-    else if (typeof define === 'function' && define['amd'])
-      define([], function() { return initWasmModule; });
-    else if (typeof exports === 'object')
-      exports["initWasmModule"] = initWasmModule;
-    
+export default initWasmModule;

@@ -22,6 +22,7 @@ emcc -Ilua glue/main.c lua/liblua.a \
     -s EXPORT_NAME="initWasmModule" \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s STRICT=1 \
+    -s EXPORT_ES6=1 \
     -s MALLOC=emmalloc \
     -s EXPORTED_FUNCTIONS="[
         '_luaL_newstate', \
