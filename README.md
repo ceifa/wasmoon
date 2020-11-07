@@ -2,7 +2,7 @@
 
 This package aims to provide a way to:
 
-* Embed Lua to any Node.js, Deno and modern browsers.
+* Embed Lua to any Node.js, Deno or Web Application.
 * Run lua code in any operational system
 
 ## Installation
@@ -57,4 +57,3 @@ try {
     state.close();
 }
 ```
-

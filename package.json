@@ -1,13 +1,13 @@
 {
   "name": "wasmoon",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "There is nothing to see here",
   "main": "dist/index.js",
   "scripts": {
     "build:wasm:dev": "./build.sh 0",
     "build:wasm": "./build.sh 3",
     "test": "rollup -c && node test",
-    "build": "rollup -c"
+    "build": "rollup -c & tsc -d --emitDeclarationOnly --declarationDir dist"
   },
   "bin": {
     "wasmoon": "bin/wasmoon"
