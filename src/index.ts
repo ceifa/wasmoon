@@ -1,4 +1,4 @@
-import { LuaWasm } from './luawasm'
+import LuaWasm from './luawasm'
 
 export class Lua extends LuaWasm {
     private L: LuaState;

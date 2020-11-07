@@ -1,11 +1,6 @@
 {
     "compilerOptions": {
-        "module": "UMD",
-        "noImplicitAny": true,
-        "outDir": "./dist",
-        "removeComments": true,
-        "declaration": true,
-        "sourceMap": true
+        "noImplicitAny": true
     },
     "include": [
         "src/**/*"
