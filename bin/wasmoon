@@ -17,7 +17,7 @@ if (snippets.length === 2 && snippets[0] === '-f') {
 
     try {
         lua.registerStandardLib();
-        lua.doString(data);
+        lua.doString(code);
     } finally {
         lua.close();
     }

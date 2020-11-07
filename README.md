@@ -29,7 +29,7 @@ Wasmoon by default reads and execute code from stdin, but you can force it to re
 $: wasmoon -f file.lua
 ```
 
-## Api documentation
+## API Usage
 To initialize wasmoon on your project:
 
 ```js
