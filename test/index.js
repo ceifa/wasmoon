@@ -6,17 +6,35 @@ const { Lua } = require('../dist');
     await Lua.ensureInitialization();
 
     const state = new Lua();
-    state.registerStandardLib();
-    state.setGlobal('sum', (x, y) => {
-        return x + y;
-    });
-    state.doString(`
-        print(sum(10, 50) == 60)
-        function sum2(x, y)
-            return x + y
-        end
-    `);
-    const sum2 = state.getGlobal('sum2');
-    console.log(sum2(10, 50) === 60)
-    state.close();
+
+    try {
+        state.registerStandardLib();
+        state.setGlobal('context', { user: 'teste', input: 'teste', channel: 'aadawdwa' })
+        state.setGlobal('send', (msg) => {
+            console.log(state.getGlobal('context'));
+            console.log(msg);
+        })
+        state.doString(`
+            send("oi")
+        `)
+
+        state.setGlobal('sum', (x, y) => {
+            return x + y;
+        });
+        state.doString(`
+            print(sum(10, 50) == 60)
+            function sum2(x, y)
+                return x + y
+            end
+        `);
+        const sum2 = state.getGlobal('sum2');
+        console.log(sum2(10, 50) === 60)
+
+        const circular = { x: 1 }
+        circular.c = circular
+        state.setGlobal('circular', circular)
+        console.log(state.getGlobal('circular'))
+    } finally {
+        state.close();
+    }
 })();

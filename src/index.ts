@@ -23,7 +23,7 @@ export class Lua extends LuaWasm {
 
     public getGlobal(name: string): any {
         const type = Lua.lua_getglobal(this.L, name);
-        return this.getValue(1, type);
+        return this.getValue(-1, type);
     }
 
     public setGlobal(name: string, value: any): void {
@@ -126,12 +126,12 @@ export class Lua extends LuaWasm {
         done[pointer] = table;
 
         Lua.lua_pushnil(this.L);
-        while (Lua.lua_next(this.L, idx)) {
-            const keyType = Lua.lua_type(this.L, idx + 1);
-            const key = this.getValue(idx + 1, keyType, done);
+        while (Lua.lua_next(this.L, idx - 1)) {
+            const keyType = Lua.lua_type(this.L, idx - 1);
+            const key = this.getValue(idx - 1, keyType, done);
 
-            const valueType = Lua.lua_type(this.L, idx + 2);
-            const value = this.getValue(idx + 2, valueType, done);
+            const valueType = Lua.lua_type(this.L, idx);
+            const value = this.getValue(idx, valueType, done);
 
             table[key] = value;
 
@@ -141,7 +141,7 @@ export class Lua extends LuaWasm {
         return table;
     }
 
-    private dumpStack(...logs: any[]) {
+    public dumpStack(...logs: any[]) {
         console.log(`Dumping Lua stack`, logs)
         Lua.clua_dump_stack(this.L);
     }
