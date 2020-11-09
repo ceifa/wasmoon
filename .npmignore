@@ -4,3 +4,4 @@ test
 src
 tsconfig.json
 build.sh
+rollup.config.js

@@ -1,13 +1,6 @@
-declare module "*.wasm" {
-	const value: string;
-	export default value;
-}
+export type LuaState = number;
 
-declare module "*.js";
-
-type LuaState = number;
-
-const enum LuaReturn {
+export const enum LuaReturn {
     Ok = 0,
     ErrorRun = 1,
     ErrorMem = 2,
@@ -16,9 +9,9 @@ const enum LuaReturn {
     Yield = 5
 }
 
-type AnyObject = { [key: string]: any };
+export type AnyObject = { [key: string]: any };
 
-const enum LuaType {
+export const enum LuaType {
     None = -1,
     Nil = 0,
     Boolean = 1,

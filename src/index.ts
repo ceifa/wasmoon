@@ -1,4 +1,5 @@
 import LuaWasm from './luawasm'
+import { AnyObject, LuaReturn, LuaState, LuaType } from './types.d.';
 
 export class Lua extends LuaWasm {
     private L: LuaState;

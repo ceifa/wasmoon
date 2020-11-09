@@ -1,5 +1,6 @@
 import initWasmModule from './lua/glue.js';
 import './lua/glue.wasm';
+import { LuaReturn, LuaState, LuaType } from './types.d..js';
 
 interface LuaEmscriptenModule extends EmscriptenModule {
     cwrap: typeof cwrap;
