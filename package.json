@@ -6,7 +6,8 @@
   "scripts": {
     "build:wasm:dev": "./build.sh 0",
     "build:wasm": "./build.sh 3",
-    "test": "rollup -c && node test",
+    "start": "rollup -c -w",
+    "test": "jest ./test",
     "build": "rollup -c & tsc -d --emitDeclarationOnly --declarationDir dist"
   },
   "bin": {
@@ -32,6 +33,7 @@
     "@rollup/plugin-typescript": "6.1.0",
     "@rollup/plugin-url": "5.0.1",
     "@types/node": "14.14.6",
+    "jest": "^26.6.3",
     "rollup": "2.33.1",
     "tslib": "2.0.3",
     "typescript": "4.0.5"
