@@ -13,12 +13,14 @@ export class Lua extends LuaWasm {
         Lua.luaL_openlibs(this.L);
     }
 
-    public doString(script: string) {
+    public doString(script: string): any {
         const result = Lua.clua_dostring(this.L, script);
         if (result !== LuaReturn.Ok) {
             const error = Lua.clua_tostring(this.L, -1)
             throw new Error('Lua error: ' + error)
         }
+        
+        return this.getValue(1);
     }
 
     public getGlobal(name: string): any {
@@ -90,6 +92,8 @@ export class Lua extends LuaWasm {
         type = type || Lua.lua_type(this.L, idx);
 
         switch (type) {
+            case LuaType.None:
+                return undefined;
             case LuaType.Nil:
                 return null;
             case LuaType.Number:
@@ -126,12 +130,17 @@ export class Lua extends LuaWasm {
         done[pointer] = table;
 
         Lua.lua_pushnil(this.L);
-        while (Lua.lua_next(this.L, idx - 1)) {
-            const keyType = Lua.lua_type(this.L, idx - 1);
-            const key = this.getValue(idx - 1, keyType, done);
+        
+        if (idx < 0) {
+            idx -= 1;
+        }
 
-            const valueType = Lua.lua_type(this.L, idx);
-            const value = this.getValue(idx, valueType, done);
+        while (Lua.lua_next(this.L, idx)) {
+            const keyType = Lua.lua_type(this.L, -2);
+            const key = this.getValue(-2, keyType, done);
+
+            const valueType = Lua.lua_type(this.L, -1);
+            const value = this.getValue(-1, valueType, done);
 
             table[key] = value;
 
