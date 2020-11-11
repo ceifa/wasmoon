@@ -11,7 +11,9 @@ export default class LuaWasm {
     protected static module: LuaEmscriptenModule;
 
     constructor() {
-        LuaWasm.throwIfUninitialized();
+        if (!LuaWasm.module) {
+            throw new Error(`Module is not initialized, did you forget to call 'ensureInitialization'?`);
+        }
     }
 
     public static async ensureInitialization(customName?: string) {
@@ -24,12 +26,6 @@ export default class LuaWasm {
                 }
             });
             LuaWasm.bindWrappedFunctions();
-        }
-    }
-
-    protected static throwIfUninitialized() {
-        if (!LuaWasm.module) {
-            throw new Error(`Module is not initialized, did you forget to call 'ensureInitialization'?`);
         }
     }
 
@@ -56,8 +52,11 @@ export default class LuaWasm {
     protected static clua_newtable: (L: LuaState) => void;
     protected static lua_gettop: (L: LuaState) => number;
     protected static lua_settable: (L: LuaState, idx: number) => void;
-    protected static lua_callk: (L: LuaState, nargs: number, nresults: number, ctx: number, func: number) => void;
+    protected static clua_call: (L: LuaState, nargs: number, nresults: number) => void;
     protected static clua_pushcfunction: (L: LuaState, cfunction: number) => void;
+    protected static luaL_ref: (L: LuaState, table: number) => number;
+    protected static luaL_unref: (L: LuaState, table: number, ref: number) => void;
+    protected static lua_rawgeti: (L: LuaState, idx: number, ref: number) => number;
     protected static lua_close: (L: LuaState) => void;
 
     private static bindWrappedFunctions() {
@@ -84,8 +83,11 @@ export default class LuaWasm {
         LuaWasm.clua_newtable = LuaWasm.module.cwrap('clua_newtable', undefined, ['number'])
         LuaWasm.lua_gettop = LuaWasm.module.cwrap('lua_gettop', 'number', ['number'])
         LuaWasm.lua_settable = LuaWasm.module.cwrap('lua_settable', undefined, ['number', 'number'])
-        LuaWasm.lua_callk = LuaWasm.module.cwrap('lua_callk', undefined, ['number', 'number', 'number', 'number', 'number'])
+        LuaWasm.clua_call = LuaWasm.module.cwrap('clua_call', undefined, ['number', 'number', 'number'])
         LuaWasm.clua_pushcfunction = LuaWasm.module.cwrap('clua_pushcfunction', undefined, ['number', 'number'])
+        LuaWasm.luaL_ref = LuaWasm.module.cwrap('luaL_ref', 'number', ['number', 'number']);
+        LuaWasm.luaL_unref = LuaWasm.module.cwrap('luaL_unref', undefined, ['number', 'number', 'number'])
+        LuaWasm.lua_rawgeti = LuaWasm.module.cwrap('lua_rawgeti', 'number', ['number', 'number', 'number'])
         LuaWasm.lua_close = LuaWasm.module.cwrap('lua_close', undefined, ['number']);
     }
 }

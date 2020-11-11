@@ -9,6 +9,9 @@ export const enum LuaReturn {
     Yield = 5
 }
 
+export const LUAI_MAXSTACK = 1000000;
+export const LUA_REGISTRYINDEX = -LUAI_MAXSTACK - 1000;
+
 export type AnyObject = { [key: string]: any };
 
 export const enum LuaType {

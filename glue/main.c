@@ -37,6 +37,11 @@ void clua_newtable(lua_State *L)
     lua_newtable(L);
 }
 
+void clua_call(lua_State *L, int nargs, int nresults)
+{
+    lua_call(L, nargs, nresults);
+}
+
 void clua_dump_stack(lua_State *L)
 {
     int top = lua_gettop(L);

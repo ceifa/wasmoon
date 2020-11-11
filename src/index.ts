@@ -1,7 +1,13 @@
 import LuaWasm from './luawasm'
-import { AnyObject, LuaReturn, LuaState, LuaType } from './types.d.';
+import { AnyObject, LuaReturn, LuaState, LuaType, LUA_REGISTRYINDEX } from './types.d.';
 
 export class Lua extends LuaWasm {
+    // Backward compatibility
+    private readonly functionRegistry = typeof FinalizationRegistry !== 'undefined' ?
+        new FinalizationRegistry(func => {
+            Lua.luaL_unref(this.L, LUA_REGISTRYINDEX, func);
+        }) : undefined;
+
     private L: LuaState;
 
     constructor() {
@@ -19,7 +25,7 @@ export class Lua extends LuaWasm {
             const error = Lua.clua_tostring(this.L, -1)
             throw new Error('Lua error: ' + error)
         }
-        
+
         return this.getValue(1);
     }
 
@@ -63,11 +69,20 @@ export class Lua extends LuaWasm {
             const table = Lua.lua_gettop(this.L);
             done[value] = table;
 
-            for (const key in value) {
-                this.pushValue(key);
-                this.pushValue(value[key], done);
+            if (Array.isArray(value)) {
+                for (let i = 0; i < value.length; i++) {
+                    this.pushValue(i + 1);
+                    this.pushValue(value[i], done);
 
-                Lua.lua_settable(this.L, table);
+                    Lua.lua_settable(this.L, table);
+                }
+            } else {
+                for (const key in value) {
+                    this.pushValue(key);
+                    this.pushValue(value[key], done);
+
+                    Lua.lua_settable(this.L, table);
+                }
             }
         } else if (type === 'function') {
             const pointer = Lua.module.addFunction((L: LuaState) => {
@@ -105,15 +120,26 @@ export class Lua extends LuaWasm {
             case LuaType.Table:
                 return this.getTableValue(idx, done);
             case LuaType.Function:
-                const func = Lua.lua_topointer(this.L, idx);
-                return (...args: any[]) => {
+                Lua.lua_pushvalue(this.L, idx);
+                const func = Lua.luaL_ref(this.L, LUA_REGISTRYINDEX);
+
+                const jsFunc = (...args: any[]) => {
+                    const type = Lua.lua_rawgeti(this.L, LUA_REGISTRYINDEX, func)
+                    if (type !== LuaType.Function) {
+                        throw new Error(`A function of type '${type}' was pushed, expected is ${LuaType.Function}`);
+                    }
+
                     for (const arg of args) {
                         this.pushValue(arg);
                     }
 
-                    Lua.lua_callk(this.L, args.length, 1, 0, func);
+                    Lua.clua_call(this.L, args.length, 1);
                     return this.getValue(-1)
                 }
+
+                this.functionRegistry?.register(jsFunc, func);
+
+                return jsFunc;
             default:
                 throw new Error(`The type '${type}' returned is not supported on JS`)
         }
@@ -130,9 +156,9 @@ export class Lua extends LuaWasm {
         done[pointer] = table;
 
         Lua.lua_pushnil(this.L);
-        
+
         if (idx < 0) {
-            idx -= 1;
+            idx--;
         }
 
         while (Lua.lua_next(this.L, idx)) {

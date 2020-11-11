@@ -48,7 +48,10 @@ emcc -Ilua glue/main.c lua/liblua.a \
         '_clua_newtable', \
         '_lua_gettop', \
         '_lua_settable', \
-        '_lua_callk', \
+        '_clua_call', \
         '_clua_pushcfunction', \
+        '_luaL_ref', \
+        '_luaL_unref', \
+        '_lua_rawgeti', \
         '_lua_close' \
     ]"
