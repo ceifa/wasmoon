@@ -9,6 +9,7 @@ export const enum LuaReturn {
     Yield = 5
 }
 
+export const LUA_MULTRET = -1;
 export const LUAI_MAXSTACK = 1000000;
 export const LUA_REGISTRYINDEX = -LUAI_MAXSTACK - 1000;
 

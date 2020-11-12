@@ -1,5 +1,7 @@
 import LuaWasm from './luawasm'
-import { AnyObject, LuaReturn, LuaState, LuaType, LUA_REGISTRYINDEX } from './types'
+import {
+    AnyObject, LuaReturn, LuaState, LuaType, LUA_MULTRET, LUA_REGISTRYINDEX
+} from './types'
 
 export class Lua extends LuaWasm {
     // Backward compatibility
@@ -37,6 +39,28 @@ export class Lua extends LuaWasm {
     public setGlobal(name: string, value: any): void {
         this.pushValue(value)
         Lua.lua_setglobal(this.L, name)
+    }
+
+    public callGlobal(name: string, ...args: any[]): any[] {
+        const type = Lua.lua_getglobal(this.L, name);
+        if (type !== LuaType.Function) {
+            throw new Error(`A function of type '${type}' was pushed, expected is ${LuaType.Function}`)
+        }
+
+        for (const arg of args) {
+            this.pushValue(arg);
+        }
+
+        Lua.clua_call(this.L, args.length, LUA_MULTRET);
+
+        const returns = Lua.lua_gettop(this.L)
+        const returnValues = [];
+
+        for (let i = 1; i <= returns; i++) {
+            returnValues.push(this.getValue(i));
+        }
+
+        return returnValues;
     }
 
     public mountFile(path: string, content: string | ArrayBufferView): void {

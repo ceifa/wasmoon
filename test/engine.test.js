@@ -91,3 +91,17 @@ test('call lua function from JS passing an array argument should succeed', async
 
     expect(sum([10, 50, 25])).toBe(85)
 })
+
+test('call a global function with multiple returns should succeed', async () => {
+    const engine = await getEngine()
+
+    engine.doString(`
+    function f(x,y)
+        return 1,x,y,"Hello World",{},function() end
+    end
+    `)
+
+    const returns = engine.callGlobal('f', 10, 25)
+    expect(returns).toHaveLength(6)
+    expect(returns).toEqual(expect.arrayContaining([1, 10, 25, "Hello World", {}]))
+})
