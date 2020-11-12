@@ -16,7 +16,7 @@ fi
 cd ..
 emcc -Ilua glue/main.c lua/liblua.a \
     -s WASM=1 -O$1 -o src/lua/glue.js \
-    -s EXTRA_EXPORTED_RUNTIME_METHODS="['cwrap', 'addFunction']" \
+    -s EXTRA_EXPORTED_RUNTIME_METHODS="['cwrap', 'addFunction', 'FS']" \
     -s MODULARIZE=1 \
     -s ALLOW_TABLE_GROWTH \
     -s EXPORT_NAME="initWasmModule" \

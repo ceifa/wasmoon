@@ -2,3 +2,4 @@
 /node_modules
 /lua/lua.wasm
 /package.lock
+package-lock.json

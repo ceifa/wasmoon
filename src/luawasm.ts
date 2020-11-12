@@ -5,6 +5,7 @@ import { LuaReturn, LuaState, LuaType } from './types.d..js';
 interface LuaEmscriptenModule extends EmscriptenModule {
     cwrap: typeof cwrap;
     addFunction: typeof addFunction;
+    FS: typeof FS;
 }
 
 export default class LuaWasm {

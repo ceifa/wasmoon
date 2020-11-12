@@ -39,6 +39,33 @@ export class Lua extends LuaWasm {
         Lua.lua_setglobal(this.L, name);
     }
 
+    public mountFile(path: string, content: string | ArrayBufferView): void {
+        const fileSep = path.lastIndexOf('/')
+        const file = path.substr(fileSep + 1)
+        const body = path.substr(0, path.length - file.length - 1)
+
+        if (body.length > 0) {
+            const parts = body.split('/').reverse();
+            let parent = '';
+
+            while (parts.length) {
+                const part = parts.pop();
+                if (!part) continue;
+
+                const current = parent + '/' + part;
+                try {
+                    Lua.module.FS.mkdir(current);
+                } catch (e) {
+                    // ignore EEXIST
+                }
+
+                parent = current;
+            }
+        }
+
+        Lua.module.FS.writeFile(path, content);
+    }
+
     public close(): void {
         Lua.lua_close(this.L);
     }
