@@ -1,7 +1,7 @@
 {
   "name": "wasmoon",
-  "version": "1.0.13",
-  "description": "There is nothing to see here",
+  "version": "1.0.14",
+  "description": "A real lua VM with JS bindings made with webassembly",
   "main": "dist/index.js",
   "scripts": {
     "build:wasm:dev": "./build.sh 0",
