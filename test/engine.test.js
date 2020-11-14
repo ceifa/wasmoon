@@ -75,6 +75,22 @@ test('scheduled lua calls should succeed', async () => {
     expect(engine.getGlobal('test')).toBe(10)
 })
 
+test('scheduled lua calls should fail silently if invalid', async () => {
+    const engine = await getEngine()
+    engine.setGlobal('setInterval', setInterval)
+
+    engine.doString(`
+    test = 0
+    setInterval(function()
+        test = test + 1
+    end, 100)
+    `)
+    jest.advanceTimersByTime(100 * 10)
+    engine.close()
+
+    expect(() => jest.advanceTimersByTime(100 * 10)).not.toThrow()
+})
+
 test('call lua function from JS passing an array argument should succeed', async () => {
     const engine = await getEngine()
     engine.registerStandardLib()

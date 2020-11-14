@@ -92,6 +92,7 @@ export class Lua extends LuaWasm {
 
     public close(): void {
         Lua.lua_close(this.L)
+        this.L = undefined
     }
 
     private pushValue(value: any, done: AnyObject = {}): void {
@@ -175,6 +176,11 @@ export class Lua extends LuaWasm {
                 const func = Lua.luaL_ref(this.L, LUA_REGISTRYINDEX)
 
                 const jsFunc = (...args: any[]) => {
+                    if (!this.L) {
+                        console.warn('Tried to call a function after closing lua state')
+                        return
+                    }
+
                     const type = Lua.lua_rawgeti(this.L, LUA_REGISTRYINDEX, func)
                     if (type !== LuaType.Function) {
                         throw new Error(`A function of type '${type}' was pushed, expected is ${LuaType.Function}`)
