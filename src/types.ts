@@ -1,4 +1,6 @@
-export type LuaState = number;
+export class Thread extends Number {}
+
+export type LuaState = Thread | number;
 
 export const enum LuaReturn {
     Ok = 0,

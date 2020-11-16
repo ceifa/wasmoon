@@ -32,18 +32,20 @@ emcc -Ilua glue/main.c lua/liblua.a \
         '_clua_tonumber', \
         '_clua_tostring', \
         '_lua_toboolean', \
+        '_lua_topointer', \
+        '_lua_tothread', \
         '_lua_gettable', \
         '_lua_next', \
         '_lua_type', \
         '_clua_pop', \
         '_clua_dump_stack', \
-        '_lua_topointer', \
         '_lua_pushnil', \
         '_lua_pushvalue', \
         '_lua_pushinteger', \
         '_lua_pushnumber', \
         '_lua_pushstring', \
         '_lua_pushboolean', \
+        '_lua_pushthread', \
         '_lua_setglobal', \
         '_clua_newtable', \
         '_lua_gettop', \

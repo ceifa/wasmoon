@@ -1,6 +1,6 @@
 import LuaWasm from './luawasm'
 import {
-    AnyObject, LuaReturn, LuaState, LuaType, LUA_MULTRET, LUA_REGISTRYINDEX
+    Thread, AnyObject, LuaReturn, LuaState, LuaType, LUA_MULTRET, LUA_REGISTRYINDEX
 } from './types'
 
 export class Lua extends LuaWasm {
@@ -15,6 +15,10 @@ export class Lua extends LuaWasm {
     constructor() {
         super()
         this.L = Lua.luaL_newstate()
+
+        if (!this.L) {
+            throw new Error("Lua state could not be created (probably due to lack of memory)")
+        }
     }
 
     public registerStandardLib() {
@@ -116,24 +120,28 @@ export class Lua extends LuaWasm {
         } else if (type === 'boolean') {
             Lua.lua_pushboolean(this.L, value)
         } else if (type === 'object') {
-            Lua.clua_newtable(this.L)
-
-            const table = Lua.lua_gettop(this.L)
-            done[value] = table
-
-            if (Array.isArray(value)) {
-                for (let i = 0; i < value.length; i++) {
-                    this.pushValue(i + 1)
-                    this.pushValue(value[i], done)
-
-                    Lua.lua_settable(this.L, table)
-                }
+            if (value instanceof Thread) {
+                Lua.lua_pushthread(value)
             } else {
-                for (const key in value) {
-                    this.pushValue(key)
-                    this.pushValue(value[key], done)
-
-                    Lua.lua_settable(this.L, table)
+                Lua.clua_newtable(this.L)
+    
+                const table = Lua.lua_gettop(this.L)
+                done[value] = table
+    
+                if (Array.isArray(value)) {
+                    for (let i = 0; i < value.length; i++) {
+                        this.pushValue(i + 1)
+                        this.pushValue(value[i], done)
+    
+                        Lua.lua_settable(this.L, table)
+                    }
+                } else {
+                    for (const key in value) {
+                        this.pushValue(key)
+                        this.pushValue(value[key], done)
+    
+                        Lua.lua_settable(this.L, table)
+                    }
                 }
             }
         } else if (type === 'function') {
@@ -197,6 +205,9 @@ export class Lua extends LuaWasm {
                 this.functionRegistry?.register(jsFunc, func)
 
                 return jsFunc
+            case LuaType.Thread:
+                const value = Lua.lua_tothread(this.L, idx)
+                return new Thread(value)
             default:
                 throw new Error(`The type '${type}' returned is not supported on JS`)
         }
@@ -238,3 +249,5 @@ export class Lua extends LuaWasm {
         Lua.clua_dump_stack(this.L)
     }
 }
+
+export { Thread }

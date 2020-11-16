@@ -1,5 +1,6 @@
 const { expect, test } = require('@jest/globals')
 const { getEngine } = require("./utils")
+const { Thread } = require('../dist')
 
 jest.useFakeTimers();
 
@@ -78,6 +79,7 @@ test('scheduled lua calls should succeed', async () => {
 test('scheduled lua calls should fail silently if invalid', async () => {
     const engine = await getEngine()
     engine.setGlobal('setInterval', setInterval)
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
 
     engine.doString(`
     test = 0
@@ -85,6 +87,7 @@ test('scheduled lua calls should fail silently if invalid', async () => {
         test = test + 1
     end, 100)
     `)
+    
     jest.advanceTimersByTime(100 * 10)
     engine.close()
 
@@ -120,4 +123,18 @@ test('call a global function with multiple returns should succeed', async () => 
     const returns = engine.callGlobal('f', 10, 25)
     expect(returns).toHaveLength(6)
     expect(returns).toEqual(expect.arrayContaining([1, 10, 25, "Hello World", {}]))
+})
+
+test('get a lua thread should succeed', async () => {
+    const engine = await getEngine()
+    engine.registerStandardLib()
+
+    const thread = engine.doString(`
+    return coroutine.create(function()
+        print("hey")
+    end)
+    `)
+
+    expect(thread).toBeInstanceOf(Thread)
+    expect(thread).not.toBe(0)
 })
