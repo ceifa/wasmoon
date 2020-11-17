@@ -138,3 +138,18 @@ test('get a lua thread should succeed', async () => {
     expect(thread).toBeInstanceOf(Thread)
     expect(thread).not.toBe(0)
 })
+
+test('call a JS function in a different thread should succeed', async () => {
+    const engine = await getEngine()
+    engine.registerStandardLib()
+    const sum = jest.fn((x, y) => x + y)
+    engine.setGlobal('sum', sum)
+
+    engine.doString(`
+    coroutine.resume(coroutine.create(function()
+        sum(10, 20)
+    end))
+    `)
+
+    expect(sum).toBeCalledWith(10, 20)
+})
