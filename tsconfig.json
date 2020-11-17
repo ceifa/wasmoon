@@ -1,6 +1,11 @@
 {
     "compilerOptions": {
-        "noImplicitAny": true
+        "noImplicitAny": true,
+        "target": "esnext",
+        "moduleResolution": "node",
+        "inlineSources": true,
+        "removeComments": true,
+        "sourceMap": true
     },
     "include": [
         "src/**/*"

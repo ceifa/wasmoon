@@ -14,10 +14,6 @@ export default {
             include: '**/*.wasm',
             fileName: '[name][extname]'
         }),
-        typescript({
-            inlineSources: true,
-            removeComments: true,
-            sourceMap: true
-        })
+        typescript()
     ]
 }
