@@ -29,3 +29,7 @@ export const enum LuaType {
     UserData = 7,
     Thread = 8
 }
+
+declare global {
+	var FinalizationRegistry: any;
+}

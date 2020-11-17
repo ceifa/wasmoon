@@ -1,7 +1,6 @@
 {
     "compilerOptions": {
         "noImplicitAny": true,
-        "target": "esnext",
         "moduleResolution": "node",
         "inlineSources": true,
         "removeComments": true,
