@@ -41,17 +41,17 @@ Create a new Lua state, register the standard library, set a global variable, ex
 
 ```js
 const state = new Lua();
+state.registerStandardLib();
 
 try {
-    state.registerStandardLib();
-    state.setGlobal('sum', (x, y) => x + y);
+    state.global.set('sum', (x, y) => x + y);
     state.doString(`
     print(sum(10, 10))
     function multiply(x, y)
         return x * y
     end
     `);
-    const multiply = state.getGlobal('multiply');
+    const multiply = state.global.get('multiply');
     console.log(multiply(10, 10))
 } finally {
     state.close();
