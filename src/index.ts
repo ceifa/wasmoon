@@ -1,2 +1,3 @@
 export { default as Lua } from './engine'
-export { Thread } from './types'
+export { default as Thread } from './thread'
+export { default as MultiReturn } from './multireturn'

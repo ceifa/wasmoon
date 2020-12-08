@@ -8,7 +8,7 @@ test('mount a file and require inside lua should succeed', async () => {
 
     engine.doString('require("test")')
 
-    expect(engine.getGlobal('answerToLifeTheUniverseAndEverything')).toBe(42)
+    expect(engine.global.get('answerToLifeTheUniverseAndEverything')).toBe(42)
 })
 
 test('mount a file in a complex directory and require inside lua should succeed', async () => {
