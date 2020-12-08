@@ -47,6 +47,7 @@ emcc -Ilua glue/main.c lua/liblua.a \
         '_lua_pushboolean', \
         '_lua_pushthread', \
         '_lua_setglobal', \
+        '_lua_setmetatable', \
         '_clua_newtable', \
         '_lua_gettop', \
         '_lua_settable', \

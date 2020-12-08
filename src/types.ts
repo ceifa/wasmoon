@@ -1,6 +1,4 @@
-export class Thread extends Number {}
-
-export type LuaState = Thread | number;
+export type LuaState = number
 
 export const enum LuaReturn {
     Ok = 0,
@@ -11,11 +9,11 @@ export const enum LuaReturn {
     Yield = 5
 }
 
-export const LUA_MULTRET = -1;
-export const LUAI_MAXSTACK = 1000000;
-export const LUA_REGISTRYINDEX = -LUAI_MAXSTACK - 1000;
+export const LUA_MULTRET = -1
+export const LUAI_MAXSTACK = 1000000
+export const LUA_REGISTRYINDEX = -LUAI_MAXSTACK - 1000
 
-export type AnyObject = { [key: string]: any };
+export type AnyObject = { [key: string]: any }
 
 export const enum LuaType {
     None = -1,
@@ -31,5 +29,5 @@ export const enum LuaType {
 }
 
 declare global {
-	var FinalizationRegistry: any;
+	var FinalizationRegistry: any
 }
