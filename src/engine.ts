@@ -23,9 +23,11 @@ export default class Lua {
     }
 
     public doString(script: string): any {
-        const result = LuaWasm.clua_dostring(this.global.address, script)
+        const result = LuaWasm.luaL_loadstring(this.global.address, script) ||
+            LuaWasm.lua_pcallk(this.global.address, 0, 1, 0, 0, undefined)
+
         if (result !== LuaReturn.Ok) {
-            const error = LuaWasm.clua_tostring(this.global.address, -1)
+            const error = LuaWasm.lua_tolstring(this.global.address, -1, undefined)
             throw new Error('Lua error: ' + error)
         }
 

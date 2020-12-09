@@ -29,10 +29,10 @@ export default class Thread {
         return this.getValue(-1, type)
     }
 
-    public set(name: string, value: any, options?: { metatable: number | string | object }): void {
+    public set(name: string, value: any, options: Partial<{ metatable: number | string | object }> = {}): void {
         this.pushValue(value)
 
-        if (options?.metatable) {
+        if (options.metatable) {
             if (typeof options.metatable === 'object') {
                 this.pushValue(options.metatable)
             } else if (typeof options.metatable === 'string') {
@@ -57,23 +57,23 @@ export default class Thread {
             this.pushValue(arg)
         }
 
-        LuaWasm.clua_call(this.address, args.length, LUA_MULTRET)
+        LuaWasm.lua_callk(this.address, args.length, LUA_MULTRET, 0, undefined)
 
-        const returns = LuaWasm.lua_gettop(this.address)
+        const returns = LuaWasm.lua_gettop(this.address) - 1
         const returnValues = new MultiReturn(returns)
 
-        for (let i = 1; i <= returns; i++) {
-            returnValues[i - 1] = this.getValue(i)
+        for (let i = 0; i < returns; i++) {
+            returnValues[i] = this.getValue(i + 1)
         }
 
         return returnValues
     }
 
-    public pushValue(value: any, done: AnyObject = {}): void {
+    public pushValue(value: any, options: Partial<{ _done?: AnyObject }> = {}): void {
         const type = typeof value
 
-        if (done[value]) {
-            LuaWasm.lua_pushvalue(this.address, done[value])
+        if (options?._done?.[value]) {
+            LuaWasm.lua_pushvalue(this.address, options._done[value])
             return
         }
 
@@ -93,22 +93,26 @@ export default class Thread {
             if (value instanceof Thread) {
                 LuaWasm.lua_pushthread(value.address)
             } else {
-                LuaWasm.clua_newtable(this.address)
+                const table = LuaWasm.lua_gettop(this.address) + 1
 
-                const table = LuaWasm.lua_gettop(this.address)
-                done[value] = table
+                options._done ??= {}
+                options._done[value] = table
 
                 if (Array.isArray(value)) {
+                    LuaWasm.lua_createtable(this.address, value.length, 0)
+
                     for (let i = 0; i < value.length; i++) {
                         this.pushValue(i + 1)
-                        this.pushValue(value[i], done)
+                        this.pushValue(value[i], { _done: options._done })
 
                         LuaWasm.lua_settable(this.address, table)
                     }
                 } else {
+                    LuaWasm.lua_createtable(this.address, 0, Object.getOwnPropertyNames(value).length)
+
                     for (const key in value) {
                         this.pushValue(key)
-                        this.pushValue(value[key], done)
+                        this.pushValue(value[key], { _done: options._done })
 
                         LuaWasm.lua_settable(this.address, table)
                     }
@@ -137,13 +141,21 @@ export default class Thread {
                     return 1
                 }
             }, 'ii')
-            LuaWasm.clua_pushcfunction(this.address, pointer)
+            LuaWasm.lua_pushcclosure(this.address, pointer, 0)
         } else {
             throw new Error(`The type '${type}' is not supported by Lua`)
         }
     }
 
-    public getValue(idx: number, type: LuaType = undefined, done: { [key: number]: AnyObject } = {}): any {
+    public getValue(
+        idx: number,
+        type: LuaType = undefined,
+        options: Partial<{
+            raw: boolean,
+            _done: AnyObject
+        }> = {}
+    ): any {
+    
         type = type || LuaWasm.lua_type(this.address, idx)
 
         switch (type) {
@@ -152,53 +164,69 @@ export default class Thread {
             case LuaType.Nil:
                 return null
             case LuaType.Number:
-                return LuaWasm.clua_tonumber(this.address, idx)
+                return LuaWasm.lua_tonumberx(this.address, idx, undefined)
             case LuaType.String:
-                return LuaWasm.clua_tostring(this.address, idx)
+                return LuaWasm.lua_tolstring(this.address, idx, undefined)
             case LuaType.Boolean:
                 return LuaWasm.lua_toboolean(this.address, idx)
             case LuaType.Table:
-                return this.getTableValue(idx, done)
+                return this.getTableValue(idx, options?._done)
             case LuaType.Function:
-                LuaWasm.lua_pushvalue(this.address, idx)
-                const func = LuaWasm.luaL_ref(this.address, LUA_REGISTRYINDEX)
-
-                const jsFunc = (...args: any[]) => {
-                    if (this.closed) {
-                        console.warn('Tried to call a function after closing lua state')
-                        return
+                if (options.raw) {
+                    LuaWasm.lua_topointer(this.address, idx)
+                } else {
+                    LuaWasm.lua_pushvalue(this.address, idx)
+                    const func = LuaWasm.luaL_ref(this.address, LUA_REGISTRYINDEX)
+    
+                    const jsFunc = (...args: any[]) => {
+                        if (this.closed) {
+                            console.warn('Tried to call a function after closing lua state')
+                            return
+                        }
+    
+                        const type = LuaWasm.lua_rawgeti(this.address, LUA_REGISTRYINDEX, func)
+                        if (type !== LuaType.Function) {
+                            throw new Error(`A function of type '${type}' was pushed, expected is ${LuaType.Function}`)
+                        }
+    
+                        for (const arg of args) {
+                            this.pushValue(arg)
+                        }
+    
+                        LuaWasm.lua_callk(this.address, args.length, 1, 0, undefined)
+                        return this.getValue(-1)
                     }
-
-                    const type = LuaWasm.lua_rawgeti(this.address, LUA_REGISTRYINDEX, func)
-                    if (type !== LuaType.Function) {
-                        throw new Error(`A function of type '${type}' was pushed, expected is ${LuaType.Function}`)
-                    }
-
-                    for (const arg of args) {
-                        this.pushValue(arg)
-                    }
-
-                    LuaWasm.clua_call(this.address, args.length, 1)
-                    return this.getValue(-1)
+    
+                    this.functionRegistry?.register(jsFunc, func)
+    
+                    return jsFunc
                 }
-
-                this.functionRegistry?.register(jsFunc, func)
-
-                return jsFunc
             case LuaType.Thread:
                 const value = LuaWasm.lua_tothread(this.address, idx)
-                return this.stateToThread(value)
+                if (options.raw) {
+                    return value
+                } else {
+                    return this.stateToThread(value)
+                }
             default:
-                throw new Error(`The type '${type}' returned is not supported on JS`)
+                console.warn(`The type '${LuaWasm.lua_typename(this.address, type)}' returned is not supported on JS`)
+                return LuaWasm.lua_topointer(this.address, idx)
         }
     }
 
-    public dumpStack() {
-        console.log(`Dumping Lua stack`)
-        LuaWasm.clua_dump_stack(this.address)
+    public dumpStack(log = console.log) {
+        const top = LuaWasm.lua_gettop(this.address)
+
+        for (let i = 1; i <= top; i++) {
+            const type = LuaWasm.lua_type(this.address, i)
+            const value = this.getValue(i, type, { raw: true })
+
+            const typename = LuaWasm.lua_typename(this.address, type)
+            log(i, typename, value)
+        }
     }
 
-    private getTableValue(idx: number, done: { [key: number]: AnyObject } = {}) {
+    private getTableValue(idx: number, done: AnyObject = {}) {
         let table: AnyObject = {}
 
         const pointer = LuaWasm.lua_topointer(this.address, idx)
@@ -216,14 +244,14 @@ export default class Thread {
 
         while (LuaWasm.lua_next(this.address, idx)) {
             const keyType = LuaWasm.lua_type(this.address, -2)
-            const key = this.getValue(-2, keyType, done)
+            const key = this.getValue(-2, keyType, { _done: done })
 
             const valueType = LuaWasm.lua_type(this.address, -1)
-            const value = this.getValue(-1, valueType, done)
+            const value = this.getValue(-1, valueType, { _done: done })
 
             table[key] = value
 
-            LuaWasm.clua_pop(this.address, 1)
+            LuaWasm.lua_settop(this.address, -1 - 1)
         }
 
         return table

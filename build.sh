@@ -14,7 +14,7 @@ then
 fi
 
 cd ..
-emcc -Ilua glue/main.c lua/liblua.a \
+emcc -Ilua lua/liblua.a \
     -s WASM=1 -O$1 -o src/lua/glue.js \
     -s EXTRA_EXPORTED_RUNTIME_METHODS="['cwrap', 'addFunction', 'FS']" \
     -s MODULARIZE=1 \
@@ -27,18 +27,17 @@ emcc -Ilua glue/main.c lua/liblua.a \
     -s EXPORTED_FUNCTIONS="[
         '_luaL_newstate', \
         '_luaL_openlibs', \
-        '_clua_dostring', \
+        '_luaL_loadstring', \
         '_lua_getglobal', \
-        '_clua_tonumber', \
-        '_clua_tostring', \
+        '_lua_tonumberx', \
+        '_lua_tolstring', \
         '_lua_toboolean', \
         '_lua_topointer', \
         '_lua_tothread', \
         '_lua_gettable', \
         '_lua_next', \
         '_lua_type', \
-        '_clua_pop', \
-        '_clua_dump_stack', \
+        '_lua_settop', \
         '_lua_pushnil', \
         '_lua_pushvalue', \
         '_lua_pushinteger', \
@@ -48,13 +47,15 @@ emcc -Ilua glue/main.c lua/liblua.a \
         '_lua_pushthread', \
         '_lua_setglobal', \
         '_lua_setmetatable', \
-        '_clua_newtable', \
+        '_lua_createtable', \
         '_lua_gettop', \
         '_lua_settable', \
-        '_clua_call', \
-        '_clua_pushcfunction', \
+        '_lua_callk', \
+        '_lua_pcallk', \
+        '_lua_pushcclosure', \
         '_luaL_ref', \
         '_luaL_unref', \
         '_lua_rawgeti', \
+        '_lua_typename', \
         '_lua_close' \
     ]"
