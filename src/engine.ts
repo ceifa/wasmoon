@@ -1,36 +1,28 @@
 import Global from './global'
-import LuaWasm from './luawasm'
 import { LuaReturn } from './types'
+import LuaWasm from './luawasm'
 
 export default class Lua {
     public global: Global
 
-    constructor(openStandardLibs: boolean = true) {
-        if (!LuaWasm.module) {
-            throw new Error(`Module is not initialized, did you forget to call 'ensureInitialization'?`)
-        }
-
-        this.global = new Global(LuaWasm.luaL_newstate())
+    constructor(private module: LuaWasm, openStandardLibs: boolean) {
+        this.global = new Global(this.module, this.module.luaL_newstate())
 
         if (this.global.isClosed()) {
             throw new Error("Lua state could not be created (probably due to lack of memory)")
         }
 
         if (openStandardLibs) {
-            LuaWasm.luaL_openlibs(this.global.address)
+            this.module.luaL_openlibs(this.global.address)
         }
     }
 
     public doString(script: string): any {
-        const result = LuaWasm.luaL_loadstring(this.global.address, script) ||
-            LuaWasm.lua_pcallk(this.global.address, 0, 1, 0, 0, undefined)
+        return this.callByteCode(() => this.module.luaL_loadstring(this.global.address, script))
+    }
 
-        if (result !== LuaReturn.Ok) {
-            const error = LuaWasm.lua_tolstring(this.global.address, -1, undefined)
-            throw new Error('Lua error: ' + error)
-        }
-
-        return this.global.getValue(1)
+    public doFile(filename: string): any {
+        return this.callByteCode(() => this.module.luaL_loadfilex(this.global.address, filename, undefined))
     }
 
     public mountFile(path: string, content: string | ArrayBufferView): void {
@@ -48,7 +40,7 @@ export default class Lua {
 
                 const current = parent + '/' + part
                 try {
-                    LuaWasm.module.FS.mkdir(current)
+                    this.module.module.FS.mkdir(current)
                 } catch (e) {
                     // ignore EEXIST
                 }
@@ -57,8 +49,18 @@ export default class Lua {
             }
         }
 
-        LuaWasm.module.FS.writeFile(path, content)
+        this.module.module.FS.writeFile(path, content)
     }
 
-    public static ensureInitialization =  LuaWasm.ensureInitialization
+    private callByteCode(loader: () => LuaReturn) {
+        const result = loader() ||
+            this.module.lua_pcallk(this.global.address, 0, 1, 0, 0, undefined)
+
+        if (result !== LuaReturn.Ok) {
+            const error = this.module.lua_tolstring(this.global.address, -1, undefined)
+            throw new Error(`Lua error(${result}): ${error}`)
+        }
+
+        return this.global.getValue(1)
+    }
 }

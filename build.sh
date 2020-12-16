@@ -28,6 +28,7 @@ emcc -Ilua lua/liblua.a \
         '_luaL_newstate', \
         '_luaL_openlibs', \
         '_luaL_loadstring', \
+        '_luaL_loadfilex', \
         '_lua_getglobal', \
         '_lua_tonumberx', \
         '_lua_tolstring', \

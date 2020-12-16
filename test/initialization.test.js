@@ -1,20 +1,8 @@
 const { expect, test } = require('@jest/globals')
-const { Lua } = require('../dist')
+const { LuaFactory } = require('../dist')
 
-test('create engine without initialize should throw', () => {
-    expect(() => new Lua()).toThrow()
-})
-
-test('create engine without awaiting initialize should throw', () => {
-    expect(() => {
-        Lua.ensureInitialization()
-        new Lua()
-    }).toThrow()
-})
-
-test('create engine after initialize should succeed', () => {
+test('create engine should succeed', () => {
     expect(async () => {
-        await Lua.ensureInitialization()
-        new Lua()
+        await new LuaFactory().createEngine()
     }).not.toThrow()
 })
