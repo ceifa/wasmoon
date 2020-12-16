@@ -41,7 +41,6 @@ Create a new Lua state, register the standard library, set a global variable, ex
 
 ```js
 const state = new Lua();
-state.registerStandardLib();
 
 try {
     state.global.set('sum', (x, y) => x + y);

@@ -5,21 +5,20 @@ import { LuaReturn } from './types'
 export default class Lua {
     public global: Global
 
-    constructor() {
+    constructor(openStandardLibs: boolean = true) {
         if (!LuaWasm.module) {
             throw new Error(`Module is not initialized, did you forget to call 'ensureInitialization'?`)
         }
 
         this.global = new Global(LuaWasm.luaL_newstate())
 
-
         if (this.global.isClosed()) {
             throw new Error("Lua state could not be created (probably due to lack of memory)")
         }
-    }
 
-    public registerStandardLib() {
-        LuaWasm.luaL_openlibs(this.global.address)
+        if (openStandardLibs) {
+            LuaWasm.luaL_openlibs(this.global.address)
+        }
     }
 
     public doString(script: string): any {

@@ -3,7 +3,6 @@ const { getEngine } = require("./utils")
 
 test('mount a file and require inside lua should succeed', async () => {
     const engine = await getEngine()
-    engine.registerStandardLib()
     engine.mountFile('test.lua', 'answerToLifeTheUniverseAndEverything = 42')
 
     engine.doString('require("test")')
@@ -13,7 +12,6 @@ test('mount a file and require inside lua should succeed', async () => {
 
 test('mount a file in a complex directory and require inside lua should succeed', async () => {
     const engine = await getEngine()
-    engine.registerStandardLib()
     engine.mountFile('yolo/sofancy/test.lua', 'return 42')
 
     const value = engine.doString('return require("yolo/sofancy/test")')
@@ -23,7 +21,6 @@ test('mount a file in a complex directory and require inside lua should succeed'
 
 test('mount a init file and require the module inside lua should succeed', async () => {
     const engine = await getEngine()
-    engine.registerStandardLib()
     engine.mountFile('hello/init.lua', 'return 42')
 
     const value = engine.doString('return require("hello")')
@@ -33,7 +30,6 @@ test('mount a init file and require the module inside lua should succeed', async
 
 test('require a file which is not mounted should throw', async () => {
     const engine = await getEngine()
-    engine.registerStandardLib()
 
     expect(() => {
         engine.doString('require("nothing")')
