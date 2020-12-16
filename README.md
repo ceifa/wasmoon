@@ -49,6 +49,6 @@ try {
     const multiply = lua.global.get('multiply');
     console.log(multiply(10, 10))
 } finally {
-    lua.close();
+    lua.global.close();
 }
 ```
