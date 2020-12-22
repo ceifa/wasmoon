@@ -2,11 +2,12 @@ export type LuaState = number
 
 export const enum LuaReturn {
     Ok = 0,
-    ErrorRun = 1,
-    ErrorMem = 2,
-    ErrorErr = 3,
-    ErrorSyntax = 4,
-    Yield = 5
+    Yield = 1,
+    ErrorRun = 2,
+    ErrorSyntax = 3,
+    ErrorMem = 4,
+    ErrorErr = 5,
+    ErrorFile = 6
 }
 
 export const LUA_MULTRET = -1

@@ -96,7 +96,6 @@ test('scheduled lua calls should fail silently if invalid', async () => {
 
 test('call lua function from JS passing an array argument should succeed', async () => {
     const engine = await getEngine()
-    engine.registerStandardLib()
 
     const sum = engine.doString(`
     return function(arr)
@@ -127,7 +126,6 @@ test('call a global function with multiple returns should succeed', async () => 
 
 test('get a lua thread should succeed', async () => {
     const engine = await getEngine()
-    engine.registerStandardLib()
 
     const thread = engine.doString(`
     return coroutine.create(function()
@@ -141,7 +139,6 @@ test('get a lua thread should succeed', async () => {
 
 test('call a JS function in a different thread should succeed', async () => {
     const engine = await getEngine()
-    engine.registerStandardLib()
     const sum = jest.fn((x, y) => x + y)
     engine.global.set('sum', sum)
 

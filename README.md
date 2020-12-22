@@ -30,30 +30,25 @@ $: wasmoon -f file.lua
 ```
 
 ## API Usage
-To initialize wasmoon on your project:
+
+To initialize, create a new Lua state, register the standard library, set a global variable, execute a code and get a global variable:
 
 ```js
 const { Lua } = require('wasmoon')
-await Lua.ensureInitialization()
-```
 
-Create a new Lua state, register the standard library, set a global variable, execute a code and get a global variable:
-
-```js
-const state = new Lua();
-state.registerStandardLib();
+const lua = await new LuaFactory().createEngine();
 
 try {
-    state.global.set('sum', (x, y) => x + y);
-    state.doString(`
+    lua.global.set('sum', (x, y) => x + y);
+    lua.doString(`
     print(sum(10, 10))
     function multiply(x, y)
         return x * y
     end
     `);
-    const multiply = state.global.get('multiply');
+    const multiply = lua.global.get('multiply');
     console.log(multiply(10, 10))
 } finally {
-    state.close();
+    lua.global.close();
 }
 ```

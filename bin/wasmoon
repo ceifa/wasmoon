@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const { Lua } = require('../dist');
+const { LuaFactory } = require('../dist');
 const fs = require('fs');
 
 const snippets = process.argv.splice(2);
@@ -12,13 +12,11 @@ if (snippets.length === 2 && snippets[0] === '-f') {
 }
 
 (async () => {
-    await Lua.ensureInitialization();
-    const lua = new Lua();
+    const lua = await new LuaFactory().createEngine();
 
     try {
-        lua.registerStandardLib();
         lua.doString(code);
     } finally {
-        lua.close();
+        lua.global.close();
     }
 })();
