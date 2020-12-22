@@ -168,7 +168,7 @@ export default class Thread {
             case LuaType.String:
                 return this.module.lua_tolstring(this.address, idx, undefined)
             case LuaType.Boolean:
-                return this.module.lua_toboolean(this.address, idx)
+                return Boolean(this.module.lua_toboolean(this.address, idx))
             case LuaType.Table:
                 return this.getTableValue(idx, options?._done)
             case LuaType.Function:
