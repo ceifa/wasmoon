@@ -34,7 +34,7 @@ $: wasmoon -f file.lua
 To initialize, create a new Lua state, register the standard library, set a global variable, execute a code and get a global variable:
 
 ```js
-const { Lua } = require('wasmoon')
+const { LuaFactory } = require('wasmoon')
 
 const lua = await new LuaFactory().createEngine();
 
