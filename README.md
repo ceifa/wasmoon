@@ -61,7 +61,7 @@ try {
 }
 ```
 
-## Fixing common web environment errors
+## Fixing common errors on web environment
 
 Bundle/require errors can happen because wasmoon tries to safely import some node modules even in a browser environment, the bundler is not prepared to that since it tries to statically resolve everything on build time.
 Polyfilling these modules is not the right solution because they are not actually being used, you just have to ignore them:
@@ -95,5 +95,22 @@ export default {
     plugins: [
         ignore(["path", "fs", "child_process", "crypto", "url"])
     ]
+}
+```
+
+### Angular
+
+Add the section browser on `package.json`:
+
+```json
+{
+    "main": "src/index.js",
+    "browser": {
+        "child_process": false,
+        "fs": false,
+        "path": false,
+        "crypto": false,
+        "url": false
+    }
 }
 ```
