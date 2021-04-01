@@ -1,2 +1,1 @@
-export default class MultiReturn extends Array {
-}
+export default class MultiReturn extends Array { }

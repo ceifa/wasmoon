@@ -6,10 +6,10 @@ export default class LuaFactory {
 
     constructor(private customWasmUri: string = undefined) {
         if (this.customWasmUri === undefined) {
-            const isBrowser = typeof window !== 'undefined' && typeof window.document !== 'undefined';
+            const isBrowser = typeof window !== 'undefined' && typeof window.document !== 'undefined'
 
             if (isBrowser) {
-                this.customWasmUri = 'http://unpkg.com/wasmoon/dist/glue.wasm';
+                this.customWasmUri = 'http://unpkg.com/wasmoon/dist/glue.wasm'
             }
         }
     }

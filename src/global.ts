@@ -3,13 +3,13 @@ import LuaWasm from "./luawasm"
 import { LuaState } from "./types"
 
 export default class Global extends Thread {    
-    constructor(module: LuaWasm, address: LuaState) {
-        super(module, address, undefined)
+    constructor(cmodule: LuaWasm, address: LuaState) {
+        super(cmodule, address, undefined)
     }
 
     public close() {
         this.closed = true
-        this.module.lua_close(this.address)
+        this.cmodule.lua_close(this.address)
     }
 
     public isClosed() {

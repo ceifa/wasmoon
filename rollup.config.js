@@ -1,5 +1,5 @@
-import typescript from '@rollup/plugin-typescript';
-import url from '@rollup/plugin-url';
+import typescript from '@rollup/plugin-typescript'
+import url from '@rollup/plugin-url'
 
 export default {
     input: './src/index.ts',

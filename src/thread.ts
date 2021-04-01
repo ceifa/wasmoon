@@ -1,23 +1,25 @@
 import {
-    AnyObject, LuaState, LuaType, LUA_MULTRET, LUA_REGISTRYINDEX
+    LuaState, LuaType, LUA_MULTRET, LUA_REGISTRYINDEX
 } from './types'
 import LuaWasm from './luawasm'
 import Global from './global'
 import MultiReturn from './multireturn'
+import { Pointer } from './pointer'
+import { Decoration } from './decoration'
 
 export default class Thread {
     // Backward compatibility
     private readonly functionRegistry = typeof FinalizationRegistry !== 'undefined' ?
         new FinalizationRegistry((func: number) => {
             if (!this.closed) {
-                this.module.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
+                this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
             }
         }) : undefined
 
     private global: Global | this
     protected closed: boolean = false
 
-    constructor(protected module: LuaWasm, address: number, global: Global) {
+    constructor(protected cmodule: LuaWasm, address: number, global: Global) {
         this.address = address
         this.global = global ?? this
     }
@@ -25,30 +27,17 @@ export default class Thread {
     public readonly address: LuaState = 0
 
     public get(name: string): any {
-        const type = this.module.lua_getglobal(this.address, name)
+        const type = this.cmodule.lua_getglobal(this.address, name)
         return this.getValue(-1, type)
     }
 
-    public set(name: string, value: any, options: Partial<{ metatable: number | string | object }> = {}): void {
+    public set(name: string, value: any): void {
         this.pushValue(value)
-
-        if (options.metatable) {
-            if (typeof options.metatable === 'object') {
-                this.pushValue(options.metatable)
-            } else if (typeof options.metatable === 'string') {
-                this.module.lua_getglobal(this.address, options.metatable)
-            } else if (typeof options.metatable === 'number') {
-                this.module.lua_pushvalue(this.address, options.metatable)
-            }
-
-            this.module.lua_setmetatable(this.address, -2)
-        }
-
-        this.module.lua_setglobal(this.address, name)
+        this.cmodule.lua_setglobal(this.address, name)
     }
 
     public call(name: string, ...args: any[]): any[] {
-        const type = this.module.lua_getglobal(this.address, name)
+        const type = this.cmodule.lua_getglobal(this.address, name)
         if (type !== LuaType.Function) {
             throw new Error(`A function of type '${type}' was pushed, expected is ${LuaType.Function}`)
         }
@@ -57,9 +46,9 @@ export default class Thread {
             this.pushValue(arg)
         }
 
-        this.module.lua_callk(this.address, args.length, LUA_MULTRET, 0, undefined)
+        this.cmodule.lua_callk(this.address, args.length, LUA_MULTRET, 0, undefined)
 
-        const returns = this.module.lua_gettop(this.address) - 1
+        const returns = this.cmodule.lua_gettop(this.address) - 1
         const returnValues = new MultiReturn(returns)
 
         for (let i = 0; i < returns; i++) {
@@ -69,66 +58,73 @@ export default class Thread {
         return returnValues
     }
 
-    public pushValue(value: any, options: Partial<{ _done?: AnyObject }> = {}): void {
-        const type = typeof value
+    public pushValue(value: any, options: Partial<{ _done?: Record<string, number> }> = {}): void {
+        const { value: target, decorations } = this.getValueDecorations(value)
 
-        if (options?._done?.[value]) {
-            this.module.lua_pushvalue(this.address, options._done[value])
+        const type = typeof target
+
+        if (options?._done?.[target]) {
+            this.cmodule.lua_pushvalue(this.address, options._done[target])
             return
         }
 
-        if (type === 'undefined' || value === null) {
-            this.module.lua_pushnil(this.address)
+        if (type === 'undefined' || target === null) {
+            this.cmodule.lua_pushnil(this.address)
         } else if (type === 'number') {
-            if (Number.isInteger(value)) {
-                this.module.lua_pushinteger(this.address, value)
+            if (Number.isInteger(target)) {
+                this.cmodule.lua_pushinteger(this.address, target)
             } else {
-                this.module.lua_pushnumber(this.address, value)
+                this.cmodule.lua_pushnumber(this.address, target)
             }
         } else if (type === 'string') {
-            this.module.lua_pushstring(this.address, value)
+            this.cmodule.lua_pushstring(this.address, target)
         } else if (type === 'boolean') {
-            this.module.lua_pushboolean(this.address, value)
+            this.cmodule.lua_pushboolean(this.address, target)
         } else if (type === 'object') {
-            if (value instanceof Thread) {
-                this.module.lua_pushthread(value.address)
+            if (target instanceof Thread) {
+                this.cmodule.lua_pushthread(target.address)
             } else {
-                const table = this.module.lua_gettop(this.address) + 1
+                const table = this.cmodule.lua_gettop(this.address) + 1
 
                 options._done ??= {}
-                options._done[value] = table
+                options._done[target] = table
 
-                if (Array.isArray(value)) {
-                    this.module.lua_createtable(this.address, value.length, 0)
+                if (Array.isArray(target)) {
+                    this.cmodule.lua_createtable(this.address, target.length, 0)
 
-                    for (let i = 0; i < value.length; i++) {
+                    for (let i = 0; i < target.length; i++) {
                         this.pushValue(i + 1)
-                        this.pushValue(value[i], { _done: options._done })
+                        this.pushValue(target[i], { _done: options._done })
 
-                        this.module.lua_settable(this.address, table)
+                        this.cmodule.lua_settable(this.address, table)
                     }
                 } else {
-                    this.module.lua_createtable(this.address, 0, Object.getOwnPropertyNames(value).length)
+                    this.cmodule.lua_createtable(this.address, 0, Object.getOwnPropertyNames(target).length)
 
-                    for (const key in value) {
+                    for (const key in target) {
                         this.pushValue(key)
-                        this.pushValue(value[key], { _done: options._done })
+                        this.pushValue(target[key], { _done: options._done })
 
-                        this.module.lua_settable(this.address, table)
+                        this.cmodule.lua_settable(this.address, table)
                     }
+                }
+
+                if (typeof decorations.metatable === 'object') {
+                    this.pushValue(decorations.metatable)
+                    this.cmodule.lua_setmetatable(this.address, -2)
                 }
             }
         } else if (type === 'function') {
-            const pointer = this.module.module.addFunction((calledL: LuaState) => {
-                const argsQuantity = this.module.lua_gettop(calledL)
+            const pointer = this.cmodule.module.addFunction((calledL: LuaState) => {
+                const argsQuantity = this.cmodule.lua_gettop(calledL)
                 const args = []
 
                 const thread = this.stateToThread(calledL)
                 for (let i = 1; i <= argsQuantity; i++) {
-                    args.push(thread.getValue(i))
+                    args.push(thread.getValue(i, undefined, { raw: decorations?.rawArguments?.includes(i - 1) }))
                 }
 
-                const result = value(...args)
+                const result = target(...args)
 
                 if (result instanceof MultiReturn) {
                     for (const item of result) {
@@ -141,7 +137,7 @@ export default class Thread {
                     return 1
                 }
             }, 'ii')
-            this.module.lua_pushcclosure(this.address, pointer, 0)
+            this.cmodule.lua_pushcclosure(this.address, pointer, 0)
         } else {
             throw new Error(`The type '${type}' is not supported by Lua`)
         }
@@ -152,11 +148,10 @@ export default class Thread {
         type: LuaType = undefined,
         options: Partial<{
             raw: boolean,
-            _done: AnyObject
+            _done: Record<string, number>
         }> = {}
     ): any {
-    
-        type = type || this.module.lua_type(this.address, idx)
+        type = type || this.cmodule.lua_type(this.address, idx)
 
         switch (type) {
             case LuaType.None:
@@ -164,100 +159,112 @@ export default class Thread {
             case LuaType.Nil:
                 return null
             case LuaType.Number:
-                return this.module.lua_tonumberx(this.address, idx, undefined)
+                return this.cmodule.lua_tonumberx(this.address, idx, undefined)
             case LuaType.String:
-                return this.module.lua_tolstring(this.address, idx, undefined)
+                return this.cmodule.lua_tolstring(this.address, idx, undefined)
             case LuaType.Boolean:
-                return Boolean(this.module.lua_toboolean(this.address, idx))
+                return Boolean(this.cmodule.lua_toboolean(this.address, idx))
             case LuaType.Table:
-                return this.getTableValue(idx, options?._done)
+                if (options.raw) {
+                    return new Pointer(this.cmodule.lua_topointer(this.address, idx))
+                } else {
+                    return this.getTableValue(idx, options?._done)
+                }
             case LuaType.Function:
                 if (options.raw) {
-                    this.module.lua_topointer(this.address, idx)
+                    return new Pointer(this.cmodule.lua_topointer(this.address, idx))
                 } else {
-                    this.module.lua_pushvalue(this.address, idx)
-                    const func = this.module.luaL_ref(this.address, LUA_REGISTRYINDEX)
-    
+                    this.cmodule.lua_pushvalue(this.address, idx)
+                    const func = this.cmodule.luaL_ref(this.address, LUA_REGISTRYINDEX)
+
                     const jsFunc = (...args: any[]) => {
                         if (this.closed) {
                             console.warn('Tried to call a function after closing lua state')
                             return
                         }
-    
-                        const type = this.module.lua_rawgeti(this.address, LUA_REGISTRYINDEX, func)
+
+                        const type = this.cmodule.lua_rawgeti(this.address, LUA_REGISTRYINDEX, func)
                         if (type !== LuaType.Function) {
                             throw new Error(`A function of type '${type}' was pushed, expected is ${LuaType.Function}`)
                         }
-    
+
                         for (const arg of args) {
                             this.pushValue(arg)
                         }
-    
-                        this.module.lua_callk(this.address, args.length, 1, 0, undefined)
+
+                        this.cmodule.lua_callk(this.address, args.length, 1, 0, undefined)
                         return this.getValue(-1)
                     }
-    
+
                     this.functionRegistry?.register(jsFunc, func)
-    
+
                     return jsFunc
                 }
             case LuaType.Thread:
-                const value = this.module.lua_tothread(this.address, idx)
+                const value = this.cmodule.lua_tothread(this.address, idx)
                 if (options.raw) {
-                    return value
+                    return new Pointer(value)
                 } else {
                     return this.stateToThread(value)
                 }
             default:
-                console.warn(`The type '${this.module.lua_typename(this.address, type)}' returned is not supported on JS`)
-                return this.module.lua_topointer(this.address, idx)
+                console.warn(`The type '${this.cmodule.lua_typename(this.address, type)}' returned is not supported on JS`)
+                return new Pointer(this.cmodule.lua_topointer(this.address, idx))
         }
     }
 
     public dumpStack(log = console.log) {
-        const top = this.module.lua_gettop(this.address)
+        const top = this.cmodule.lua_gettop(this.address)
 
         for (let i = 1; i <= top; i++) {
-            const type = this.module.lua_type(this.address, i)
+            const type = this.cmodule.lua_type(this.address, i)
             const value = this.getValue(i, type, { raw: true })
 
-            const typename = this.module.lua_typename(this.address, type)
+            const typename = this.cmodule.lua_typename(this.address, type)
             log(i, typename, value)
         }
     }
 
-    private getTableValue(idx: number, done: AnyObject = {}) {
-        let table: AnyObject = {}
+    private getTableValue(idx: number, done: Record<string, any> = {}) {
+        let table: Record<any, any> = {}
 
-        const pointer = this.module.lua_topointer(this.address, idx)
+        const pointer = this.cmodule.lua_topointer(this.address, idx)
         if (done[pointer]) {
             return done[pointer]
         }
 
         done[pointer] = table
 
-        this.module.lua_pushnil(this.address)
+        this.cmodule.lua_pushnil(this.address)
 
         if (idx < 0) {
             idx--
         }
 
-        while (this.module.lua_next(this.address, idx)) {
-            const keyType = this.module.lua_type(this.address, -2)
+        while (this.cmodule.lua_next(this.address, idx)) {
+            const keyType = this.cmodule.lua_type(this.address, -2)
             const key = this.getValue(-2, keyType, { _done: done })
 
-            const valueType = this.module.lua_type(this.address, -1)
+            const valueType = this.cmodule.lua_type(this.address, -1)
             const value = this.getValue(-1, valueType, { _done: done })
 
             table[key] = value
 
-            this.module.lua_settop(this.address, -1 - 1)
+            this.cmodule.lua_settop(this.address, -1 - 1)
         }
 
         return table
     }
 
     private stateToThread(L: LuaState): Thread {
-        return L === this.global.address ? this.global : new Thread(this.module, L, this.global as Global)
+        return L === this.global.address ? this.global : new Thread(this.cmodule, L, this.global as Global)
+    }
+
+    private getValueDecorations(value: any): { value: any, decorations: any } {
+        if (value instanceof Decoration) {
+            return { value: value.target, decorations: value.options }
+        }
+
+        return { value, decorations: {} }
     }
 }

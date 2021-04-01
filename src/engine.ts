@@ -5,24 +5,24 @@ import LuaWasm from './luawasm'
 export default class Lua {
     public global: Global
 
-    constructor(private module: LuaWasm, openStandardLibs: boolean) {
-        this.global = new Global(this.module, this.module.luaL_newstate())
+    constructor(private cmodule: LuaWasm, openStandardLibs: boolean) {
+        this.global = new Global(this.cmodule, this.cmodule.luaL_newstate())
 
         if (this.global.isClosed()) {
             throw new Error("Lua state could not be created (probably due to lack of memory)")
         }
 
         if (openStandardLibs) {
-            this.module.luaL_openlibs(this.global.address)
+            this.cmodule.luaL_openlibs(this.global.address)
         }
     }
 
     public doString(script: string): any {
-        return this.callByteCode(() => this.module.luaL_loadstring(this.global.address, script))
+        return this.callByteCode(() => this.cmodule.luaL_loadstring(this.global.address, script))
     }
 
     public doFile(filename: string): any {
-        return this.callByteCode(() => this.module.luaL_loadfilex(this.global.address, filename, undefined))
+        return this.callByteCode(() => this.cmodule.luaL_loadfilex(this.global.address, filename, undefined))
     }
 
     public mountFile(path: string, content: string | ArrayBufferView): void {
@@ -40,7 +40,7 @@ export default class Lua {
 
                 const current = parent + '/' + part
                 try {
-                    this.module.module.FS.mkdir(current)
+                    this.cmodule.module.FS.mkdir(current)
                 } catch (e) {
                     // ignore EEXIST
                 }
@@ -49,15 +49,15 @@ export default class Lua {
             }
         }
 
-        this.module.module.FS.writeFile(path, content)
+        this.cmodule.module.FS.writeFile(path, content)
     }
 
     private callByteCode(loader: () => LuaReturn) {
         const result = loader() ||
-            this.module.lua_pcallk(this.global.address, 0, 1, 0, 0, undefined)
+            this.cmodule.lua_pcallk(this.global.address, 0, 1, 0, 0, undefined)
 
         if (result !== LuaReturn.Ok) {
-            const error = this.module.lua_tolstring(this.global.address, -1, undefined)
+            const error = this.cmodule.lua_tolstring(this.global.address, -1, undefined)
             throw new Error(`Lua error(${result}): ${error}`)
         }
 
