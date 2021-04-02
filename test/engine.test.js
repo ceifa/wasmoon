@@ -1,6 +1,6 @@
 const { expect, test } = require('@jest/globals')
 const { getEngine } = require('./utils')
-const { Thread } = require('../dist')
+const { Thread, LuaReturn } = require('../dist')
 
 jest.useFakeTimers()
 
@@ -151,4 +151,30 @@ test('call a JS function in a different thread should succeed', async () => {
     `)
 
     expect(sum).toBeCalledWith(10, 20)
+})
+
+test('lua_resume with yield succeeds', async () => {
+    const engine = await getEngine()
+    const thread = engine.global.newThread()
+    thread.loadString(`
+        local yieldRes = coroutine.yield(10)
+        return yieldRes
+    `)
+
+    const resumeResult = thread.resume(0)
+    expect(resumeResult.result).toEqual(LuaReturn.Yield)
+    expect(resumeResult.resultCount).toEqual(1)
+
+    const yieldValue = thread.getValue(-1)
+    expect(yieldValue).toEqual(10)
+
+    thread.pop(resumeResult.resultCount)
+    thread.pushValue(yieldValue * 2)
+
+    const finalResumeResult = thread.resume(1)
+    expect(finalResumeResult.result).toEqual(LuaReturn.Ok)
+    expect(finalResumeResult.resultCount).toEqual(1)
+
+    const finalValue = thread.getValue(-1)
+    expect(finalValue).toEqual(20)
 })

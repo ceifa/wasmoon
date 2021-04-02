@@ -1,6 +1,6 @@
 export type LuaState = number
 
-export const enum LuaReturn {
+export enum LuaReturn {
     Ok = 0,
     Yield = 1,
     ErrorRun = 2,
@@ -10,11 +10,18 @@ export const enum LuaReturn {
     ErrorFile = 6,
 }
 
+export interface LuaResumeResult {
+    result: LuaReturn
+    resultCount: number
+}
+
+export const PointerSize = 4
+
 export const LUA_MULTRET = -1
 export const LUAI_MAXSTACK = 1000000
 export const LUA_REGISTRYINDEX = -LUAI_MAXSTACK - 1000
 
-export const enum LuaType {
+export enum LuaType {
     None = -1,
     Nil = 0,
     Boolean = 1,
@@ -27,7 +34,7 @@ export const enum LuaType {
     Thread = 8,
 }
 
-export const enum LuaMetatables {
+export enum LuaMetatables {
     FunctionReference = 'function_reference',
 }
 

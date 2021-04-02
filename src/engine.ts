@@ -18,15 +18,17 @@ export default class Lua {
     }
 
     public doString(script: string): any {
-        return this.callByteCode(() => this.cmodule.luaL_loadstring(this.global.address, script))
+        this.global.loadString(script)
+        return this.callByteCode()
     }
 
     public doFile(filename: string): any {
-        return this.callByteCode(() => this.cmodule.luaL_loadfilex(this.global.address, filename, undefined))
+        this.global.loadFile(filename)
+        return this.callByteCode()
     }
 
-    private callByteCode(loader: () => LuaReturn): any {
-        const result = loader() || this.cmodule.lua_pcallk(this.global.address, 0, 1, 0, 0, undefined)
+    private callByteCode(): any {
+        const result = this.cmodule.lua_pcallk(this.global.address, 0, 1, 0, 0, undefined)
 
         if (result !== LuaReturn.Ok) {
             const error = this.cmodule.lua_tolstring(this.global.address, -1, undefined)

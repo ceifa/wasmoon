@@ -1,5 +1,5 @@
 import { Decoration } from './decoration'
-import { LUA_MULTRET, LUA_REGISTRYINDEX, LuaMetatables, LuaState, LuaType } from './types'
+import { LUA_MULTRET, LUA_REGISTRYINDEX, LuaMetatables, LuaResumeResult, LuaReturn, LuaState, LuaType, PointerSize } from './types'
 import { Pointer } from './pointer'
 import MultiReturn from './multireturn'
 import type Global from './global'
@@ -33,6 +33,32 @@ export default class Thread {
     public set(name: string, value: any): void {
         this.pushValue(value)
         this.cmodule.lua_setglobal(this.address, name)
+    }
+
+    public newThread(): Thread {
+        return new Thread(this.cmodule, this.cmodule.lua_newthread(this.address))
+    }
+
+    public resetThread(): void {
+        this.assertOk(this.cmodule.lua_resetthread(this.address))
+    }
+
+    public loadString(luaCode: string): void {
+        this.assertOk(this.cmodule.luaL_loadstring(this.address, luaCode))
+    }
+
+    public loadFile(filename: string): void {
+        this.assertOk(this.cmodule.luaL_loadfilex(this.address, filename))
+    }
+
+    public resume(argCount: number): LuaResumeResult {
+        const resumeResult = this.cmodule.lua_resume(this.address, undefined, argCount)
+        this.assertOk(resumeResult.result)
+        return resumeResult
+    }
+
+    public pop(count: number): void {
+        this.cmodule.lua_pop(this.address, count)
     }
 
     public call(name: string, ...args: any[]): any[] {
@@ -229,6 +255,19 @@ export default class Thread {
         }
     }
 
+    private assertOk(result: LuaReturn): void {
+        if (result !== LuaReturn.Ok && result !== LuaReturn.Yield) {
+            const resultString = LuaReturn[result]
+            let message = `Lua Error(${resultString}/${result})`
+            if (this.cmodule.lua_gettop(this.address) > 0) {
+                const error = this.cmodule.lua_tolstring(this.address, -1, undefined)
+                message += `: ${error}`
+                this.cmodule.lua_pop(this.address, 1)
+            }
+            throw new Error(message)
+        }
+    }
+
     private getTableValue(idx: number, done: Record<string, any> = {}): Record<any, any> {
         const table: Record<any, any> = {}
 
@@ -262,7 +301,7 @@ export default class Thread {
 
     private createAndPushFunctionReference(pointer: number): void {
         // 4 = size of pointer in wasm.
-        const userDataPointer = this.cmodule.lua_newuserdatauv(this.address, 4, 0)
+        const userDataPointer = this.cmodule.lua_newuserdatauv(this.address, PointerSize, 0)
         this.cmodule.module.setValue(userDataPointer, pointer, '*')
 
         if (LuaType.Nil === this.cmodule.luaL_getmetatable(this.address, LuaMetatables.FunctionReference)) {
