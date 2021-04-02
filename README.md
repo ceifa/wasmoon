@@ -2,8 +2,8 @@
 
 This package aims to provide a way to:
 
-* Embed Lua to any Node.js, Deno or Web Application.
-* Run lua code in any operational system
+-   Embed Lua to any Node.js, Deno or Web Application.
+-   Run lua code in any operational system
 
 ## Installation
 
@@ -12,6 +12,7 @@ This package aims to provide a way to:
 ```sh
 $: npm install -g wasmoon
 ```
+
 This will install `wasmoon` globally so that it may be run from the command line anywhere.
 
 #### Running on-demand:
@@ -23,6 +24,7 @@ $: npx wasmoon
 ```
 
 ## CLI Usage
+
 Wasmoon by default reads and execute code from stdin, but you can force it to read from file passing the `-f` argument:
 
 ```sh
@@ -38,26 +40,26 @@ const { LuaFactory } = require('wasmoon')
 
 // Initialize a new lua environment factory
 // You can pass the wasm location as the first argument, useful if you are using wasmoon on a web environment and want to host the file by yourself
-const factory = new LuaFactory();
+const factory = new LuaFactory()
 // Create a standalone lua environment from the factory
-const lua = await factory.createEngine();
+const lua = await factory.createEngine()
 
 try {
     // Set a JS function to be a global lua function
-    lua.global.set('sum', (x, y) => x + y);
+    lua.global.set('sum', (x, y) => x + y)
     // Run a lua string
     lua.doString(`
     print(sum(10, 10))
     function multiply(x, y)
         return x * y
     end
-    `);
+    `)
     // Get a global lua function as a JS function
-    const multiply = lua.global.get('multiply');
+    const multiply = lua.global.get('multiply')
     console.log(multiply(10, 10))
 } finally {
     // Close the lua environment, so it can be freed
-    lua.global.close();
+    lua.global.close()
 }
 ```
 
@@ -79,10 +81,10 @@ module.exports = {
             fs: false,
             child_process: false,
             crypto: false,
-            url: false
-        }
-    }
-};
+            url: false,
+        },
+    },
+}
 ```
 
 ### Rollup
@@ -92,9 +94,7 @@ With the package [rollup-plugin-ignore](), add this snippet to your config:
 ```js
 export default {
     input: 'src/index.js', // Here is your entry file,
-    plugins: [
-        ignore(["path", "fs", "child_process", "crypto", "url"])
-    ]
+    plugins: [ignore(['path', 'fs', 'child_process', 'crypto', 'url'])],
 }
 ```
 

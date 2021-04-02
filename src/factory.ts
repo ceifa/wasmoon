@@ -1,10 +1,10 @@
-import Lua from "./engine"
-import LuaWasm from "./luawasm"
+import Lua from './engine'
+import LuaWasm from './luawasm'
 
 export default class LuaFactory {
-    private module: LuaWasm
+    private module?: LuaWasm
 
-    constructor(private customWasmUri: string = undefined) {
+    public constructor(private customWasmUri?: string) {
         if (this.customWasmUri === undefined) {
             const isBrowser = typeof window !== 'undefined' && typeof window.document !== 'undefined'
 
@@ -14,10 +14,9 @@ export default class LuaFactory {
         }
     }
 
-    public async createEngine(openStandardLibs: boolean = true): Promise<Lua> {
+    public async createEngine(openStandardLibs = true): Promise<Lua> {
         if (!this.module) {
-            this.module = new LuaWasm()
-            await this.module.initialize(this.customWasmUri)
+            this.module = await LuaWasm.initialize(this.customWasmUri)
         }
 
         return new Lua(this.module, openStandardLibs)

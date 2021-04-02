@@ -1,4 +1,5 @@
 /dist
 /node_modules
-/lua/lua.wasm
-src/lua/
+.rollup.cache/
+tsconfig.tsbuildinfo
+build/

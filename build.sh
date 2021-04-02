@@ -1,6 +1,6 @@
 #!/bin/bash -e
 
-mkdir -p src/lua
+mkdir -p build
 
 LUA_SRC=$(ls ./lua/*.c | grep -v "luac.c" | grep -v "lua.c" | tr "\n" " ")
 
@@ -14,7 +14,7 @@ then
 fi
 
 emcc \
-    -s WASM=1 -O$1 -o ./src/lua/glue.js \
+    -s WASM=1 -O$1 -o ./build/glue.js \
     -s EXTRA_EXPORTED_RUNTIME_METHODS="['cwrap', 'addFunction', 'removeFunction', 'FS', 'getValue', 'setValue']" \
     -s MODULARIZE=1 \
     -s ALLOW_TABLE_GROWTH \

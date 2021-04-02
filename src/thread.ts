@@ -1,30 +1,29 @@
-import {
-    LuaState, LuaType, LUA_MULTRET, LUA_REGISTRYINDEX, LuaMetatables
-} from './types'
-import LuaWasm from './luawasm'
-import Global from './global'
-import MultiReturn from './multireturn'
-import { Pointer } from './pointer'
 import { Decoration } from './decoration'
+import { LUA_MULTRET, LUA_REGISTRYINDEX, LuaMetatables, LuaState, LuaType } from './types'
+import { Pointer } from './pointer'
+import MultiReturn from './multireturn'
+import type Global from './global'
+import type LuaWasm from './luawasm'
 
 export default class Thread {
+    public readonly address: LuaState = 0
+    protected closed = false
     // Backward compatibility
-    private readonly functionRegistry = typeof FinalizationRegistry !== 'undefined' ?
-        new FinalizationRegistry((func: number) => {
-            if (!this.closed) {
-                this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
-            }
-        }) : undefined
+    private readonly functionRegistry =
+        typeof FinalizationRegistry !== 'undefined'
+            ? new FinalizationRegistry((func: number) => {
+                  if (!this.closed) {
+                      this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
+                  }
+              })
+            : undefined
 
     private global: Global | this
-    protected closed: boolean = false
 
-    constructor(protected cmodule: LuaWasm, address: number, global: Global) {
+    public constructor(protected cmodule: LuaWasm, address: number, global?: Global) {
         this.address = address
         this.global = global ?? this
     }
-
-    public readonly address: LuaState = 0
 
     public get(name: string): any {
         const type = this.cmodule.lua_getglobal(this.address, name)
@@ -139,7 +138,7 @@ export default class Thread {
             }, 'ii')
             // Creates a new userdata with metatable pointing to the function pointer.
             // Pushes the new userdata onto the stack.
-            this.createAndPushFunctionReference(pointer);
+            this.createAndPushFunctionReference(pointer)
             // Pass 1 to associate the closure with the userdata.
             this.cmodule.lua_pushcclosure(this.address, pointer, 1)
         } else {
@@ -147,29 +146,13 @@ export default class Thread {
         }
     }
 
-    private createAndPushFunctionReference(pointer: number): void {
-        // 4 = size of pointer in wasm.
-        const userDataPointer = this.cmodule.lua_newuserdatauv(this.address, 4, 0);
-        this.cmodule.module.setValue(userDataPointer, pointer, '*');
-
-        if (LuaType.Nil === this.cmodule.luaL_getmetatable(this.address, LuaMetatables.FunctionReference)) {
-          // Pop the pushed nil value
-          this.cmodule.lua_pop(this.address, 1);
-          throw new Error(`metatable not found: ${LuaMetatables.FunctionReference}`);
-        }
-
-        // Set as the metatable for the userdata.
-        // -1 is the metatable, -2 is the user data.
-        this.cmodule.lua_setmetatable(this.address, -2);
-    }
-
     public getValue(
         idx: number,
-        type: LuaType = undefined,
+        type: LuaType | undefined = undefined,
         options: Partial<{
-            raw: boolean,
+            raw: boolean
             _done: Record<string, number>
-        }> = {}
+        }> = {},
     ): any {
         type = type || this.cmodule.lua_type(this.address, idx)
 
@@ -197,14 +180,14 @@ export default class Thread {
                     this.cmodule.lua_pushvalue(this.address, idx)
                     const func = this.cmodule.luaL_ref(this.address, LUA_REGISTRYINDEX)
 
-                    const jsFunc = (...args: any[]) => {
+                    const jsFunc = (...args: any[]): any => {
                         if (this.closed) {
                             console.warn('Tried to call a function after closing lua state')
                             return
                         }
 
-                        const type = this.cmodule.lua_rawgeti(this.address, LUA_REGISTRYINDEX, func)
-                        if (type !== LuaType.Function) {
+                        const internalType = this.cmodule.lua_rawgeti(this.address, LUA_REGISTRYINDEX, func)
+                        if (internalType !== LuaType.Function) {
                             throw new Error(`A function of type '${type}' was pushed, expected is ${LuaType.Function}`)
                         }
 
@@ -220,20 +203,21 @@ export default class Thread {
 
                     return jsFunc
                 }
-            case LuaType.Thread:
+            case LuaType.Thread: {
                 const value = this.cmodule.lua_tothread(this.address, idx)
                 if (options.raw) {
                     return new Pointer(value)
                 } else {
                     return this.stateToThread(value)
                 }
+            }
             default:
                 console.warn(`The type '${this.cmodule.lua_typename(this.address, type)}' returned is not supported on JS`)
                 return new Pointer(this.cmodule.lua_topointer(this.address, idx))
         }
     }
 
-    public dumpStack(log = console.log) {
+    public dumpStack(log = console.log): void {
         const top = this.cmodule.lua_gettop(this.address)
 
         for (let i = 1; i <= top; i++) {
@@ -245,8 +229,8 @@ export default class Thread {
         }
     }
 
-    private getTableValue(idx: number, done: Record<string, any> = {}) {
-        let table: Record<any, any> = {}
+    private getTableValue(idx: number, done: Record<string, any> = {}): Record<any, any> {
+        const table: Record<any, any> = {}
 
         const pointer = this.cmodule.lua_topointer(this.address, idx)
         if (done[pointer]) {
@@ -276,11 +260,27 @@ export default class Thread {
         return table
     }
 
+    private createAndPushFunctionReference(pointer: number): void {
+        // 4 = size of pointer in wasm.
+        const userDataPointer = this.cmodule.lua_newuserdatauv(this.address, 4, 0)
+        this.cmodule.module.setValue(userDataPointer, pointer, '*')
+
+        if (LuaType.Nil === this.cmodule.luaL_getmetatable(this.address, LuaMetatables.FunctionReference)) {
+            // Pop the pushed nil value
+            this.cmodule.lua_pop(this.address, 1)
+            throw new Error(`metatable not found: ${LuaMetatables.FunctionReference}`)
+        }
+
+        // Set as the metatable for the userdata.
+        // -1 is the metatable, -2 is the user data.
+        this.cmodule.lua_setmetatable(this.address, -2)
+    }
+
     private stateToThread(L: LuaState): Thread {
         return L === this.global.address ? this.global : new Thread(this.cmodule, L, this.global as Global)
     }
 
-    private getValueDecorations(value: any): { value: any, decorations: any } {
+    private getValueDecorations(value: any): { value: any; decorations: any } {
         if (value instanceof Decoration) {
             return { value: value.target, decorations: value.options }
         }

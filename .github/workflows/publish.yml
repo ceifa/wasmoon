@@ -1,27 +1,27 @@
 name: CI
 
 on:
-  push:
-    branches: [ main ]
+    push:
+        branches: [main]
 
 jobs:
-  publish:
+    publish:
+        runs-on: ubuntu-latest
 
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v2
-      with:
-        submodules: recursive
-    - name: Use Node.js 14.x
-      uses: actions/setup-node@v1
-      with:
-        node-version: 14.x
-    - uses: mymindstorm/setup-emsdk@v7
-    - run: npm ci
-    - run: npm run build:wasm
-    - run: npm run build
-    - run: npm test
-    - uses: JS-DevTools/npm-publish@v1
-      with:
-        token: ${{ secrets.NPM_TOKEN }}
+        steps:
+            - uses: actions/checkout@v2
+              with:
+                  submodules: recursive
+            - name: Use Node.js 14.x
+              uses: actions/setup-node@v1
+              with:
+                  node-version: 14.x
+            - uses: mymindstorm/setup-emsdk@v7
+            - run: npm ci
+            - run: npm run lint
+            - run: npm run build:wasm
+            - run: npm run build
+            - run: npm test
+            - uses: JS-DevTools/npm-publish@v1
+              with:
+                  token: ${{ secrets.NPM_TOKEN }}

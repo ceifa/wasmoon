@@ -1,16 +1,16 @@
 {
+    "extends": "@luvies/config/tsconfig.base.json",
     "compilerOptions": {
         "noImplicitAny": true,
+        "incremental": false,
         "moduleResolution": "node",
         "inlineSources": true,
         "removeComments": true,
         "sourceMap": true,
-        "target": "ES6"
+        "target": "ES6",
+        "skipLibCheck": true,
+        "lib": ["ES2016", "DOM"]
     },
-    "include": [
-        "src/**/*"
-    ],
-    "exclude": [
-        "node_modules"
-    ]
+    "include": ["src/**/*", "test/**/*"],
+    "exclude": ["node_modules"]
 }

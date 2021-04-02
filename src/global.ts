@@ -1,12 +1,12 @@
-import Thread from "./thread"
-import LuaWasm from "./luawasm"
-import { LuaState, LuaMetatables, LuaReturn } from "./types"
+import { LuaMetatables, LuaReturn, LuaState } from './types'
+import Thread from './thread'
+import type LuaWasm from './luawasm'
 
 export default class Global extends Thread {
-    public readonly functionGcPointer: number;
+    public readonly functionGcPointer: number
 
     constructor(cmodule: LuaWasm, address: LuaState) {
-        super(cmodule, address, undefined)
+        super(cmodule, address)
 
         this.functionGcPointer = cmodule.module.addFunction((calledL: LuaState) => {
             // Throws a lua error which does a jump if it does not match.
@@ -20,22 +20,22 @@ export default class Global extends Thread {
         }, 'ii')
 
         // Creates metatable if it doesn't exist, always pushes it onto the stack.
-        if (0 != cmodule.luaL_newmetatable(address, LuaMetatables.FunctionReference)) {
-            cmodule.lua_pushstring(address, '__gc');
-            cmodule.lua_pushcclosure(address, this.functionGcPointer, 0);
-            cmodule.lua_settable(address, -3);
+        if (0 !== cmodule.luaL_newmetatable(address, LuaMetatables.FunctionReference)) {
+            cmodule.lua_pushstring(address, '__gc')
+            cmodule.lua_pushcclosure(address, this.functionGcPointer, 0)
+            cmodule.lua_settable(address, -3)
 
-            cmodule.lua_pushstring(address, '__metatable');
-            cmodule.lua_pushstring(address, 'protected metatable');
-            cmodule.lua_settable(address, -3);
+            cmodule.lua_pushstring(address, '__metatable')
+            cmodule.lua_pushstring(address, 'protected metatable')
+            cmodule.lua_settable(address, -3)
         }
         // Pop the metatable from the stack.
-        cmodule.lua_pop(address, 1);
+        cmodule.lua_pop(address, 1)
     }
 
-    public close() {
+    public close(): void {
         if (this.closed) {
-            return;
+            return
         }
         this.closed = true
         // Do this before removing the gc to force
@@ -43,7 +43,7 @@ export default class Global extends Thread {
         this.cmodule.module.removeFunction(this.functionGcPointer)
     }
 
-    public isClosed() {
+    public isClosed(): boolean {
         return !this.address || this.closed
     }
 }

@@ -7,13 +7,13 @@ export default {
         file: 'dist/index.js',
         format: 'umd',
         name: 'wasmoon',
-        sourcemap: true
+        sourcemap: true,
     },
     plugins: [
         url({
             include: '**/*.wasm',
-            fileName: '[name][extname]'
+            fileName: '[name][extname]',
         }),
-        typescript()
-    ]
+        typescript(),
+    ],
 }

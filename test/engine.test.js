@@ -1,12 +1,12 @@
 const { expect, test } = require('@jest/globals')
-const { getEngine } = require("./utils")
+const { getEngine } = require('./utils')
 const { Thread } = require('../dist')
 
 jest.useFakeTimers()
 
 test('receive lua table on JS function should succeed', async () => {
     const engine = await getEngine()
-    engine.global.set('stringify', table => {
+    engine.global.set('stringify', (table) => {
         return JSON.stringify(table)
     })
 
@@ -36,7 +36,7 @@ test('receive JS object on lua should succeed', async () => {
             bbb: 'hey',
             test() {
                 return 22
-            }
+            },
         }
     })
     const value = engine.doString('return test().test()')
@@ -79,7 +79,9 @@ test('scheduled lua calls should succeed', async () => {
 test('scheduled lua calls should fail silently if invalid', async () => {
     const engine = await getEngine()
     engine.global.set('setInterval', setInterval)
-    jest.spyOn(console, 'warn').mockImplementation(() => { })
+    jest.spyOn(console, 'warn').mockImplementation(() => {
+        // Nothing to do.
+    })
 
     engine.doString(`
     test = 0
@@ -121,7 +123,7 @@ test('call a global function with multiple returns should succeed', async () => 
 
     const returns = engine.global.call('f', 10, 25)
     expect(returns).toHaveLength(6)
-    expect(returns).toEqual(expect.arrayContaining([1, 10, 25, "Hello World", {}]))
+    expect(returns).toEqual(expect.arrayContaining([1, 10, 25, 'Hello World', {}]))
 })
 
 test('get a lua thread should succeed', async () => {
