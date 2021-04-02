@@ -12,10 +12,10 @@ export default class Thread {
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
             ? new FinalizationRegistry((func: number) => {
-                  if (!this.closed) {
-                      this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
-                  }
-              })
+                if (!this.closed) {
+                    this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
+                }
+            })
             : undefined
 
     private global: Global | this
@@ -254,7 +254,7 @@ export default class Thread {
 
             table[key] = value
 
-            this.cmodule.lua_settop(this.address, -1 - 1)
+            this.cmodule.lua_pop(this.address, 1)
         }
 
         return table
@@ -280,11 +280,9 @@ export default class Thread {
         return L === this.global.address ? this.global : new Thread(this.cmodule, L, this.global as Global)
     }
 
-    private getValueDecorations(value: any): { value: any; decorations: any } {
-        if (value instanceof Decoration) {
-            return { value: value.target, decorations: value.options }
-        }
-
-        return { value, decorations: {} }
+    private getValueDecorations(value: any): { value: any, decorations: any } {
+        return value instanceof Decoration ?
+            { value: value.target, decorations: value.options } :
+            { value, decorations: {} }
     }
 }

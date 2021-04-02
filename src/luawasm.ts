@@ -54,7 +54,7 @@ export default class LuaWasm {
     public lua_callk: (L: LuaState, nargs: number, nresults: number, ctx: number, func?: number) => void
     public lua_pcallk: (L: LuaState, nargs: number, nresults: number, msgh: number, ctx: number, func?: number) => number
     public lua_pushcclosure: (L: LuaState, cfunction: number, n: number) => void
-    public luaL_newmetatable: (L: LuaState, name: string) => number
+    public luaL_newmetatable: (L: LuaState, name: string) => boolean
     public lua_getfield: (L: LuaState, index: number, name: string) => LuaType
     public lua_newuserdatauv: (L: LuaState, size: number, nuvalue: number) => number // pointer
     public luaL_checkudata: (L: LuaState, arg: number, name: string) => number // pointer
@@ -96,7 +96,7 @@ export default class LuaWasm {
         this.lua_callk = this.module.cwrap('lua_callk', null, ['number', 'number', 'number', 'number', 'number'])
         this.lua_pcallk = this.module.cwrap('lua_pcallk', 'number', ['number', 'number', 'number', 'number', 'number', 'number'])
         this.lua_pushcclosure = this.module.cwrap('lua_pushcclosure', null, ['number', 'number', 'number'])
-        this.luaL_newmetatable = this.module.cwrap('luaL_newmetatable', 'number', ['number', 'string'])
+        this.luaL_newmetatable = this.module.cwrap('luaL_newmetatable', 'boolean', ['number', 'string'])
         this.lua_getfield = this.module.cwrap('lua_getfield', 'number', ['number', 'number', 'string'])
         this.lua_newuserdatauv = this.module.cwrap('lua_newuserdatauv', 'number', ['number', 'number', 'number'])
         this.luaL_checkudata = this.module.cwrap('luaL_checkudata', 'number', ['number', 'number', 'string'])

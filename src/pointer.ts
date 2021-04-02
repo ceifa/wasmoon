@@ -1,1 +1,1 @@
-export class Pointer extends Number {}
+export class Pointer extends Number { }

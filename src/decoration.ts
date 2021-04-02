@@ -1,5 +1,5 @@
 export class Decoration {
-    constructor(public target: any, public options: any) {}
+    constructor(public target: any, public options: any) { }
 }
 
 export const decorateFunction = (
