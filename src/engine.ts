@@ -25,35 +25,6 @@ export default class Lua {
         return this.callByteCode(() => this.cmodule.luaL_loadfilex(this.global.address, filename, undefined))
     }
 
-    public mountFile(path: string, content: string | ArrayBufferView): void {
-        const fileSep = path.lastIndexOf('/')
-        const file = path.substr(fileSep + 1)
-        const body = path.substr(0, path.length - file.length - 1)
-
-        if (body.length > 0) {
-            const parts = body.split('/').reverse()
-            let parent = ''
-
-            while (parts.length) {
-                const part = parts.pop()
-                if (!part) {
-                    continue
-                }
-
-                const current = `${parent}/${part}`
-                try {
-                    this.cmodule.module.FS.mkdir(current)
-                } catch (e) {
-                    // ignore EEXIST
-                }
-
-                parent = current
-            }
-        }
-
-        this.cmodule.module.FS.writeFile(path, content)
-    }
-
     private callByteCode(loader: () => LuaReturn): any {
         const result = loader() || this.cmodule.lua_pcallk(this.global.address, 0, 1, 0, 0, undefined)
 

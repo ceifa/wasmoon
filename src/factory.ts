@@ -2,7 +2,7 @@ import Lua from './engine'
 import LuaWasm from './luawasm'
 
 export default class LuaFactory {
-    private module?: LuaWasm
+    private cmodule?: LuaWasm
 
     public constructor(private customWasmUri?: string) {
         if (this.customWasmUri === undefined) {
@@ -14,11 +14,46 @@ export default class LuaFactory {
         }
     }
 
-    public async createEngine(openStandardLibs = true): Promise<Lua> {
-        if (!this.module) {
-            this.module = await LuaWasm.initialize(this.customWasmUri)
+    public async mountFile(path: string, content: string | ArrayBufferView): Promise<void> {
+        const cmodule = await this.getModule()
+
+        const fileSep = path.lastIndexOf('/')
+        const file = path.substr(fileSep + 1)
+        const body = path.substr(0, path.length - file.length - 1)
+
+        if (body.length > 0) {
+            const parts = body.split('/').reverse()
+            let parent = ''
+
+            while (parts.length) {
+                const part = parts.pop()
+                if (!part) {
+                    continue
+                }
+
+                const current = `${parent}/${part}`
+                try {
+                    cmodule.module.FS.mkdir(current)
+                } catch (e) {
+                    // ignore EEXIST
+                }
+
+                parent = current
+            }
         }
 
-        return new Lua(this.module, openStandardLibs)
+        cmodule.module.FS.writeFile(path, content)
+    }
+
+    public async createEngine(openStandardLibs = true): Promise<Lua> {
+        return new Lua(await this.getModule(), openStandardLibs)
+    }
+
+    private async getModule(): Promise<LuaWasm> {
+        if (!this.cmodule) {
+            this.cmodule = await LuaWasm.initialize(this.customWasmUri)
+        }
+
+        return this.cmodule
     }
 }
