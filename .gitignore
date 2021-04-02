@@ -1,3 +1,4 @@
 /dist
 /node_modules
 /lua/lua.wasm
+src/lua/
