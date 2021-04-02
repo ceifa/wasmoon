@@ -1,8 +1,8 @@
-#!/bin/bash
+#!/bin/bash -e
+
 mkdir -p src/lua
 
-cd lua
-make MYLIBS= MYCFLAGS= CC="emcc -O$1 -s WASM=1"
+LUA_SRC=$(ls ./lua/*.c | grep -v "luac.c" | grep -v "lua.c" | tr "\n" " ")
 
 extension=$1
 if [ "$extension" == "3" ];
@@ -13,9 +13,8 @@ then
     extension="$extension -s ASSERTIONS=1"
 fi
 
-cd ..
-emcc -Ilua lua/liblua.a \
-    -s WASM=1 -O$1 -o src/lua/glue.js \
+emcc \
+    -s WASM=1 -O$1 -o ./src/lua/glue.js \
     -s EXTRA_EXPORTED_RUNTIME_METHODS="['cwrap', 'addFunction', 'removeFunction', 'FS', 'getValue', 'setValue']" \
     -s MODULARIZE=1 \
     -s ALLOW_TABLE_GROWTH \
@@ -63,4 +62,5 @@ emcc -Ilua lua/liblua.a \
         '_lua_rawgeti', \
         '_lua_typename', \
         '_lua_close' \
-    ]"
+    ]" \
+    ${LUA_SRC}
