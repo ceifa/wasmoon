@@ -1,9 +1,10 @@
 const { expect, test } = require('@jest/globals')
-const { getEngine } = require('./utils')
+const { getFactory, getEngine } = require('./utils')
 
 test('mount a file and require inside lua should succeed', async () => {
-    const engine = await getEngine()
-    engine.mountFile('test.lua', 'answerToLifeTheUniverseAndEverything = 42')
+    const factory = getFactory()
+    await factory.mountFile('test.lua', 'answerToLifeTheUniverseAndEverything = 42')
+    const engine = await factory.createEngine()
 
     engine.doString('require("test")')
 
@@ -11,8 +12,9 @@ test('mount a file and require inside lua should succeed', async () => {
 })
 
 test('mount a file in a complex directory and require inside lua should succeed', async () => {
-    const engine = await getEngine()
-    engine.mountFile('yolo/sofancy/test.lua', 'return 42')
+    const factory = getFactory()
+    await factory.mountFile('yolo/sofancy/test.lua', 'return 42')
+    const engine = await factory.createEngine()
 
     const value = engine.doString('return require("yolo/sofancy/test")')
 
@@ -20,8 +22,9 @@ test('mount a file in a complex directory and require inside lua should succeed'
 })
 
 test('mount a init file and require the module inside lua should succeed', async () => {
-    const engine = await getEngine()
-    engine.mountFile('hello/init.lua', 'return 42')
+    const factory = getFactory()
+    await factory.mountFile('hello/init.lua', 'return 42')
+    const engine = await factory.createEngine()
 
     const value = engine.doString('return require("hello")')
 
@@ -37,9 +40,10 @@ test('require a file which is not mounted should throw', async () => {
 })
 
 test('mount a file and run it should succeed', async () => {
-    const engine = await getEngine()
+    const factory = getFactory()
+    const engine = await factory.createEngine()
 
-    engine.mountFile('init.lua', `return 42`)
+    await factory.mountFile('init.lua', `return 42`)
     const value = engine.doFile('init.lua')
 
     expect(value).toBe(42)
