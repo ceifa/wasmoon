@@ -1,5 +1,5 @@
 import {
-    LuaState, LuaType, LUA_MULTRET, LUA_REGISTRYINDEX
+    LuaState, LuaType, LUA_MULTRET, LUA_REGISTRYINDEX, LuaMetatables
 } from './types'
 import LuaWasm from './luawasm'
 import Global from './global'
@@ -137,10 +137,30 @@ export default class Thread {
                     return 1
                 }
             }, 'ii')
-            this.cmodule.lua_pushcclosure(this.address, pointer, 0)
+            // Creates a new userdata with metatable pointing to the function pointer.
+            // Pushes the new userdata onto the stack.
+            this.createAndPushFunctionReference(pointer);
+            // Pass 1 to associate the closure with the userdata.
+            this.cmodule.lua_pushcclosure(this.address, pointer, 1)
         } else {
             throw new Error(`The type '${type}' is not supported by Lua`)
         }
+    }
+
+    private createAndPushFunctionReference(pointer: number): void {
+        // 4 = size of pointer in wasm.
+        const userDataPointer = this.cmodule.lua_newuserdatauv(this.address, 4, 0);
+        this.cmodule.module.setValue(userDataPointer, pointer, '*');
+
+        if (LuaType.Nil === this.cmodule.luaL_getmetatable(this.address, LuaMetatables.FunctionReference)) {
+          // Pop the pushed nil value
+          this.cmodule.lua_pop(this.address, 1);
+          throw new Error(`metatable not found: ${LuaMetatables.FunctionReference}`);
+        }
+
+        // Set as the metatable for the userdata.
+        // -1 is the metatable, -2 is the user data.
+        this.cmodule.lua_setmetatable(this.address, -2);
     }
 
     public getValue(

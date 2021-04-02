@@ -1,10 +1,14 @@
 import initWasmModule from './lua/glue.js'
 import './lua/glue.wasm'
-import { LuaReturn, LuaState, LuaType } from './types'
+import { LuaReturn, LuaState, LuaType, LUA_REGISTRYINDEX } from './types'
+import { Pointer } from './pointer'
 
 interface LuaEmscriptenModule extends EmscriptenModule {
     cwrap: typeof cwrap
-    addFunction: typeof addFunction
+    addFunction: typeof addFunction,
+    removeFunction: typeof removeFunction,
+    setValue: typeof setValue,
+    getValue: typeof getValue,
     FS: typeof FS
 }
 
@@ -20,6 +24,14 @@ export default class LuaWasm {
             }
         })
         this.bindWrappedFunctions()
+    }
+
+    public lua_pop(luaState: LuaState, count: number): void {
+        this.lua_settop(luaState, - count - 1)
+    }
+
+    public luaL_getmetatable(luaState: LuaState, name: string): LuaType {
+        return this.lua_getfield(luaState, LUA_REGISTRYINDEX, name)
     }
 
     public luaL_newstate: () => LuaState
@@ -51,6 +63,10 @@ export default class LuaWasm {
     public lua_callk: (L: LuaState, nargs: number, nresults: number, ctx: number, func: number) => void
     public lua_pcallk: (L: LuaState, nargs: number, nresults: number, msgh: number, ctx: number, func: number) => number
     public lua_pushcclosure: (L: LuaState, cfunction: number, n: number) => void
+    public luaL_newmetatable: (L: LuaState, name: string) => number
+    public lua_getfield: (L: LuaState, index: number, name: string) => LuaType
+    public lua_newuserdatauv: (L: LuaState, size: number, nuvalue: number) => number // pointer
+    public luaL_checkudata: (L: LuaState, arg: number, name: string) => number // pointer
     public luaL_ref: (L: LuaState, table: number) => number
     public luaL_unref: (L: LuaState, table: number, ref: number) => void
     public lua_rawgeti: (L: LuaState, idx: number, ref: number) => number
@@ -87,6 +103,10 @@ export default class LuaWasm {
         this.lua_callk = this.module.cwrap('lua_callk', undefined, ['number', 'number', 'number', 'number', 'number'])
         this.lua_pcallk = this.module.cwrap('lua_pcallk', 'number', ['number', 'number', 'number', 'number', 'number', 'number'])
         this.lua_pushcclosure = this.module.cwrap('lua_pushcclosure', undefined, ['number', 'number', 'number'])
+        this.luaL_newmetatable = this.module.cwrap('luaL_newmetatable', 'number', ['number', 'string'])
+        this.lua_getfield = this.module.cwrap('lua_getfield', 'number', ['number', 'number', 'string'])
+        this.lua_newuserdatauv = this.module.cwrap('lua_newuserdatauv', 'number', ['number', 'number', 'number'])
+        this.luaL_checkudata = this.module.cwrap('luaL_checkudata', 'number', ['number', 'number', 'string'])
         this.luaL_ref = this.module.cwrap('luaL_ref', 'number', ['number', 'number'])
         this.luaL_unref = this.module.cwrap('luaL_unref', undefined, ['number', 'number', 'number'])
         this.lua_rawgeti = this.module.cwrap('lua_rawgeti', 'number', ['number', 'number', 'number'])

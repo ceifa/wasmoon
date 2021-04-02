@@ -16,7 +16,7 @@ fi
 cd ..
 emcc -Ilua lua/liblua.a \
     -s WASM=1 -O$1 -o src/lua/glue.js \
-    -s EXTRA_EXPORTED_RUNTIME_METHODS="['cwrap', 'addFunction', 'FS']" \
+    -s EXTRA_EXPORTED_RUNTIME_METHODS="['cwrap', 'addFunction', 'removeFunction', 'FS', 'getValue', 'setValue']" \
     -s MODULARIZE=1 \
     -s ALLOW_TABLE_GROWTH \
     -s EXPORT_NAME="initWasmModule" \
@@ -54,6 +54,10 @@ emcc -Ilua lua/liblua.a \
         '_lua_callk', \
         '_lua_pcallk', \
         '_lua_pushcclosure', \
+        '_lua_getfield', \
+        '_luaL_newmetatable', \
+        '_lua_newuserdatauv', \
+        '_luaL_checkudata', \
         '_luaL_ref', \
         '_luaL_unref', \
         '_lua_rawgeti', \

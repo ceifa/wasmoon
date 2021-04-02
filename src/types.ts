@@ -27,6 +27,10 @@ export const enum LuaType {
     Thread = 8
 }
 
+export const enum LuaMetatables {
+    FunctionReference = 'function_reference'
+}
+
 declare global {
-	var FinalizationRegistry: any
+    var FinalizationRegistry: any
 }
