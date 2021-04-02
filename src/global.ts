@@ -21,13 +21,13 @@ export default class Global extends Thread {
 
         // Creates metatable if it doesn't exist, always pushes it onto the stack.
         if (cmodule.luaL_newmetatable(address, LuaMetatables.FunctionReference)) {
-            cmodule.lua_pushstring(address, '__gc');
-            cmodule.lua_pushcclosure(address, this.functionGcPointer, 0);
-            cmodule.lua_settable(address, -3);
+            cmodule.lua_pushstring(address, '__gc')
+            cmodule.lua_pushcclosure(address, this.functionGcPointer, 0)
+            cmodule.lua_settable(address, -3)
 
-            cmodule.lua_pushstring(address, '__metatable');
-            cmodule.lua_pushstring(address, 'protected metatable');
-            cmodule.lua_settable(address, -3);
+            cmodule.lua_pushstring(address, '__metatable')
+            cmodule.lua_pushstring(address, 'protected metatable')
+            cmodule.lua_settable(address, -3)
         }
         // Pop the metatable from the stack.
         cmodule.lua_pop(address, 1)
