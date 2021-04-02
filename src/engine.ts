@@ -1,6 +1,6 @@
-import Global from './global'
 import { LuaReturn } from './types'
-import LuaWasm from './luawasm'
+import Global from './global'
+import type LuaWasm from './luawasm'
 
 export default class Lua {
     public global: Global
@@ -9,7 +9,7 @@ export default class Lua {
         this.global = new Global(this.cmodule, this.cmodule.luaL_newstate())
 
         if (this.global.isClosed()) {
-            throw new Error("Lua state could not be created (probably due to lack of memory)")
+            throw new Error('Lua state could not be created (probably due to lack of memory)')
         }
 
         if (openStandardLibs) {
@@ -36,9 +36,11 @@ export default class Lua {
 
             while (parts.length) {
                 const part = parts.pop()
-                if (!part) continue
+                if (!part) {
+                    continue
+                }
 
-                const current = parent + '/' + part
+                const current = `${parent}/${part}`
                 try {
                     this.cmodule.module.FS.mkdir(current)
                 } catch (e) {
@@ -52,9 +54,8 @@ export default class Lua {
         this.cmodule.module.FS.writeFile(path, content)
     }
 
-    private callByteCode(loader: () => LuaReturn) {
-        const result = loader() ||
-            this.cmodule.lua_pcallk(this.global.address, 0, 1, 0, 0, undefined)
+    private callByteCode(loader: () => LuaReturn): any {
+        const result = loader() || this.cmodule.lua_pcallk(this.global.address, 0, 1, 0, 0, undefined)
 
         if (result !== LuaReturn.Ok) {
             const error = this.cmodule.lua_tolstring(this.global.address, -1, undefined)

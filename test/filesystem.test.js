@@ -1,5 +1,5 @@
 const { expect, test } = require('@jest/globals')
-const { getEngine } = require("./utils")
+const { getEngine } = require('./utils')
 
 test('mount a file and require inside lua should succeed', async () => {
     const engine = await getEngine()

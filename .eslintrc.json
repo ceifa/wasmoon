@@ -1,0 +1,52 @@
+{
+    "root": true,
+    "parserOptions": {
+        "project": "./tsconfig.json"
+    },
+    "extends": "./node_modules/@luvies/config/eslint.base.json",
+    "env": {
+        "es6": true
+    },
+    "rules": {
+        "no-console": "off",
+        "@typescript-eslint/no-non-null-assertion": "off",
+        "@typescript-eslint/camelcase": "off",
+        "@typescript-eslint/member-naming": "off",
+        "@typescript-eslint/member-ordering": [
+            "error",
+            {
+                "classes": [
+                    "public-static-field",
+                    "protected-static-field",
+                    "private-static-field",
+
+                    "public-static-method",
+                    "protected-static-method",
+                    "private-static-method",
+
+                    "public-instance-field",
+                    "protected-instance-field",
+                    "private-instance-field",
+
+                    "public-constructor",
+                    "protected-constructor",
+                    "private-constructor",
+
+                    "public-instance-method",
+                    "protected-instance-method",
+                    "private-instance-method"
+                ]
+            }
+        ]
+    },
+    "overrides": [
+        {
+            "files": ["test/**/*.js"],
+            "rules": {
+                "@typescript-eslint/no-var-requires": "off",
+                "@typescript-eslint/no-require-imports": "off",
+                "no-undef": "off"
+            }
+        }
+    ]
+}

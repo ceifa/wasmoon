@@ -7,7 +7,7 @@ export const enum LuaReturn {
     ErrorSyntax = 3,
     ErrorMem = 4,
     ErrorErr = 5,
-    ErrorFile = 6
+    ErrorFile = 6,
 }
 
 export const LUA_MULTRET = -1
@@ -24,13 +24,13 @@ export const enum LuaType {
     Table = 5,
     Function = 6,
     UserData = 7,
-    Thread = 8
+    Thread = 8,
 }
 
 export const enum LuaMetatables {
-    FunctionReference = 'function_reference'
+    FunctionReference = 'function_reference',
 }
 
 declare global {
-    var FinalizationRegistry: any
+    const FinalizationRegistry: any
 }
