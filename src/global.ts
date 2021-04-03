@@ -93,10 +93,10 @@ export default class Global extends Thread {
 
     public close(): void {
         if (this.isClosed()) {
-            return;
+            return
         }
 
-        super.close();
+        super.close()
         this.cmodule.module.removeFunction(this.functionGcPointer)
         this.cmodule.module.removeFunction(this.jsRefGcPointer)
         this.cmodule.module.removeFunction(this.allocatorFunctionPointer)

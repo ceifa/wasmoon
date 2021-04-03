@@ -7,8 +7,7 @@ test('asyncccc', async () => {
     const engine = await getEngine()
     const check = jest.fn()
     engine.global.set('check', check)
-    const promise = new Promise(resolve => setTimeout(() => resolve(60), 10)
-    )
+    const promise = new Promise((resolve) => setTimeout(() => resolve(60), 10))
     engine.global.set('promise', promise)
 
     engine.doString(`
@@ -17,6 +16,6 @@ test('asyncccc', async () => {
 
     expect(check).not.toBeCalled()
     jest.advanceTimersByTime(20)
-    await promise;
+    await promise
     expect(check).toBeCalledWith(60)
 })

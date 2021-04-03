@@ -137,8 +137,7 @@ export default class Thread {
         } else if (type === 'object') {
             if (target instanceof Promise) {
                 this.pushValue({
-                    next: (_: unknown, ...args: Parameters<typeof target.then>) => target
-                        .then(...args)
+                    next: (_: unknown, ...args: Parameters<typeof target.then>) => target.then(...args),
                 })
             } else if (target instanceof Thread) {
                 this.cmodule.lua_pushthread(target.address)
