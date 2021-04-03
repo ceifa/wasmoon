@@ -1,5 +1,5 @@
 import '../build/glue.wasm'
-import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType } from './types'
+import { LUA_REGISTRYINDEX, LuaResumeResult, LuaReturn, LuaState, LuaType, PointerSize } from './types'
 import initWasmModule from '../build/glue.js'
 
 interface LuaEmscriptenModule extends EmscriptenModule {
@@ -9,6 +9,12 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     setValue: typeof setValue
     getValue: typeof getValue
     FS: typeof FS
+    _realloc: (pointer: number, size: number) => number
+}
+
+interface ReferenceMetadata {
+    index: number
+    refCount: number
 }
 
 export default class LuaWasm {
@@ -26,6 +32,7 @@ export default class LuaWasm {
     public module: LuaEmscriptenModule
 
     public luaL_newstate: () => LuaState
+    public lua_newstate: (allocatorFunction: number, userData: number | null) => LuaState
     public luaL_openlibs: (L: LuaState) => void
     public luaL_loadstring: (L: LuaState, code: string) => LuaReturn
     public luaL_loadfilex: (L: LuaState, filename: string, mode?: string) => LuaReturn
@@ -35,6 +42,8 @@ export default class LuaWasm {
     public lua_toboolean: (L: LuaState, idx: number) => boolean
     public lua_topointer: (L: LuaState, idx: number) => number
     public lua_tothread: (L: LuaState, idx: number) => number
+    public lua_newthread: (L: LuaState) => number
+    public lua_resetthread: (L: LuaState) => LuaReturn
     public lua_gettable: (L: LuaState, idx: number) => number
     public lua_next: (L: LuaState, idx: number) => boolean
     public lua_type: (L: LuaState, idx: number) => LuaType
@@ -53,21 +62,29 @@ export default class LuaWasm {
     public lua_settable: (L: LuaState, idx: number) => void
     public lua_callk: (L: LuaState, nargs: number, nresults: number, ctx: number, func?: number) => void
     public lua_pcallk: (L: LuaState, nargs: number, nresults: number, msgh: number, ctx: number, func?: number) => number
+    public lua_yieldk: (L: LuaState, nresults: number, context: number, continuance: number) => LuaReturn
+    public lua_resume: (L: LuaState, fromState: LuaState | undefined, argCount: number) => LuaResumeResult
     public lua_pushcclosure: (L: LuaState, cfunction: number, n: number) => void
     public luaL_newmetatable: (L: LuaState, name: string) => boolean
     public lua_getfield: (L: LuaState, index: number, name: string) => LuaType
     public lua_newuserdatauv: (L: LuaState, size: number, nuvalue: number) => number // pointer
     public luaL_checkudata: (L: LuaState, arg: number, name: string) => number // pointer
+    public luaL_testudata: (L: LuaState, arg: number, name: string) => number | undefined | null // pointer
     public luaL_ref: (L: LuaState, table: number) => number
     public luaL_unref: (L: LuaState, table: number, ref: number) => void
     public lua_rawgeti: (L: LuaState, idx: number, ref: number) => number
     public lua_typename: (L: LuaState, type: LuaType) => number
     public lua_close: (L: LuaState) => void
 
+    private referenceTracker = new WeakMap<any, ReferenceMetadata>()
+    private referenceMap = new Map<number, any>()
+    private availableReferences: number[] = []
+
     public constructor(module: LuaEmscriptenModule) {
         this.module = module
 
         this.luaL_newstate = this.module.cwrap('luaL_newstate', 'number', [])
+        this.lua_newstate = this.module.cwrap('lua_newstate', 'number', ['number', 'number'])
         this.luaL_openlibs = this.module.cwrap('luaL_openlibs', null, ['number'])
         this.luaL_loadstring = this.module.cwrap('luaL_loadstring', 'number', ['number', 'string'])
         this.luaL_loadfilex = this.module.cwrap('luaL_loadfilex', 'number', ['number', 'string', 'string'])
@@ -77,6 +94,8 @@ export default class LuaWasm {
         this.lua_toboolean = this.module.cwrap('lua_toboolean', 'boolean', ['number', 'number'])
         this.lua_topointer = this.module.cwrap('lua_topointer', 'number', ['number', 'number'])
         this.lua_tothread = this.module.cwrap('lua_tothread', 'number', ['number', 'number'])
+        this.lua_newthread = this.module.cwrap('lua_newthread', 'number', ['number'])
+        this.lua_resetthread = this.module.cwrap('lua_resetthread', 'number', ['number'])
         this.lua_gettable = this.module.cwrap('lua_gettable', 'number', ['number', 'number'])
         this.lua_next = this.module.cwrap('lua_next', 'boolean', ['number', 'number'])
         this.lua_type = this.module.cwrap('lua_type', 'number', ['number', 'number'])
@@ -95,11 +114,29 @@ export default class LuaWasm {
         this.lua_settable = this.module.cwrap('lua_settable', null, ['number', 'number'])
         this.lua_callk = this.module.cwrap('lua_callk', null, ['number', 'number', 'number', 'number', 'number'])
         this.lua_pcallk = this.module.cwrap('lua_pcallk', 'number', ['number', 'number', 'number', 'number', 'number', 'number'])
+        this.lua_yieldk = this.module.cwrap('lua_yieldk', 'number', ['number', 'number', 'number', 'number'])
+
+        const lua_resume_raw = this.module.cwrap('lua_resume', 'number', ['number', 'number', 'number', 'number'])
+        this.lua_resume = (luaState, fromState, argCount) => {
+            const dataPointer = this.module._malloc(PointerSize)
+            try {
+                this.module.setValue(dataPointer, 0, 'i32')
+                const luaResult = lua_resume_raw(luaState, fromState, argCount, dataPointer)
+                return {
+                    result: luaResult,
+                    resultCount: this.module.getValue(dataPointer, 'i32'),
+                }
+            } finally {
+                this.module._free(dataPointer)
+            }
+        }
+
         this.lua_pushcclosure = this.module.cwrap('lua_pushcclosure', null, ['number', 'number', 'number'])
         this.luaL_newmetatable = this.module.cwrap('luaL_newmetatable', 'boolean', ['number', 'string'])
         this.lua_getfield = this.module.cwrap('lua_getfield', 'number', ['number', 'number', 'string'])
         this.lua_newuserdatauv = this.module.cwrap('lua_newuserdatauv', 'number', ['number', 'number', 'number'])
         this.luaL_checkudata = this.module.cwrap('luaL_checkudata', 'number', ['number', 'number', 'string'])
+        this.luaL_testudata = this.module.cwrap('luaL_testudata', 'number', ['number', 'number', 'string'])
         this.luaL_ref = this.module.cwrap('luaL_ref', 'number', ['number', 'number'])
         this.luaL_unref = this.module.cwrap('luaL_unref', null, ['number', 'number', 'number'])
         this.lua_rawgeti = this.module.cwrap('lua_rawgeti', 'number', ['number', 'number', 'number'])
@@ -113,5 +150,48 @@ export default class LuaWasm {
 
     public luaL_getmetatable(luaState: LuaState, name: string): LuaType {
         return this.lua_getfield(luaState, LUA_REGISTRYINDEX, name)
+    }
+
+    public ref(data: any): number {
+        const existing = this.referenceTracker.get(data)
+        if (existing) {
+            existing.refCount++
+            return existing.index
+        }
+
+        const availableIndex = this.availableReferences.pop()
+        // +1 so the index is always truthy and not a "nullptr".
+        const index = availableIndex === undefined ? this.referenceMap.size + 1 : availableIndex
+        this.referenceMap.set(index, data)
+        this.referenceTracker.set(data, {
+            refCount: 1,
+            index,
+        })
+
+        return index
+    }
+
+    public unref(index: number): void {
+        const ref = this.referenceMap.get(index)
+        if (ref === undefined) {
+            return
+        }
+        const metadata = this.referenceTracker.get(ref)
+        if (metadata === undefined) {
+            this.referenceTracker.delete(ref)
+            this.availableReferences.push(index)
+            return
+        }
+
+        metadata.refCount--
+        if (metadata.refCount <= 0) {
+            this.referenceTracker.delete(ref)
+            this.referenceMap.delete(index)
+            this.availableReferences.push(index)
+        }
+    }
+
+    public getRef(index: number): any | undefined {
+        return this.referenceMap.get(index)
     }
 }

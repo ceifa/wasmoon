@@ -1,6 +1,6 @@
 const { expect, test } = require('@jest/globals')
 const { getEngine } = require('./utils')
-const { Thread } = require('../dist')
+const { Thread, LuaReturn } = require('../dist')
 
 jest.useFakeTimers()
 
@@ -151,4 +151,132 @@ test('call a JS function in a different thread should succeed', async () => {
     `)
 
     expect(sum).toBeCalledWith(10, 20)
+})
+
+test('lua_resume with yield succeeds', async () => {
+    const engine = await getEngine()
+    const thread = engine.global.newThread()
+    thread.loadString(`
+        local yieldRes = coroutine.yield(10)
+        return yieldRes
+    `)
+
+    const resumeResult = thread.resume(0)
+    expect(resumeResult.result).toEqual(LuaReturn.Yield)
+    expect(resumeResult.resultCount).toEqual(1)
+
+    const yieldValue = thread.getValue(-1)
+    expect(yieldValue).toEqual(10)
+
+    thread.pop(resumeResult.resultCount)
+    thread.pushValue(yieldValue * 2)
+
+    const finalResumeResult = thread.resume(1)
+    expect(finalResumeResult.result).toEqual(LuaReturn.Ok)
+    expect(finalResumeResult.resultCount).toEqual(1)
+
+    const finalValue = thread.getValue(-1)
+    expect(finalValue).toEqual(20)
+})
+
+test('lua_resume with async yield callback', async () => {
+    jest.useFakeTimers()
+
+    const engine = await getEngine()
+    const thread = engine.global.newThread()
+
+    thread.set('asyncCallback', async (input) => {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        return Promise.resolve(input * 2)
+    })
+
+    thread.loadString(`
+        local result = asyncCallback(15)
+        return result
+    `)
+
+    const resumeResult = thread.resume(0)
+    expect(resumeResult.result).toEqual(LuaReturn.Yield)
+    expect(resumeResult.resultCount).toEqual(1)
+
+    const yieldValue = thread.getValue(-1)
+    thread.pop(resumeResult.resultCount)
+    if (Promise.resolve(yieldValue) !== yieldValue) {
+        throw new Error('expected a promise')
+    }
+
+    jest.runOnlyPendingTimers()
+    await yieldValue
+
+    const finalResumeResult = thread.resume(0)
+    expect(finalResumeResult.result).toEqual(LuaReturn.Ok)
+    expect(finalResumeResult.resultCount).toEqual(1)
+
+    const finalValue = thread.getValue(-1)
+    expect(finalValue).toEqual(30)
+})
+
+test('run with async callback', async () => {
+    const engine = await getEngine()
+    const thread = engine.global.newThread()
+
+    thread.set('asyncCallback', async (input) => {
+        return Promise.resolve(input * 2)
+    })
+
+    thread.loadString(`
+        local input = ...
+        assert(type(input) == "number")
+        assert(type(asyncCallback) == "function")
+        local result1 = asyncCallback(input)
+        local result2 = asyncCallback(result1)
+        return result2
+    `)
+
+    thread.pushValue(3)
+    const resumeResult = await thread.run(1)
+
+    expect(resumeResult.result).toEqual(LuaReturn.Ok)
+    expect(resumeResult.resultCount).toEqual(1)
+
+    const finalValue = thread.getValue(-1)
+    expect(finalValue).toEqual(3 * 2 * 2)
+})
+
+test('get memory use succeeds', async () => {
+    const engine = await getEngine()
+    expect(engine.global.getMemoryUsed()).toBeGreaterThan(0)
+})
+
+test('limit memory use causes program loading failure succeeds', async () => {
+    const engine = await getEngine()
+    engine.global.setMemoryMax(engine.global.getMemoryUsed())
+    expect(() => {
+        engine.global.loadString(`
+            local a = 10
+            local b = 20
+            return a + b
+        `)
+    }).toThrow('Lua Error(ErrorMem/4): not enough memory')
+
+    // Remove the limit and retry
+    engine.global.setMemoryMax(undefined)
+    engine.global.loadString(`
+        local a = 10
+        local b = 20
+        return a + b
+    `)
+})
+
+test('limit memory use causes program runtime failure succeeds', async () => {
+    const engine = await getEngine()
+    engine.global.loadString(`
+        local tab = {}
+        for i = 1, 10, 1 do
+            tab[i] = i
+        end
+    `)
+    engine.global.setMemoryMax(engine.global.getMemoryUsed())
+
+    await expect(engine.global.run()).rejects.toThrow('Lua Error(ErrorMem/4): not enough memory')
 })

@@ -1,5 +1,5 @@
 import { Decoration } from './decoration'
-import { LUA_MULTRET, LUA_REGISTRYINDEX, LuaMetatables, LuaState, LuaType } from './types'
+import { LUA_MULTRET, LUA_REGISTRYINDEX, LuaMetatables, LuaResumeResult, LuaReturn, LuaState, LuaType, PointerSize } from './types'
 import { Pointer } from './pointer'
 import MultiReturn from './multireturn'
 import type Global from './global'
@@ -7,6 +7,7 @@ import type LuaWasm from './luawasm'
 
 export default class Thread {
     public readonly address: LuaState = 0
+    public readonly cmodule: LuaWasm
     protected closed = false
     // Backward compatibility
     private readonly functionRegistry =
@@ -19,8 +20,10 @@ export default class Thread {
             : undefined
 
     private global: Global | this
+    private continuance?: number
 
-    public constructor(protected cmodule: LuaWasm, address: number, global?: Global) {
+    public constructor(cmodule: LuaWasm, address: number, global?: Global) {
+        this.cmodule = cmodule
         this.address = address
         this.global = global ?? this
     }
@@ -33,6 +36,53 @@ export default class Thread {
     public set(name: string, value: any): void {
         this.pushValue(value)
         this.cmodule.lua_setglobal(this.address, name)
+    }
+
+    public newThread(): Thread {
+        return new Thread(this.cmodule, this.cmodule.lua_newthread(this.address))
+    }
+
+    public resetThread(): void {
+        this.assertOk(this.cmodule.lua_resetthread(this.address))
+        if (this.continuance !== undefined) {
+            this.cmodule.module.removeFunction(this.continuance)
+            this.continuance = undefined
+        }
+    }
+
+    public loadString(luaCode: string): void {
+        this.assertOk(this.cmodule.luaL_loadstring(this.address, luaCode))
+    }
+
+    public loadFile(filename: string): void {
+        this.assertOk(this.cmodule.luaL_loadfilex(this.address, filename))
+    }
+
+    public resume(argCount = 0): LuaResumeResult {
+        const resumeResult = this.cmodule.lua_resume(this.address, undefined, argCount)
+        this.assertOk(resumeResult.result)
+        return resumeResult
+    }
+
+    public async run(argCount = 0): Promise<LuaResumeResult> {
+        let resumeResult: LuaResumeResult = this.resume(argCount)
+        while (resumeResult.result === LuaReturn.Yield) {
+            if (resumeResult.resultCount === 0) {
+                continue
+            }
+            const lastValue = this.getValue(-1)
+            if (lastValue === Promise.resolve(lastValue)) {
+                await lastValue
+            }
+            this.pop(resumeResult.resultCount)
+            resumeResult = this.resume(0)
+        }
+        this.assertOk(resumeResult.result)
+        return resumeResult
+    }
+
+    public pop(count: number): void {
+        this.cmodule.lua_pop(this.address, count)
     }
 
     public call(name: string, ...args: any[]): any[] {
@@ -57,13 +107,18 @@ export default class Thread {
         return returnValues
     }
 
-    public pushValue(value: any, options: Partial<{ _done?: Record<string, number> }> = {}): void {
+    public pushValue(value: any, options: Partial<{ _done?: Record<string, number>; reference?: boolean }> = {}): void {
         const { value: target, decorations } = this.getValueDecorations(value)
 
         const type = typeof target
 
         if (options?._done?.[target]) {
             this.cmodule.lua_pushvalue(this.address, options._done[target])
+            return
+        }
+
+        if (options.reference) {
+            this.createAndPushJsReference(value)
             return
         }
 
@@ -125,15 +180,56 @@ export default class Thread {
 
                 const result = target(...args)
 
-                if (result instanceof MultiReturn) {
-                    for (const item of result) {
-                        thread.pushValue(item)
+                let results: any | undefined = undefined
+                if (Promise.resolve(result) === result) {
+                    // Cleanup previous calls that may be left if a thread is never resumed.
+                    if (this.continuance !== undefined) {
+                        this.cmodule.module.removeFunction(this.continuance)
                     }
+                    this.continuance = this.cmodule.module.addFunction((continuanceState: LuaState, _status: number, context: number) => {
+                        // Remove the continuance function references.
+                        this.cmodule.module.removeFunction(context)
+                        if (this.continuance === context) {
+                            this.continuance = undefined
+                        }
 
-                    return result.length
+                        const continuanceThread = this.stateToThread(continuanceState)
+                        if (results === undefined) {
+                            return 0
+                        }
+                        if (results instanceof MultiReturn) {
+                            for (const item of results) {
+                                continuanceThread.pushValue(item)
+                            }
+                            return results.length
+                        } else {
+                            continuanceThread.pushValue(results)
+                            return 1
+                        }
+                    }, 'iiii')
+
+                    // Push promise to stack as user data to be passed back to resume.
+                    const promise = result.then((asyncResult: any) => {
+                        results = asyncResult
+                    })
+
+                    this.createAndPushJsReference(promise)
+
+                    // Pass the continuance function as the function and the context.
+                    return this.cmodule.lua_yieldk(calledL, 1, this.continuance, this.continuance)
                 } else {
-                    thread.pushValue(result)
-                    return 1
+                    if (result === undefined) {
+                        return 0
+                    }
+                    if (result instanceof MultiReturn) {
+                        for (const item of result) {
+                            thread.pushValue(item)
+                        }
+                        return result.length
+                    } else {
+                        thread.pushValue(result)
+                        return 1
+                    }
                 }
             }, 'ii')
             // Creates a new userdata with metatable pointing to the function pointer.
@@ -211,6 +307,14 @@ export default class Thread {
                     return this.stateToThread(value)
                 }
             }
+            case LuaType.UserData: {
+                const jsRefUserData = this.cmodule.luaL_testudata(this.address, idx, LuaMetatables.JsReference)
+                if (jsRefUserData) {
+                    const referencePointer = this.cmodule.module.getValue(jsRefUserData, '*')
+                    return this.cmodule.getRef(referencePointer)
+                }
+            }
+            // Fallthrough if unrecognised user data
             default:
                 console.warn(`The type '${this.cmodule.lua_typename(this.address, type)}' returned is not supported on JS`)
                 return new Pointer(this.cmodule.lua_topointer(this.address, idx))
@@ -226,6 +330,19 @@ export default class Thread {
 
             const typename = this.cmodule.lua_typename(this.address, type)
             log(i, typename, value)
+        }
+    }
+
+    private assertOk(result: LuaReturn): void {
+        if (result !== LuaReturn.Ok && result !== LuaReturn.Yield) {
+            const resultString = LuaReturn[result]
+            let message = `Lua Error(${resultString}/${result})`
+            if (this.cmodule.lua_gettop(this.address) > 0) {
+                const error = this.cmodule.lua_tolstring(this.address, -1, undefined)
+                message += `: ${error}`
+                this.cmodule.lua_pop(this.address, 1)
+            }
+            throw new Error(message)
         }
     }
 
@@ -262,10 +379,27 @@ export default class Thread {
 
     private createAndPushFunctionReference(pointer: number): void {
         // 4 = size of pointer in wasm.
-        const userDataPointer = this.cmodule.lua_newuserdatauv(this.address, 4, 0)
+        const userDataPointer = this.cmodule.lua_newuserdatauv(this.address, PointerSize, 0)
         this.cmodule.module.setValue(userDataPointer, pointer, '*')
 
         if (LuaType.Nil === this.cmodule.luaL_getmetatable(this.address, LuaMetatables.FunctionReference)) {
+            // Pop the pushed nil value
+            this.cmodule.lua_pop(this.address, 1)
+            throw new Error(`metatable not found: ${LuaMetatables.FunctionReference}`)
+        }
+
+        // Set as the metatable for the userdata.
+        // -1 is the metatable, -2 is the user data.
+        this.cmodule.lua_setmetatable(this.address, -2)
+    }
+
+    private createAndPushJsReference(object: any): void {
+        const pointer = this.cmodule.ref(object)
+        // 4 = size of pointer in wasm.
+        const userDataPointer = this.cmodule.lua_newuserdatauv(this.address, PointerSize, 0)
+        this.cmodule.module.setValue(userDataPointer, pointer, '*')
+
+        if (LuaType.Nil === this.cmodule.luaL_getmetatable(this.address, LuaMetatables.JsReference)) {
             // Pop the pushed nil value
             this.cmodule.lua_pop(this.address, 1)
             throw new Error(`metatable not found: ${LuaMetatables.FunctionReference}`)

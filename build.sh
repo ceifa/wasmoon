@@ -24,7 +24,11 @@ emcc \
     -s EXPORT_ES6=1 \
     -s MALLOC=emmalloc \
     -s EXPORTED_FUNCTIONS="[
+        '_malloc', \
+        '_free', \
+        '_realloc', \
         '_luaL_newstate', \
+        '_lua_newstate', \
         '_luaL_openlibs', \
         '_luaL_loadstring', \
         '_luaL_loadfilex', \
@@ -34,6 +38,8 @@ emcc \
         '_lua_toboolean', \
         '_lua_topointer', \
         '_lua_tothread', \
+        '_lua_newthread', \
+        '_lua_resetthread', \
         '_lua_gettable', \
         '_lua_next', \
         '_lua_type', \
@@ -52,11 +58,14 @@ emcc \
         '_lua_settable', \
         '_lua_callk', \
         '_lua_pcallk', \
+        '_lua_yieldk', \
+        '_lua_resume', \
         '_lua_pushcclosure', \
         '_lua_getfield', \
         '_luaL_newmetatable', \
         '_lua_newuserdatauv', \
         '_luaL_checkudata', \
+        '_luaL_testudata', \
         '_luaL_ref', \
         '_luaL_unref', \
         '_lua_rawgeti', \
