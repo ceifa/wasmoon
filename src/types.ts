@@ -36,6 +36,7 @@ export enum LuaType {
 
 export enum LuaMetatables {
     FunctionReference = 'function_reference',
+    JsReference = 'js_reference',
 }
 
 declare global {

@@ -4,6 +4,7 @@ import type LuaWasm from './luawasm'
 
 export default class Global extends Thread {
     public readonly functionGcPointer: number
+    public readonly jsRefGcPointer: number
 
     constructor(cmodule: LuaWasm, address: LuaState) {
         super(cmodule, address)
@@ -23,6 +24,28 @@ export default class Global extends Thread {
         if (cmodule.luaL_newmetatable(address, LuaMetatables.FunctionReference)) {
             cmodule.lua_pushstring(address, '__gc')
             cmodule.lua_pushcclosure(address, this.functionGcPointer, 0)
+            cmodule.lua_settable(address, -3)
+
+            cmodule.lua_pushstring(address, '__metatable')
+            cmodule.lua_pushstring(address, 'protected metatable')
+            cmodule.lua_settable(address, -3)
+        }
+        // Pop the metatable from the stack.
+        cmodule.lua_pop(address, 1)
+
+        this.jsRefGcPointer = cmodule.module.addFunction((calledL: LuaState) => {
+            // Throws a lua error which does a jump if it does not match.
+            const userDataPointer = cmodule.luaL_checkudata(calledL, 1, LuaMetatables.JsReference)
+            const referencePointer = cmodule.module.getValue(userDataPointer, '*')
+            cmodule.unref(referencePointer)
+
+            return LuaReturn.Ok
+        }, 'ii')
+
+        // Creates metatable if it doesn't exist, always pushes it onto the stack.
+        if (0 !== cmodule.luaL_newmetatable(address, LuaMetatables.JsReference)) {
+            cmodule.lua_pushstring(address, '__gc')
+            cmodule.lua_pushcclosure(address, this.jsRefGcPointer, 0)
             cmodule.lua_settable(address, -3)
 
             cmodule.lua_pushstring(address, '__metatable')

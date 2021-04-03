@@ -178,3 +178,67 @@ test('lua_resume with yield succeeds', async () => {
     const finalValue = thread.getValue(-1)
     expect(finalValue).toEqual(20)
 })
+
+test('lua_resume with async yield callback', async () => {
+    jest.useFakeTimers()
+
+    const engine = await getEngine()
+    const thread = engine.global.newThread()
+
+    thread.set('asyncCallback', async (input) => {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        return Promise.resolve(input * 2)
+    })
+
+    thread.loadString(`
+        local result = asyncCallback(15)
+        return result
+    `)
+
+    const resumeResult = thread.resume(0)
+    expect(resumeResult.result).toEqual(LuaReturn.Yield)
+    expect(resumeResult.resultCount).toEqual(1)
+
+    const yieldValue = thread.getValue(-1)
+    thread.pop(resumeResult.resultCount)
+    if (Promise.resolve(yieldValue) !== yieldValue) {
+        throw new Error('expected a promise')
+    }
+
+    jest.runOnlyPendingTimers()
+    await yieldValue
+
+    const finalResumeResult = thread.resume(0)
+    expect(finalResumeResult.result).toEqual(LuaReturn.Ok)
+    expect(finalResumeResult.resultCount).toEqual(1)
+
+    const finalValue = thread.getValue(-1)
+    expect(finalValue).toEqual(30)
+})
+
+test('run with async callback', async () => {
+    const engine = await getEngine()
+    const thread = engine.global.newThread()
+
+    thread.set('asyncCallback', async (input) => {
+        return Promise.resolve(input * 2)
+    })
+
+    thread.loadString(`
+        local input = ...
+        assert(type(input) == "number")
+        assert(type(asyncCallback) == "function")
+        local result1 = asyncCallback(input)
+        local result2 = asyncCallback(result1)
+        return result2
+    `)
+
+    thread.pushValue(3)
+    const resumeResult = await thread.run(1)
+
+    expect(resumeResult.result).toEqual(LuaReturn.Ok)
+    expect(resumeResult.resultCount).toEqual(1)
+
+    const finalValue = thread.getValue(-1)
+    expect(finalValue).toEqual(3 * 2 * 2)
+})

@@ -56,12 +56,14 @@ emcc \
         '_lua_settable', \
         '_lua_callk', \
         '_lua_pcallk', \
+        '_lua_yieldk', \
         '_lua_resume', \
         '_lua_pushcclosure', \
         '_lua_getfield', \
         '_luaL_newmetatable', \
         '_lua_newuserdatauv', \
         '_luaL_checkudata', \
+        '_luaL_testudata', \
         '_luaL_ref', \
         '_luaL_unref', \
         '_lua_rawgeti', \
