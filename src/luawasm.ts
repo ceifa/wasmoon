@@ -9,6 +9,7 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     setValue: typeof setValue
     getValue: typeof getValue
     FS: typeof FS
+    _realloc: (pointer: number, size: number) => number
 }
 
 interface ReferenceMetadata {
@@ -31,6 +32,7 @@ export default class LuaWasm {
     public module: LuaEmscriptenModule
 
     public luaL_newstate: () => LuaState
+    public lua_newstate: (allocatorFunction: number, userData: number | null) => LuaState
     public luaL_openlibs: (L: LuaState) => void
     public luaL_loadstring: (L: LuaState, code: string) => LuaReturn
     public luaL_loadfilex: (L: LuaState, filename: string, mode?: string) => LuaReturn
@@ -82,6 +84,7 @@ export default class LuaWasm {
         this.module = module
 
         this.luaL_newstate = this.module.cwrap('luaL_newstate', 'number', [])
+        this.lua_newstate = this.module.cwrap('lua_newstate', 'number', ['number', 'number'])
         this.luaL_openlibs = this.module.cwrap('luaL_openlibs', null, ['number'])
         this.luaL_loadstring = this.module.cwrap('luaL_loadstring', 'number', ['number', 'string'])
         this.luaL_loadfilex = this.module.cwrap('luaL_loadfilex', 'number', ['number', 'string', 'string'])

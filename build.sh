@@ -26,7 +26,9 @@ emcc \
     -s EXPORTED_FUNCTIONS="[
         '_malloc', \
         '_free', \
+        '_realloc', \
         '_luaL_newstate', \
+        '_lua_newstate', \
         '_luaL_openlibs', \
         '_luaL_loadstring', \
         '_luaL_loadfilex', \

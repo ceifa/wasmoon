@@ -5,8 +5,8 @@ import type LuaWasm from './luawasm'
 export default class Lua {
     public global: Global
 
-    constructor(private cmodule: LuaWasm, openStandardLibs: boolean) {
-        this.global = new Global(this.cmodule, this.cmodule.luaL_newstate())
+    public constructor(private cmodule: LuaWasm, openStandardLibs: boolean) {
+        this.global = new Global(this.cmodule)
 
         if (this.global.isClosed()) {
             throw new Error('Lua state could not be created (probably due to lack of memory)')

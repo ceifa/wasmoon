@@ -242,3 +242,41 @@ test('run with async callback', async () => {
     const finalValue = thread.getValue(-1)
     expect(finalValue).toEqual(3 * 2 * 2)
 })
+
+test('get memory use succeeds', async () => {
+    const engine = await getEngine()
+    expect(engine.global.getMemoryUsed()).toBeGreaterThan(0)
+})
+
+test('limit memory use causes program loading failure succeeds', async () => {
+    const engine = await getEngine()
+    engine.global.setMemoryMax(engine.global.getMemoryUsed())
+    expect(() => {
+        engine.global.loadString(`
+            local a = 10
+            local b = 20
+            return a + b
+        `)
+    }).toThrow('Lua Error(ErrorMem/4): not enough memory')
+
+    // Remove the limit and retry
+    engine.global.setMemoryMax(undefined)
+    engine.global.loadString(`
+        local a = 10
+        local b = 20
+        return a + b
+    `)
+})
+
+test('limit memory use causes program runtime failure succeeds', async () => {
+    const engine = await getEngine()
+    engine.global.loadString(`
+        local tab = {}
+        for i = 1, 10, 1 do
+            tab[i] = i
+        end
+    `)
+    engine.global.setMemoryMax(engine.global.getMemoryUsed())
+
+    await expect(engine.global.run()).rejects.toThrow('Lua Error(ErrorMem/4): not enough memory')
+})

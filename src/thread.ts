@@ -20,6 +20,7 @@ export default class Thread {
             : undefined
 
     private global: Global | this
+    private continuance?: number
 
     public constructor(cmodule: LuaWasm, address: number, global?: Global) {
         this.cmodule = cmodule
@@ -43,6 +44,10 @@ export default class Thread {
 
     public resetThread(): void {
         this.assertOk(this.cmodule.lua_resetthread(this.address))
+        if (this.continuance !== undefined) {
+            this.cmodule.module.removeFunction(this.continuance)
+            this.continuance = undefined
+        }
     }
 
     public loadString(luaCode: string): void {
@@ -177,10 +182,16 @@ export default class Thread {
 
                 let results: any | undefined = undefined
                 if (Promise.resolve(result) === result) {
-                    // TODO If continuance is never called then this will never cleanup.
-                    const continuance = this.cmodule.module.addFunction((continuanceState: LuaState, _status: number, context: number) => {
+                    // Cleanup previous calls that may be left if a thread is never resumed.
+                    if (this.continuance !== undefined) {
+                        this.cmodule.module.removeFunction(this.continuance)
+                    }
+                    this.continuance = this.cmodule.module.addFunction((continuanceState: LuaState, _status: number, context: number) => {
                         // Remove the continuance function references.
                         this.cmodule.module.removeFunction(context)
+                        if (this.continuance === context) {
+                            this.continuance = undefined
+                        }
 
                         const continuanceThread = this.stateToThread(continuanceState)
                         if (results === undefined) {
@@ -205,7 +216,7 @@ export default class Thread {
                     this.createAndPushJsReference(promise)
 
                     // Pass the continuance function as the function and the context.
-                    return this.cmodule.lua_yieldk(calledL, 1, continuance, continuance)
+                    return this.cmodule.lua_yieldk(calledL, 1, this.continuance, this.continuance)
                 } else {
                     if (result === undefined) {
                         return 0
