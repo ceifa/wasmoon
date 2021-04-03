@@ -92,19 +92,14 @@ export default class Global extends Thread {
     }
 
     public close(): void {
-        if (this.closed) {
-            return
+        if (this.isClosed()) {
+            return;
         }
-        this.closed = true
-        // Do this before removing the gc to force
-        this.cmodule.lua_close(this.address)
+
+        super.close();
         this.cmodule.module.removeFunction(this.functionGcPointer)
         this.cmodule.module.removeFunction(this.jsRefGcPointer)
         this.cmodule.module.removeFunction(this.allocatorFunctionPointer)
-    }
-
-    public isClosed(): boolean {
-        return !this.address || this.closed
     }
 
     public getMemoryUsed(): number {

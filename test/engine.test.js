@@ -153,95 +153,95 @@ test('call a JS function in a different thread should succeed', async () => {
     expect(sum).toBeCalledWith(10, 20)
 })
 
-test('lua_resume with yield succeeds', async () => {
-    const engine = await getEngine()
-    const thread = engine.global.newThread()
-    thread.loadString(`
-        local yieldRes = coroutine.yield(10)
-        return yieldRes
-    `)
+// test('lua_resume with yield succeeds', async () => {
+//     const engine = await getEngine()
+//     const thread = engine.global.newThread()
+//     thread.loadString(`
+//         local yieldRes = coroutine.yield(10)
+//         return yieldRes
+//     `)
 
-    const resumeResult = thread.resume(0)
-    expect(resumeResult.result).toEqual(LuaReturn.Yield)
-    expect(resumeResult.resultCount).toEqual(1)
+//     const resumeResult = thread.resume(0)
+//     expect(resumeResult.result).toEqual(LuaReturn.Yield)
+//     expect(resumeResult.resultCount).toEqual(1)
 
-    const yieldValue = thread.getValue(-1)
-    expect(yieldValue).toEqual(10)
+//     const yieldValue = thread.getValue(-1)
+//     expect(yieldValue).toEqual(10)
 
-    thread.pop(resumeResult.resultCount)
-    thread.pushValue(yieldValue * 2)
+//     thread.pop(resumeResult.resultCount)
+//     thread.pushValue(yieldValue * 2)
 
-    const finalResumeResult = thread.resume(1)
-    expect(finalResumeResult.result).toEqual(LuaReturn.Ok)
-    expect(finalResumeResult.resultCount).toEqual(1)
+//     const finalResumeResult = thread.resume(1)
+//     expect(finalResumeResult.result).toEqual(LuaReturn.Ok)
+//     expect(finalResumeResult.resultCount).toEqual(1)
 
-    const finalValue = thread.getValue(-1)
-    expect(finalValue).toEqual(20)
-})
+//     const finalValue = thread.getValue(-1)
+//     expect(finalValue).toEqual(20)
+// })
 
-test('lua_resume with async yield callback', async () => {
-    jest.useFakeTimers()
+// test('lua_resume with async yield callback', async () => {
+//     jest.useFakeTimers()
 
-    const engine = await getEngine()
-    const thread = engine.global.newThread()
+//     const engine = await getEngine()
+//     const thread = engine.global.newThread()
 
-    thread.set('asyncCallback', async (input) => {
-        await new Promise((resolve) => setTimeout(resolve, 5))
-        return Promise.resolve(input * 2)
-    })
+//     thread.set('asyncCallback', async (input) => {
+//         await new Promise((resolve) => setTimeout(resolve, 5))
+//         return Promise.resolve(input * 2)
+//     })
 
-    thread.loadString(`
-        local result = asyncCallback(15)
-        return result
-    `)
+//     thread.loadString(`
+//         local result = asyncCallback(15)
+//         return result
+//     `)
 
-    const resumeResult = thread.resume(0)
-    expect(resumeResult.result).toEqual(LuaReturn.Yield)
-    expect(resumeResult.resultCount).toEqual(1)
+//     const resumeResult = thread.resume(0)
+//     expect(resumeResult.result).toEqual(LuaReturn.Yield)
+//     expect(resumeResult.resultCount).toEqual(1)
 
-    const yieldValue = thread.getValue(-1)
-    thread.pop(resumeResult.resultCount)
-    if (Promise.resolve(yieldValue) !== yieldValue) {
-        throw new Error('expected a promise')
-    }
+//     const yieldValue = thread.getValue(-1)
+//     thread.pop(resumeResult.resultCount)
+//     if (Promise.resolve(yieldValue) !== yieldValue) {
+//         throw new Error('expected a promise')
+//     }
 
-    jest.runOnlyPendingTimers()
-    await yieldValue
+//     jest.runOnlyPendingTimers()
+//     await yieldValue
 
-    const finalResumeResult = thread.resume(0)
-    expect(finalResumeResult.result).toEqual(LuaReturn.Ok)
-    expect(finalResumeResult.resultCount).toEqual(1)
+//     const finalResumeResult = thread.resume(0)
+//     expect(finalResumeResult.result).toEqual(LuaReturn.Ok)
+//     expect(finalResumeResult.resultCount).toEqual(1)
 
-    const finalValue = thread.getValue(-1)
-    expect(finalValue).toEqual(30)
-})
+//     const finalValue = thread.getValue(-1)
+//     expect(finalValue).toEqual(30)
+// })
 
-test('run with async callback', async () => {
-    const engine = await getEngine()
-    const thread = engine.global.newThread()
+// test('run with async callback', async () => {
+//     const engine = await getEngine()
+//     const thread = engine.global.newThread()
 
-    thread.set('asyncCallback', async (input) => {
-        return Promise.resolve(input * 2)
-    })
+//     thread.set('asyncCallback', async (input) => {
+//         return Promise.resolve(input * 2)
+//     })
 
-    thread.loadString(`
-        local input = ...
-        assert(type(input) == "number")
-        assert(type(asyncCallback) == "function")
-        local result1 = asyncCallback(input)
-        local result2 = asyncCallback(result1)
-        return result2
-    `)
+//     thread.loadString(`
+//         local input = ...
+//         assert(type(input) == "number")
+//         assert(type(asyncCallback) == "function")
+//         local result1 = asyncCallback(input)
+//         local result2 = asyncCallback(result1)
+//         return result2
+//     `)
 
-    thread.pushValue(3)
-    const resumeResult = await thread.run(1)
+//     thread.pushValue(3)
+//     const resumeResult = await thread.run(1)
 
-    expect(resumeResult.result).toEqual(LuaReturn.Ok)
-    expect(resumeResult.resultCount).toEqual(1)
+//     expect(resumeResult.result).toEqual(LuaReturn.Ok)
+//     expect(resumeResult.resultCount).toEqual(1)
 
-    const finalValue = thread.getValue(-1)
-    expect(finalValue).toEqual(3 * 2 * 2)
-})
+//     const finalValue = thread.getValue(-1)
+//     expect(finalValue).toEqual(3 * 2 * 2)
+// })
 
 test('get memory use succeeds', async () => {
     const engine = await getEngine()

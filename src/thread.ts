@@ -8,7 +8,7 @@ import type LuaWasm from './luawasm'
 export default class Thread {
     public readonly address: LuaState = 0
     public readonly cmodule: LuaWasm
-    protected closed = false
+    private closed = false
     // Backward compatibility
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
@@ -135,7 +135,12 @@ export default class Thread {
         } else if (type === 'boolean') {
             this.cmodule.lua_pushboolean(this.address, target)
         } else if (type === 'object') {
-            if (target instanceof Thread) {
+            if (target instanceof Promise) {
+                this.pushValue({
+                    next: (_: unknown, ...args: Parameters<typeof target.then>) => target
+                        .then(...args)
+                })
+            } else if (target instanceof Thread) {
                 this.cmodule.lua_pushthread(target.address)
             } else {
                 const table = this.cmodule.lua_gettop(this.address) + 1
@@ -180,57 +185,57 @@ export default class Thread {
 
                 const result = target(...args)
 
-                let results: any | undefined = undefined
-                if (Promise.resolve(result) === result) {
-                    // Cleanup previous calls that may be left if a thread is never resumed.
-                    if (this.continuance !== undefined) {
-                        this.cmodule.module.removeFunction(this.continuance)
-                    }
-                    this.continuance = this.cmodule.module.addFunction((continuanceState: LuaState, _status: number, context: number) => {
-                        // Remove the continuance function references.
-                        this.cmodule.module.removeFunction(context)
-                        if (this.continuance === context) {
-                            this.continuance = undefined
-                        }
+                // let results: any | undefined = undefined
+                // if (Promise.resolve(result) === result) {
+                //     // Cleanup previous calls that may be left if a thread is never resumed.
+                //     if (this.continuance !== undefined) {
+                //         this.cmodule.module.removeFunction(this.continuance)
+                //     }
+                //     this.continuance = this.cmodule.module.addFunction((continuanceState: LuaState, _status: number, context: number) => {
+                //         // Remove the continuance function references.
+                //         this.cmodule.module.removeFunction(context)
+                //         if (this.continuance === context) {
+                //             this.continuance = undefined
+                //         }
 
-                        const continuanceThread = this.stateToThread(continuanceState)
-                        if (results === undefined) {
-                            return 0
-                        }
-                        if (results instanceof MultiReturn) {
-                            for (const item of results) {
-                                continuanceThread.pushValue(item)
-                            }
-                            return results.length
-                        } else {
-                            continuanceThread.pushValue(results)
-                            return 1
-                        }
-                    }, 'iiii')
+                //         const continuanceThread = this.stateToThread(continuanceState)
+                //         if (results === undefined) {
+                //             return 0
+                //         }
+                //         if (results instanceof MultiReturn) {
+                //             for (const item of results) {
+                //                 continuanceThread.pushValue(item)
+                //             }
+                //             return results.length
+                //         } else {
+                //             continuanceThread.pushValue(results)
+                //             return 1
+                //         }
+                //     }, 'iiii')
 
-                    // Push promise to stack as user data to be passed back to resume.
-                    const promise = result.then((asyncResult: any) => {
-                        results = asyncResult
-                    })
+                //     // Push promise to stack as user data to be passed back to resume.
+                //     const promise = result.then((asyncResult: any) => {
+                //         results = asyncResult
+                //     })
 
-                    this.createAndPushJsReference(promise)
+                //     this.createAndPushJsReference(promise)
 
-                    // Pass the continuance function as the function and the context.
-                    return this.cmodule.lua_yieldk(calledL, 1, this.continuance, this.continuance)
-                } else {
-                    if (result === undefined) {
-                        return 0
-                    }
-                    if (result instanceof MultiReturn) {
-                        for (const item of result) {
-                            thread.pushValue(item)
-                        }
-                        return result.length
-                    } else {
-                        thread.pushValue(result)
-                        return 1
-                    }
+                //     // Pass the continuance function as the function and the context.
+                //     return this.cmodule.lua_yieldk(calledL, 1, this.continuance, this.continuance)
+                // } else {
+                if (result === undefined) {
+                    return 0
                 }
+                if (result instanceof MultiReturn) {
+                    for (const item of result) {
+                        thread.pushValue(item)
+                    }
+                    return result.length
+                } else {
+                    thread.pushValue(result)
+                    return 1
+                }
+                // }
             }, 'ii')
             // Creates a new userdata with metatable pointing to the function pointer.
             // Pushes the new userdata onto the stack.
@@ -319,6 +324,20 @@ export default class Thread {
                 console.warn(`The type '${this.cmodule.lua_typename(this.address, type)}' returned is not supported on JS`)
                 return new Pointer(this.cmodule.lua_topointer(this.address, idx))
         }
+    }
+
+    public close(): void {
+        if (!this.closed) {
+            return
+        }
+
+        this.closed = true
+        // Do this before removing the gc to force
+        this.cmodule.lua_close(this.address)
+    }
+
+    public isClosed(): boolean {
+        return !this.address || this.closed
     }
 
     public dumpStack(log = console.log): void {
