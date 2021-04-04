@@ -6,7 +6,7 @@ test('mount a file and require inside lua should succeed', async () => {
     await factory.mountFile('test.lua', 'answerToLifeTheUniverseAndEverything = 42')
     const engine = await factory.createEngine()
 
-    engine.doString('require("test")')
+    await engine.doString('require("test")')
 
     expect(engine.global.get('answerToLifeTheUniverseAndEverything')).toBe(42)
 })
@@ -16,9 +16,10 @@ test('mount a file in a complex directory and require inside lua should succeed'
     await factory.mountFile('yolo/sofancy/test.lua', 'return 42')
     const engine = await factory.createEngine()
 
-    const value = engine.doString('return require("yolo/sofancy/test")')
+    const value = await engine.doString('return require("yolo/sofancy/test")')
 
-    expect(value).toBe(42)
+    // Require returns the resolution method.
+    expect(value).toEqual([42, './yolo/sofancy/test.lua'])
 })
 
 test('mount a init file and require the module inside lua should succeed', async () => {
@@ -26,17 +27,15 @@ test('mount a init file and require the module inside lua should succeed', async
     await factory.mountFile('hello/init.lua', 'return 42')
     const engine = await factory.createEngine()
 
-    const value = engine.doString('return require("hello")')
+    const value = await engine.doString('return require("hello")')
 
-    expect(value).toBe(42)
+    expect(value).toEqual([42, './hello/init.lua'])
 })
 
 test('require a file which is not mounted should throw', async () => {
     const engine = await getEngine()
 
-    expect(() => {
-        engine.doString('require("nothing")')
-    }).toThrow()
+    await expect(engine.doString('require("nothing")')).rejects.toThrow()
 })
 
 test('mount a file and run it should succeed', async () => {
@@ -44,15 +43,13 @@ test('mount a file and run it should succeed', async () => {
     const engine = await factory.createEngine()
 
     await factory.mountFile('init.lua', `return 42`)
-    const value = engine.doFile('init.lua')
+    const value = await engine.doFile('init.lua')
 
-    expect(value).toBe(42)
+    expect(value).toEqual([42])
 })
 
 test('run a file which is not mounted should throw', async () => {
     const engine = await getEngine()
 
-    expect(() => {
-        engine.doFile('init.lua')
-    }).toThrow()
+    await expect(engine.doFile('init.lua')).rejects.toThrow()
 })

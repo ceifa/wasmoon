@@ -59,6 +59,8 @@ export default class LuaWasm {
     public lua_createtable: (L: LuaState, narr: number, nrec: number) => void
     public lua_gettop: (L: LuaState) => number
     public lua_settop: (L: LuaState, idx: number) => void
+    public lua_rotate: (L: LuaState, idx: number, count: number) => void
+    public lua_xmove: (fromState: LuaState, toState: LuaState, count: number) => void
     public lua_settable: (L: LuaState, idx: number) => void
     public lua_callk: (L: LuaState, nargs: number, nresults: number, ctx: number, func?: number) => void
     public lua_pcallk: (L: LuaState, nargs: number, nresults: number, msgh: number, ctx: number, func?: number) => number
@@ -111,10 +113,12 @@ export default class LuaWasm {
         this.lua_createtable = this.module.cwrap('lua_createtable', null, ['number', 'number', 'number'])
         this.lua_gettop = this.module.cwrap('lua_gettop', 'number', ['number'])
         this.lua_settop = this.module.cwrap('lua_settop', null, ['number', 'number'])
+        this.lua_xmove = this.module.cwrap('lua_xmove', null, ['number', 'number', 'number'])
         this.lua_settable = this.module.cwrap('lua_settable', null, ['number', 'number'])
         this.lua_callk = this.module.cwrap('lua_callk', null, ['number', 'number', 'number', 'number', 'number'])
         this.lua_pcallk = this.module.cwrap('lua_pcallk', 'number', ['number', 'number', 'number', 'number', 'number', 'number'])
         this.lua_yieldk = this.module.cwrap('lua_yieldk', 'number', ['number', 'number', 'number', 'number'])
+        this.lua_rotate = this.module.cwrap('lua_rotate', null, ['number', 'number', 'number'])
 
         const lua_resume_raw = this.module.cwrap('lua_resume', 'number', ['number', 'number', 'number', 'number'])
         this.lua_resume = (luaState, fromState, argCount) => {
@@ -142,6 +146,11 @@ export default class LuaWasm {
         this.lua_rawgeti = this.module.cwrap('lua_rawgeti', 'number', ['number', 'number', 'number'])
         this.lua_typename = this.module.cwrap('lua_typename', 'string', ['number', 'number'])
         this.lua_close = this.module.cwrap('lua_close', null, ['number'])
+    }
+
+    public lua_remove(luaState: LuaState, index: number): void {
+        this.lua_rotate(luaState, index, -1)
+        this.lua_pop(luaState, 1)
     }
 
     public lua_pop(luaState: LuaState, count: number): void {

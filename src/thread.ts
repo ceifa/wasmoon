@@ -1,8 +1,7 @@
 import { Decoration } from './decoration'
-import { LUA_MULTRET, LUA_REGISTRYINDEX, LuaMetatables, LuaResumeResult, LuaReturn, LuaState, LuaType, PointerSize } from './types'
+import { LUA_REGISTRYINDEX, LuaMetatables, LuaResumeResult, LuaReturn, LuaState, LuaType, PointerSize } from './types'
 import { Pointer } from './pointer'
 import MultiReturn from './multireturn'
-import type Global from './global'
 import type LuaWasm from './luawasm'
 
 export default class Thread {
@@ -13,19 +12,19 @@ export default class Thread {
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
             ? new FinalizationRegistry((func: number) => {
-                  if (!this.closed) {
+                  if (!this.isClosed()) {
                       this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
                   }
               })
             : undefined
 
-    private global: Global | this
+    private parent?: Thread
     private continuance?: number
 
-    public constructor(cmodule: LuaWasm, address: number, global?: Global) {
+    public constructor(cmodule: LuaWasm, address: number, parent?: Thread) {
         this.cmodule = cmodule
         this.address = address
-        this.global = global ?? this
+        this.parent = parent
     }
 
     public get(name: string): any {
@@ -39,7 +38,9 @@ export default class Thread {
     }
 
     public newThread(): Thread {
-        return new Thread(this.cmodule, this.cmodule.lua_newthread(this.address))
+        const address = this.cmodule.lua_newthread(this.address)
+        // The thread is pushed onto the stack. Pop it to cleanup.
+        return new Thread(this.cmodule, address, this)
     }
 
     public resetThread(): void {
@@ -67,17 +68,16 @@ export default class Thread {
     public async run(argCount = 0): Promise<LuaResumeResult> {
         let resumeResult: LuaResumeResult = this.resume(argCount)
         while (resumeResult.result === LuaReturn.Yield) {
-            if (resumeResult.resultCount === 0) {
-                continue
+            if (resumeResult.resultCount > 0) {
+                const lastValue = this.getValue(-1)
+                if (lastValue === Promise.resolve(lastValue)) {
+                    await lastValue
+                }
+                this.pop(resumeResult.resultCount)
             }
-            const lastValue = this.getValue(-1)
-            if (lastValue === Promise.resolve(lastValue)) {
-                await lastValue
-            }
-            this.pop(resumeResult.resultCount)
+
             resumeResult = this.resume(0)
         }
-        this.assertOk(resumeResult.result)
         return resumeResult
     }
 
@@ -85,26 +85,47 @@ export default class Thread {
         this.cmodule.lua_pop(this.address, count)
     }
 
-    public call(name: string, ...args: any[]): any[] {
-        const type = this.cmodule.lua_getglobal(this.address, name)
-        if (type !== LuaType.Function) {
-            throw new Error(`A function of type '${type}' was pushed, expected is ${LuaType.Function}`)
+    public getTop(): number {
+        return this.cmodule.lua_gettop(this.address)
+    }
+
+    public remove(index: number): void {
+        return this.cmodule.lua_remove(this.address, index)
+    }
+
+    public isClosed(): boolean {
+        return this.closed || Boolean(this.parent?.isClosed())
+    }
+
+    public async call(name: string, ...args: any[]): Promise<MultiReturn> {
+        const thread = this.newThread()
+        const threadIndex = this.getTop()
+        try {
+            const type = this.cmodule.lua_getglobal(thread.address, name)
+            if (type !== LuaType.Function) {
+                throw new Error(`A function of type '${type}' was pushed, expected is ${LuaType.Function}`)
+            }
+            for (const arg of args) {
+                thread.pushValue(arg)
+            }
+            const resumeResult = await thread.run(args.length)
+            if (resumeResult.resultCount > 0) {
+                this.cmodule.lua_xmove(thread.address, this.address, resumeResult.resultCount)
+            }
+            return this.getValues(resumeResult.resultCount)
+        } finally {
+            // Pop the thread
+            this.remove(threadIndex)
         }
+    }
 
-        for (const arg of args) {
-            this.pushValue(arg)
+    public getValues(count: number): MultiReturn {
+        const values = new MultiReturn(count)
+        const top = this.getTop()
+        for (let i = 0; i < count; i++) {
+            values[i] = this.getValue(top - count + i + 1)
         }
-
-        this.cmodule.lua_callk(this.address, args.length, LUA_MULTRET, 0, undefined)
-
-        const returns = this.cmodule.lua_gettop(this.address) - 1
-        const returnValues = new MultiReturn(returns)
-
-        for (let i = 0; i < returns; i++) {
-            returnValues[i] = this.getValue(i + 1)
-        }
-
-        return returnValues
+        return values
     }
 
     public pushValue(value: any, options: Partial<{ _done?: Record<string, number>; reference?: boolean }> = {}): void {
@@ -138,7 +159,7 @@ export default class Thread {
             if (target instanceof Thread) {
                 this.cmodule.lua_pushthread(target.address)
             } else {
-                const table = this.cmodule.lua_gettop(this.address) + 1
+                const table = this.getTop() + 1
 
                 options._done ??= {}
                 options._done[target] = table
@@ -180,44 +201,7 @@ export default class Thread {
 
                 const result = target(...args)
 
-                let results: any | undefined = undefined
-                if (Promise.resolve(result) === result) {
-                    // Cleanup previous calls that may be left if a thread is never resumed.
-                    if (this.continuance !== undefined) {
-                        this.cmodule.module.removeFunction(this.continuance)
-                    }
-                    this.continuance = this.cmodule.module.addFunction((continuanceState: LuaState, _status: number, context: number) => {
-                        // Remove the continuance function references.
-                        this.cmodule.module.removeFunction(context)
-                        if (this.continuance === context) {
-                            this.continuance = undefined
-                        }
-
-                        const continuanceThread = this.stateToThread(continuanceState)
-                        if (results === undefined) {
-                            return 0
-                        }
-                        if (results instanceof MultiReturn) {
-                            for (const item of results) {
-                                continuanceThread.pushValue(item)
-                            }
-                            return results.length
-                        } else {
-                            continuanceThread.pushValue(results)
-                            return 1
-                        }
-                    }, 'iiii')
-
-                    // Push promise to stack as user data to be passed back to resume.
-                    const promise = result.then((asyncResult: any) => {
-                        results = asyncResult
-                    })
-
-                    this.createAndPushJsReference(promise)
-
-                    // Pass the continuance function as the function and the context.
-                    return this.cmodule.lua_yieldk(calledL, 1, this.continuance, this.continuance)
-                } else {
+                if (Promise.resolve(result) !== result) {
                     if (result === undefined) {
                         return 0
                     }
@@ -231,6 +215,43 @@ export default class Thread {
                         return 1
                     }
                 }
+
+                let results: any | undefined = undefined
+                // Cleanup previous calls that may be left if a thread is never resumed.
+                if (this.continuance !== undefined) {
+                    this.cmodule.module.removeFunction(this.continuance)
+                }
+                this.continuance = this.cmodule.module.addFunction((continuanceState: LuaState, _status: number, context: number) => {
+                    // Remove the continuance function references.
+                    this.cmodule.module.removeFunction(context)
+                    if (this.continuance === context) {
+                        this.continuance = undefined
+                    }
+
+                    const continuanceThread = this.stateToThread(continuanceState)
+                    if (results === undefined) {
+                        return 0
+                    }
+                    if (results instanceof MultiReturn) {
+                        for (const item of results) {
+                            continuanceThread.pushValue(item)
+                        }
+                        return results.length
+                    } else {
+                        continuanceThread.pushValue(results)
+                        return 1
+                    }
+                }, 'iiii')
+
+                // Push promise to stack as user data to be passed back to resume.
+                const promise = result.then((asyncResult: any) => {
+                    results = asyncResult
+                })
+
+                this.createAndPushJsReference(promise)
+
+                // Pass the continuance function as the function and the context.
+                return this.cmodule.lua_yieldk(calledL, 1, this.continuance, this.continuance)
             }, 'ii')
             // Creates a new userdata with metatable pointing to the function pointer.
             // Pushes the new userdata onto the stack.
@@ -276,23 +297,27 @@ export default class Thread {
                     this.cmodule.lua_pushvalue(this.address, idx)
                     const func = this.cmodule.luaL_ref(this.address, LUA_REGISTRYINDEX)
 
-                    const jsFunc = (...args: any[]): any => {
-                        if (this.closed) {
+                    const jsFunc = async (...args: any[]): Promise<MultiReturn> => {
+                        if (this.isClosed()) {
                             console.warn('Tried to call a function after closing lua state')
-                            return
+                            return []
                         }
 
-                        const internalType = this.cmodule.lua_rawgeti(this.address, LUA_REGISTRYINDEX, func)
-                        if (internalType !== LuaType.Function) {
-                            throw new Error(`A function of type '${type}' was pushed, expected is ${LuaType.Function}`)
+                        const thread = this.newThread()
+                        try {
+                            const internalType = this.cmodule.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, func)
+                            if (internalType !== LuaType.Function) {
+                                throw new Error(`A function of type '${type}' was pushed, expected is ${LuaType.Function}`)
+                            }
+                            for (const arg of args) {
+                                thread.pushValue(arg)
+                            }
+                            const resumeResult = await thread.run(args.length)
+                            return thread.getValues(resumeResult.resultCount)
+                        } finally {
+                            // Pop the thread
+                            this.pop(1)
                         }
-
-                        for (const arg of args) {
-                            this.pushValue(arg)
-                        }
-
-                        this.cmodule.lua_callk(this.address, args.length, 1, 0, undefined)
-                        return this.getValue(-1)
                     }
 
                     this.functionRegistry?.register(jsFunc, func)
@@ -322,7 +347,7 @@ export default class Thread {
     }
 
     public dumpStack(log = console.log): void {
-        const top = this.cmodule.lua_gettop(this.address)
+        const top = this.getTop()
 
         for (let i = 1; i <= top; i++) {
             const type = this.cmodule.lua_type(this.address, i)
@@ -337,7 +362,7 @@ export default class Thread {
         if (result !== LuaReturn.Ok && result !== LuaReturn.Yield) {
             const resultString = LuaReturn[result]
             let message = `Lua Error(${resultString}/${result})`
-            if (this.cmodule.lua_gettop(this.address) > 0) {
+            if (this.getTop() > 0) {
                 const error = this.cmodule.lua_tolstring(this.address, -1, undefined)
                 message += `: ${error}`
                 this.cmodule.lua_pop(this.address, 1)
@@ -411,7 +436,7 @@ export default class Thread {
     }
 
     private stateToThread(L: LuaState): Thread {
-        return L === this.global.address ? this.global : new Thread(this.cmodule, L, this.global as Global)
+        return L === this.parent?.address ? this.parent : new Thread(this.cmodule, L, this)
     }
 
     private getValueDecorations(value: any): { value: any; decorations: any } {

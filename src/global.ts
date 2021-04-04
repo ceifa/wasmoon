@@ -39,6 +39,7 @@ export default class Global extends Thread {
         }, 'iiiii')
 
         const address = cmodule.lua_newstate(allocatorFunctionPointer, null)
+
         super(cmodule, address)
 
         this.memoryStats = memoryStats
@@ -104,7 +105,7 @@ export default class Global extends Thread {
     }
 
     public isClosed(): boolean {
-        return !this.address || this.closed
+        return !this.address || super.isClosed()
     }
 
     public getMemoryUsed(): number {

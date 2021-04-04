@@ -44,6 +44,8 @@ emcc \
         '_lua_next', \
         '_lua_type', \
         '_lua_settop', \
+        '_lua_xmove', \
+        '_lua_rotate', \
         '_lua_pushnil', \
         '_lua_pushvalue', \
         '_lua_pushinteger', \
