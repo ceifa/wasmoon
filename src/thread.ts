@@ -1,4 +1,4 @@
-import { Decoration } from './decoration'
+import { decorate, decorateFunction, Decoration } from './decoration'
 import { LUA_MULTRET, LUA_REGISTRYINDEX, LuaMetatables, LuaResumeResult, LuaReturn, LuaState, LuaType, PointerSize } from './types'
 import { Pointer } from './pointer'
 import MultiReturn from './multireturn'
@@ -13,10 +13,10 @@ export default class Thread {
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
             ? new FinalizationRegistry((func: number) => {
-                  if (!this.closed) {
-                      this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
-                  }
-              })
+                if (!this.closed) {
+                    this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
+                }
+            })
             : undefined
 
     private global: Global | this
@@ -107,7 +107,7 @@ export default class Thread {
         return returnValues
     }
 
-    public pushValue(value: any, options: Partial<{ _done?: Record<string, number>; reference?: boolean }> = {}): void {
+    public pushValue(value: any, options: Partial<{ _done?: Record<string, number> }> = {}): void {
         const { value: target, decorations } = this.getValueDecorations(value)
 
         const type = typeof target
@@ -117,8 +117,8 @@ export default class Thread {
             return
         }
 
-        if (options.reference) {
-            this.createAndPushJsReference(value)
+        if (decorations.reference) {
+            this.createAndPushJsReference(target)
             return
         }
 
@@ -138,6 +138,17 @@ export default class Thread {
             if (target instanceof Promise) {
                 this.pushValue({
                     next: (_: unknown, ...args: Parameters<typeof target.then>) => target.then(...args),
+                    await: decorateFunction((thread: Thread) => {
+                        target.then((value: any) => {
+                            thread.pushValue(value)
+                            this.cmodule.lua_resume(thread.address, this.address, 1)
+                        })
+
+                        this.cmodule.lua_yieldk(thread.address, 1, 0, undefined)
+
+                        return 0
+                    }, { receiveThread: true }),
+                    promise: decorate(target, { reference: true })
                 })
             } else if (target instanceof Thread) {
                 this.cmodule.lua_pushthread(target.address)
@@ -178,6 +189,11 @@ export default class Thread {
                 const args = []
 
                 const thread = this.stateToThread(calledL)
+
+                if (decorations.receiveThread) {
+                    args.push(thread)
+                }
+
                 for (let i = 1; i <= argsQuantity; i++) {
                     args.push(thread.getValue(i, undefined, { raw: decorations?.rawArguments?.includes(i - 1) }))
                 }
@@ -271,7 +287,12 @@ export default class Thread {
                 if (options.raw) {
                     return new Pointer(this.cmodule.lua_topointer(this.address, idx))
                 } else {
-                    return this.getTableValue(idx, options?._done)
+                    const table = this.getTableValue(idx, options?._done)
+                    if (table.promise && table.promise instanceof Promise) {
+                        return table.promise
+                    } else {
+                        return table
+                    }
                 }
             case LuaType.Function:
                 if (options.raw) {
