@@ -63,7 +63,7 @@ export default class LuaWasm {
     public lua_callk: (L: LuaState, nargs: number, nresults: number, ctx: number, func?: number) => void
     public lua_pcallk: (L: LuaState, nargs: number, nresults: number, msgh: number, ctx: number, func?: number) => number
     public lua_yieldk: (L: LuaState, nresults: number, context: number, continuance: number | undefined) => LuaReturn
-    public lua_status: (L: LuaState) => LuaReturn;
+    public lua_status: (L: LuaState) => LuaReturn
     public lua_resume: (L: LuaState, fromState: LuaState | undefined, argCount: number) => LuaResumeResult
     public lua_pushcclosure: (L: LuaState, cfunction: number, n: number) => void
     public luaL_newmetatable: (L: LuaState, name: string) => boolean

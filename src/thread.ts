@@ -13,10 +13,10 @@ export default class Thread {
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
             ? new FinalizationRegistry((func: number) => {
-                if (!this.closed) {
-                    this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
-                }
-            })
+                  if (!this.closed) {
+                      this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
+                  }
+              })
             : undefined
 
     private global: Global | this
@@ -60,22 +60,24 @@ export default class Thread {
     }
 
     public async run(argCount = 0): Promise<MultiReturn> {
-        let { result, resultCount }: LuaResumeResult = this.resume(argCount)
-        while (result === LuaReturn.Yield) {
-            if (resultCount === 0) {
+        let resumeResult: LuaResumeResult = this.resume(argCount)
+        while (resumeResult.result === LuaReturn.Yield) {
+            if (resumeResult.resultCount === 0) {
                 continue
             }
             const lastValue = this.getValue(-1)
             if (lastValue === Promise.resolve(lastValue)) {
                 await lastValue
+                resumeResult = { result: this.cmodule.lua_status(this.address), resultCount: 1 }
+            } else {
+                resumeResult = this.resume(0)
             }
-            result = this.cmodule.lua_status(this.address)
         }
-        this.assertOk(result)
+        this.assertOk(resumeResult.result)
         return this.getStackValues()
     }
 
-    public pop(count: number = 1): void {
+    public pop(count = 1): void {
         this.cmodule.lua_pop(this.address, count)
     }
 

@@ -112,7 +112,7 @@ test('await an promise outside coroutine should throw', async () => {
 
 test('await a thread run with async calls should succeed', async () => {
     const engine = await getEngine()
-    engine.global.set('sleep', input => new Promise(resolve => setTimeout(resolve, input)))
+    engine.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
     const asyncThread = engine.global.newThread()
 
     asyncThread.loadString(`
@@ -121,7 +121,7 @@ test('await a thread run with async calls should succeed', async () => {
     `)
 
     const asyncFunctionPromise = asyncThread.run()
-    jest.runAllTimers();
+    jest.runAllTimers()
     expect(await asyncFunctionPromise).toEqual([50])
 })
 
