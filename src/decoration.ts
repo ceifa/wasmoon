@@ -1,11 +1,11 @@
 export class Decoration {
-    constructor(public target: any, public options: any) { }
+    constructor(public target: any, public options: any) {}
 }
 
 export const decorateFunction = (
     target: Function,
     options: Partial<{
-        rawArguments: number[],
+        rawArguments: number[]
         receiveThread: boolean
     }>,
 ): Decoration => {

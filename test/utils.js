@@ -12,5 +12,5 @@ module.exports = {
     // Used to make the event loop cycle
     tick: async () => {
         return Promise.resolve()
-    }
+    },
 }

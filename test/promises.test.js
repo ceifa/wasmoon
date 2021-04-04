@@ -24,7 +24,7 @@ test('chain promises with next should succeed', async () => {
     const engine = await getEngine()
     const check = jest.fn()
     engine.global.set('check', check)
-    const promise = new Promise(resolve => resolve(60))
+    const promise = new Promise((resolve) => resolve(60))
     engine.global.set('promise', promise)
 
     engine.doString(`

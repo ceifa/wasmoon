@@ -1,4 +1,4 @@
-import { decorate, decorateFunction, Decoration } from './decoration'
+import { Decoration, decorate, decorateFunction } from './decoration'
 import { LUA_MULTRET, LUA_REGISTRYINDEX, LuaMetatables, LuaResumeResult, LuaReturn, LuaState, LuaType, PointerSize } from './types'
 import { Pointer } from './pointer'
 import MultiReturn from './multireturn'
@@ -13,10 +13,10 @@ export default class Thread {
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
             ? new FinalizationRegistry((func: number) => {
-                if (!this.closed) {
-                    this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
-                }
-            })
+                  if (!this.closed) {
+                      this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
+                  }
+              })
             : undefined
 
     private global: Global | this
@@ -138,17 +138,21 @@ export default class Thread {
             if (target instanceof Promise) {
                 this.pushValue({
                     next: (_: unknown, ...args: Parameters<typeof target.then>) => target.then(...args),
-                    await: decorateFunction((thread: Thread) => {
-                        target.then((value: any) => {
-                            thread.pushValue(value)
-                            this.cmodule.lua_resume(thread.address, this.address, 1)
-                        })
+                    await: decorateFunction(
+                        (thread: Thread) => {
+                            target.then((result: any) => {
+                                // eslint-disable-line
+                                thread.pushValue(result)
+                                this.cmodule.lua_resume(thread.address, this.address, 1)
+                            })
 
-                        this.cmodule.lua_yieldk(thread.address, 1, 0, undefined)
+                            this.cmodule.lua_yieldk(thread.address, 1, 0, undefined)
 
-                        return 0
-                    }, { receiveThread: true }),
-                    promise: decorate(target, { reference: true })
+                            return 0
+                        },
+                        { receiveThread: true },
+                    ),
+                    promise: decorate(target, { reference: true }),
                 })
             } else if (target instanceof Thread) {
                 this.cmodule.lua_pushthread(target.address)
