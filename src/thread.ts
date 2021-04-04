@@ -140,8 +140,8 @@ export default class Thread {
                     next: (_: unknown, ...args: Parameters<typeof target.then>) => target.then(...args),
                     await: decorateFunction(
                         (thread: Thread) => {
+                            // eslint-disable-next-line
                             target.then((result: any) => {
-                                // eslint-disable-line
                                 thread.pushValue(result)
                                 this.cmodule.lua_resume(thread.address, this.address, 1)
                             })
