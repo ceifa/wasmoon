@@ -62,16 +62,16 @@ export default class Thread {
     public async run(argCount = 0): Promise<MultiReturn> {
         let resumeResult: LuaResumeResult = this.resume(argCount)
         while (resumeResult.result === LuaReturn.Yield) {
-            if (resumeResult.resultCount === 0) {
-                continue
+            if (resumeResult.resultCount > 0) {
+                const lastValue = this.getValue(-1)
+                if (lastValue === Promise.resolve(lastValue)) {
+                    await lastValue
+                    resumeResult = { result: this.cmodule.lua_status(this.address), resultCount: 1 }
+                    continue
+                }
             }
-            const lastValue = this.getValue(-1)
-            if (lastValue === Promise.resolve(lastValue)) {
-                await lastValue
-                resumeResult = { result: this.cmodule.lua_status(this.address), resultCount: 1 }
-            } else {
-                resumeResult = this.resume(0)
-            }
+
+            resumeResult = this.resume(0)
         }
         this.assertOk(resumeResult.result)
         return this.getStackValues()
@@ -144,6 +144,10 @@ export default class Thread {
                             target.then((result: any) => {
                                 thread.pushValue(result)
                                 this.cmodule.lua_resume(thread.address, this.address, 1)
+                            }, (reason: any) => {
+                                this.pushValue(undefined)
+                                this.pushValue(reason)
+                                this.cmodule.lua_resume(thread.address, this.address, 2)
                             })
 
                             this.cmodule.lua_yieldk(thread.address, 1, 0, undefined)
