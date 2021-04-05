@@ -13,10 +13,10 @@ export default class Thread {
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
             ? new FinalizationRegistry((func: number) => {
-                if (!this.closed) {
-                    this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
-                }
-            })
+                  if (!this.closed) {
+                      this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
+                  }
+              })
             : undefined
 
     private global: Global | this
@@ -65,7 +65,11 @@ export default class Thread {
             if (resumeResult.resultCount > 0) {
                 const lastValue = this.getValue(-1)
                 if (lastValue === Promise.resolve(lastValue)) {
-                    await lastValue
+                    try {
+                        await lastValue
+                    } catch {
+                        // Errors will be throw on lua env
+                    }
                     resumeResult = { result: this.cmodule.lua_status(this.address), resultCount: 1 }
                     continue
                 }
@@ -140,33 +144,41 @@ export default class Thread {
                     next: (_: unknown, ...args: Parameters<typeof target.then>) => target.then(...args),
                     await: decorateFunction(
                         (thread: Thread) => {
-                            let finished = false
+                            let success: boolean | undefined = undefined
 
-                            const handlePromiseResult = (fulfilledResult: any, errorReason: any): void => {
-                                thread.pushValue(fulfilledResult)
-                                thread.pushValue(errorReason)
-                                finished = true
+                            const handlePromiseResult = (result: any, promiseSuccess: boolean): void => {
+                                success = promiseSuccess
+                                result = !success && result.message ? result.message : result
+                                thread.pushValue(result)
                                 // if everything goes right, the result is only the promise and we don't need to pop it
                                 this.cmodule.lua_resume(thread.address, this.address, 0)
                             }
 
                             // eslint-disable-next-line
                             target.then(
-                                (result: any) => handlePromiseResult(result, undefined),
-                                (reason: any) => handlePromiseResult(undefined, reason),
+                                (fulfilledResult: any) => handlePromiseResult(fulfilledResult, true),
+                                (reason: any) => handlePromiseResult(reason, false),
                             )
 
                             const continuance = this.cmodule.module.addFunction(() => {
-                                if (finished) {
+                                if (success !== undefined) {
                                     this.cmodule.module.removeFunction(continuance)
-                                    // return the values we just pushed above in "handlePromiseResult"
-                                    return 2
+
+                                    if (success) {
+                                        // return the value we just pushed above in "handlePromiseResult"
+                                        return 1
+                                    } else {
+                                        this.cmodule.lua_error(thread.address)
+                                        return 0
+                                    }
                                 } else {
+                                    this.createAndPushJsReference(target)
                                     this.cmodule.lua_yieldk(thread.address, 1, 0, continuance)
                                     return 0
                                 }
                             }, 'iiii')
 
+                            this.createAndPushJsReference(target)
                             this.cmodule.lua_yieldk(thread.address, 1, 0, continuance)
 
                             return 0
@@ -239,9 +251,9 @@ export default class Thread {
                         return 1
                     }
                 } catch (err) {
-                    // Yield errors should not be handled, it is lua managed
-                    if (this.cmodule.lua_status(thread.address) === LuaReturn.Yield) {
-                        throw err;
+                    // Thread has an error handler
+                    if (err === 'longjmp') {
+                        throw err
                     }
 
                     this.pushValue(err.message || err)

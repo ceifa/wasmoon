@@ -174,12 +174,24 @@ test('reject a promise should succeed', async () => {
     const asyncThread = engine.global.newThread()
 
     asyncThread.loadString(`
-        local success, err = throw():await()
-        assert(success == nil)
-        error(err)
+        throw():await()
     `)
 
     await expect(() => asyncThread.run()).rejects.toThrow()
+})
+
+test('pcall a promise await should succeed', async () => {
+    const engine = await getEngine()
+    engine.global.set('throw', () => new Promise((_, reject) => reject(new Error('expected test error'))))
+    const asyncThread = engine.global.newThread()
+
+    asyncThread.loadString(`
+        local succeed, err = pcall(throw().await)
+        assert(err == "expected test error")
+        return succeed
+    `)
+
+    expect(await asyncThread.run()).toEqual([false])
 })
 
 test('catch a promise rejection should succeed', async () => {
