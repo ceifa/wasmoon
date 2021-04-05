@@ -13,10 +13,10 @@ export default class Thread {
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
             ? new FinalizationRegistry((func: number) => {
-                  if (!this.closed) {
-                      this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
-                  }
-              })
+                if (!this.closed) {
+                    this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
+                }
+            })
             : undefined
 
     private global: Global | this
@@ -140,17 +140,35 @@ export default class Thread {
                     next: (_: unknown, ...args: Parameters<typeof target.then>) => target.then(...args),
                     await: decorateFunction(
                         (thread: Thread) => {
-                            // eslint-disable-next-line
-                            target.then((result: any) => {
-                                thread.pushValue(result)
-                                this.cmodule.lua_resume(thread.address, this.address, 1)
-                            }, (reason: any) => {
-                                this.pushValue(undefined)
-                                this.pushValue(reason)
-                                this.cmodule.lua_resume(thread.address, this.address, 2)
-                            })
+                            let finished = false
 
-                            this.cmodule.lua_yieldk(thread.address, 1, 0, undefined)
+                            const handlePromiseResult = (fulfilledResult: any, errorReason: any) => {
+                                thread.pushValue(fulfilledResult)
+                                thread.pushValue(errorReason)
+                                finished = true
+                                this.cmodule.lua_resume(thread.address, this.address, 0)
+                            }
+
+                            // eslint-disable-next-line
+                            target.then(
+                                (result: any) => handlePromiseResult(result, undefined),
+                                (reason: any) => handlePromiseResult(undefined, reason)
+                            )
+
+                            const continuance = this.cmodule.module.addFunction(() => {
+                                if (finished) {
+                                    this.cmodule.module.removeFunction(continuance)
+
+                                    // return the values we just pushed above
+                                    return 2
+                                } else {
+                                    this.cmodule.lua_yieldk(thread.address, 1, 0, continuance)
+                                }
+
+                                return 1
+                            }, 'iiii')
+
+                            this.cmodule.lua_yieldk(thread.address, 1, 0, continuance)
 
                             return 0
                         },

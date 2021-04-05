@@ -98,6 +98,32 @@ test('await an promise inside coroutine should succeed', async () => {
     expect(check).toBeCalledWith(60)
 })
 
+test('awaited coroutines should ignore resume until it resolves the promise', async () => {
+    const engine = await getEngine()
+    const check = jest.fn()
+    engine.global.set('check', check)
+    const promise = new Promise((resolve) => setTimeout(() => resolve(60), 10))
+    engine.global.set('promise', promise)
+
+    engine.doString(`
+        local co = coroutine.create(function()
+            local value = promise:await()
+            check(value)
+        end)
+        coroutine.resume(co)
+        coroutine.resume(co)
+        coroutine.resume(co)
+        coroutine.resume(co)
+        coroutine.resume(co)
+    `)
+
+    expect(check).not.toBeCalled()
+    jest.advanceTimersByTime(20)
+    await promise
+    await tick()
+    expect(check).toBeCalledWith(60)
+})
+
 test('await an promise outside coroutine should throw', async () => {
     const engine = await getEngine()
     const promise = new Promise((resolve) => setTimeout(() => resolve(60), 10))
