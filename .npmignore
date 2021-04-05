@@ -7,3 +7,4 @@ build.sh
 rollup.config.js
 .github
 .gitmodules
+build
