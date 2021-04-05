@@ -191,7 +191,7 @@ test('lua_resume with async yield callback', async () => {
     })
 
     thread.loadString(`
-        local result = asyncCallback(15)
+        local result = asyncCallback(15):await()
         return result
     `)
 
@@ -206,41 +206,8 @@ test('lua_resume with async yield callback', async () => {
     }
 
     jest.runOnlyPendingTimers()
-    await yieldValue
 
-    const finalResumeResult = thread.resume(0)
-    expect(finalResumeResult.result).toEqual(LuaReturn.Ok)
-    expect(finalResumeResult.resultCount).toEqual(1)
-
-    const finalValue = thread.getValue(-1)
-    expect(finalValue).toEqual(30)
-})
-
-test('run with async callback', async () => {
-    const engine = await getEngine()
-    const thread = engine.global.newThread()
-
-    thread.set('asyncCallback', async (input) => {
-        return Promise.resolve(input * 2)
-    })
-
-    thread.loadString(`
-        local input = ...
-        assert(type(input) == "number")
-        assert(type(asyncCallback) == "function")
-        local result1 = asyncCallback(input)
-        local result2 = asyncCallback(result1)
-        return result2
-    `)
-
-    thread.pushValue(3)
-    const resumeResult = await thread.run(1)
-
-    expect(resumeResult.result).toEqual(LuaReturn.Ok)
-    expect(resumeResult.resultCount).toEqual(1)
-
-    const finalValue = thread.getValue(-1)
-    expect(finalValue).toEqual(3 * 2 * 2)
+    expect(await yieldValue).toEqual(30)
 })
 
 test('get memory use succeeds', async () => {

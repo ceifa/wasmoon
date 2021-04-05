@@ -1,4 +1,4 @@
-import { Decoration } from './decoration'
+import { Decoration, decorate, decorateFunction } from './decoration'
 import { LUA_MULTRET, LUA_REGISTRYINDEX, LuaMetatables, LuaResumeResult, LuaReturn, LuaState, LuaType, PointerSize } from './types'
 import { Pointer } from './pointer'
 import MultiReturn from './multireturn'
@@ -8,7 +8,7 @@ import type LuaWasm from './luawasm'
 export default class Thread {
     public readonly address: LuaState = 0
     public readonly cmodule: LuaWasm
-    protected closed = false
+    private closed = false
     // Backward compatibility
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
@@ -20,7 +20,6 @@ export default class Thread {
             : undefined
 
     private global: Global | this
-    private continuance?: number
 
     public constructor(cmodule: LuaWasm, address: number, global?: Global) {
         this.cmodule = cmodule
@@ -44,10 +43,6 @@ export default class Thread {
 
     public resetThread(): void {
         this.assertOk(this.cmodule.lua_resetthread(this.address))
-        if (this.continuance !== undefined) {
-            this.cmodule.module.removeFunction(this.continuance)
-            this.continuance = undefined
-        }
     }
 
     public loadString(luaCode: string): void {
@@ -64,28 +59,29 @@ export default class Thread {
         return resumeResult
     }
 
-    public async run(argCount = 0): Promise<LuaResumeResult> {
+    public async run(argCount = 0): Promise<MultiReturn> {
         let resumeResult: LuaResumeResult = this.resume(argCount)
         while (resumeResult.result === LuaReturn.Yield) {
-            if (resumeResult.resultCount === 0) {
-                continue
+            if (resumeResult.resultCount > 0) {
+                const lastValue = this.getValue(-1)
+                if (lastValue === Promise.resolve(lastValue)) {
+                    await lastValue
+                    resumeResult = { result: this.cmodule.lua_status(this.address), resultCount: 1 }
+                    continue
+                }
             }
-            const lastValue = this.getValue(-1)
-            if (lastValue === Promise.resolve(lastValue)) {
-                await lastValue
-            }
-            this.pop(resumeResult.resultCount)
+
             resumeResult = this.resume(0)
         }
         this.assertOk(resumeResult.result)
-        return resumeResult
+        return this.getStackValues()
     }
 
-    public pop(count: number): void {
+    public pop(count = 1): void {
         this.cmodule.lua_pop(this.address, count)
     }
 
-    public call(name: string, ...args: any[]): any[] {
+    public call(name: string, ...args: any[]): MultiReturn {
         const type = this.cmodule.lua_getglobal(this.address, name)
         if (type !== LuaType.Function) {
             throw new Error(`A function of type '${type}' was pushed, expected is ${LuaType.Function}`)
@@ -96,8 +92,12 @@ export default class Thread {
         }
 
         this.cmodule.lua_callk(this.address, args.length, LUA_MULTRET, 0, undefined)
+        this.pop()
+        return this.getStackValues()
+    }
 
-        const returns = this.cmodule.lua_gettop(this.address) - 1
+    public getStackValues(): MultiReturn {
+        const returns = this.cmodule.lua_gettop(this.address)
         const returnValues = new MultiReturn(returns)
 
         for (let i = 0; i < returns; i++) {
@@ -107,7 +107,7 @@ export default class Thread {
         return returnValues
     }
 
-    public pushValue(value: any, options: Partial<{ _done?: Record<string, number>; reference?: boolean }> = {}): void {
+    public pushValue(value: any, options: Partial<{ _done?: Record<string, number> }> = {}): void {
         const { value: target, decorations } = this.getValueDecorations(value)
 
         const type = typeof target
@@ -117,8 +117,8 @@ export default class Thread {
             return
         }
 
-        if (options.reference) {
-            this.createAndPushJsReference(value)
+        if (decorations.reference) {
+            this.createAndPushJsReference(target)
             return
         }
 
@@ -135,7 +135,47 @@ export default class Thread {
         } else if (type === 'boolean') {
             this.cmodule.lua_pushboolean(this.address, target)
         } else if (type === 'object') {
-            if (target instanceof Thread) {
+            if (target instanceof Promise) {
+                this.pushValue({
+                    next: (_: unknown, ...args: Parameters<typeof target.then>) => target.then(...args),
+                    await: decorateFunction(
+                        (thread: Thread) => {
+                            let finished = false
+
+                            const handlePromiseResult = (fulfilledResult: any, errorReason: any): void => {
+                                thread.pushValue(fulfilledResult)
+                                thread.pushValue(errorReason)
+                                finished = true
+                                // if everything goes right, the result is only the promise and we don't need to pop it
+                                this.cmodule.lua_resume(thread.address, this.address, 0)
+                            }
+
+                            // eslint-disable-next-line
+                            target.then(
+                                (result: any) => handlePromiseResult(result, undefined),
+                                (reason: any) => handlePromiseResult(undefined, reason),
+                            )
+
+                            const continuance = this.cmodule.module.addFunction(() => {
+                                if (finished) {
+                                    this.cmodule.module.removeFunction(continuance)
+                                    // return the values we just pushed above in "handlePromiseResult"
+                                    return 2
+                                } else {
+                                    this.cmodule.lua_yieldk(thread.address, 1, 0, continuance)
+                                    return 0
+                                }
+                            }, 'iiii')
+
+                            this.cmodule.lua_yieldk(thread.address, 1, 0, continuance)
+
+                            return 0
+                        },
+                        { receiveThread: true },
+                    ),
+                    promise: decorate(target, { reference: true }),
+                })
+            } else if (target instanceof Thread) {
                 this.cmodule.lua_pushthread(target.address)
             } else {
                 const table = this.cmodule.lua_gettop(this.address) + 1
@@ -174,63 +214,30 @@ export default class Thread {
                 const args = []
 
                 const thread = this.stateToThread(calledL)
+
+                if (decorations.receiveThread) {
+                    args.push(thread)
+                }
+
                 for (let i = 1; i <= argsQuantity; i++) {
                     args.push(thread.getValue(i, undefined, { raw: decorations?.rawArguments?.includes(i - 1) }))
                 }
 
                 const result = target(...args)
 
-                let results: any | undefined = undefined
-                if (Promise.resolve(result) === result) {
-                    // Cleanup previous calls that may be left if a thread is never resumed.
-                    if (this.continuance !== undefined) {
-                        this.cmodule.module.removeFunction(this.continuance)
-                    }
-                    this.continuance = this.cmodule.module.addFunction((continuanceState: LuaState, _status: number, context: number) => {
-                        // Remove the continuance function references.
-                        this.cmodule.module.removeFunction(context)
-                        if (this.continuance === context) {
-                            this.continuance = undefined
-                        }
-
-                        const continuanceThread = this.stateToThread(continuanceState)
-                        if (results === undefined) {
-                            return 0
-                        }
-                        if (results instanceof MultiReturn) {
-                            for (const item of results) {
-                                continuanceThread.pushValue(item)
-                            }
-                            return results.length
-                        } else {
-                            continuanceThread.pushValue(results)
-                            return 1
-                        }
-                    }, 'iiii')
-
-                    // Push promise to stack as user data to be passed back to resume.
-                    const promise = result.then((asyncResult: any) => {
-                        results = asyncResult
-                    })
-
-                    this.createAndPushJsReference(promise)
-
-                    // Pass the continuance function as the function and the context.
-                    return this.cmodule.lua_yieldk(calledL, 1, this.continuance, this.continuance)
-                } else {
-                    if (result === undefined) {
-                        return 0
-                    }
-                    if (result instanceof MultiReturn) {
-                        for (const item of result) {
-                            thread.pushValue(item)
-                        }
-                        return result.length
-                    } else {
-                        thread.pushValue(result)
-                        return 1
-                    }
+                if (result === undefined) {
+                    return 0
                 }
+                if (result instanceof MultiReturn) {
+                    for (const item of result) {
+                        thread.pushValue(item)
+                    }
+                    return result.length
+                } else {
+                    thread.pushValue(result)
+                    return 1
+                }
+                // }
             }, 'ii')
             // Creates a new userdata with metatable pointing to the function pointer.
             // Pushes the new userdata onto the stack.
@@ -267,7 +274,12 @@ export default class Thread {
                 if (options.raw) {
                     return new Pointer(this.cmodule.lua_topointer(this.address, idx))
                 } else {
-                    return this.getTableValue(idx, options?._done)
+                    const table = this.getTableValue(idx, options?._done)
+                    if (table.promise && table.promise instanceof Promise) {
+                        return table.promise
+                    } else {
+                        return table
+                    }
                 }
             case LuaType.Function:
                 if (options.raw) {
@@ -321,6 +333,20 @@ export default class Thread {
         }
     }
 
+    public close(): void {
+        if (!this.closed) {
+            return
+        }
+
+        this.closed = true
+        // Do this before removing the gc to force
+        this.cmodule.lua_close(this.address)
+    }
+
+    public isClosed(): boolean {
+        return !this.address || this.closed
+    }
+
     public dumpStack(log = console.log): void {
         const top = this.cmodule.lua_gettop(this.address)
 
@@ -340,7 +366,7 @@ export default class Thread {
             if (this.cmodule.lua_gettop(this.address) > 0) {
                 const error = this.cmodule.lua_tolstring(this.address, -1, undefined)
                 message += `: ${error}`
-                this.cmodule.lua_pop(this.address, 1)
+                this.pop()
             }
             throw new Error(message)
         }
@@ -371,7 +397,7 @@ export default class Thread {
 
             table[key] = value
 
-            this.cmodule.lua_pop(this.address, 1)
+            this.pop()
         }
 
         return table
@@ -384,7 +410,7 @@ export default class Thread {
 
         if (LuaType.Nil === this.cmodule.luaL_getmetatable(this.address, LuaMetatables.FunctionReference)) {
             // Pop the pushed nil value
-            this.cmodule.lua_pop(this.address, 1)
+            this.pop()
             throw new Error(`metatable not found: ${LuaMetatables.FunctionReference}`)
         }
 
@@ -401,7 +427,7 @@ export default class Thread {
 
         if (LuaType.Nil === this.cmodule.luaL_getmetatable(this.address, LuaMetatables.JsReference)) {
             // Pop the pushed nil value
-            this.cmodule.lua_pop(this.address, 1)
+            this.pop()
             throw new Error(`metatable not found: ${LuaMetatables.FunctionReference}`)
         }
 

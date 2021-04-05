@@ -9,4 +9,8 @@ module.exports = {
     getEngine: () => {
         return new LuaFactory().createEngine()
     },
+    // Used to make the event loop cycle
+    tick: async () => {
+        return Promise.resolve()
+    },
 }

@@ -59,6 +59,7 @@ emcc \
         '_lua_callk', \
         '_lua_pcallk', \
         '_lua_yieldk', \
+        '_lua_status', \
         '_lua_resume', \
         '_lua_pushcclosure', \
         '_lua_getfield', \
