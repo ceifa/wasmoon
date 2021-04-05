@@ -34,7 +34,7 @@ export default class LuaFactory {
                 const current = `${parent}/${part}`
                 try {
                     cmodule.module.FS.mkdir(current)
-                } catch (e) {
+                } catch (err) {
                     // ignore EEXIST
                 }
 

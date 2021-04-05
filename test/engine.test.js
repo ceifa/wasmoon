@@ -139,6 +139,42 @@ test('get a lua thread should succeed', async () => {
     expect(thread).not.toBe(0)
 })
 
+test('a JS error should pause lua execution', async () => {
+    const engine = await getEngine()
+    const check = jest.fn()
+    engine.global.set('check', check)
+    engine.global.set('throw', () => {
+        throw new Error('expected error')
+    })
+
+    expect(() => {
+        engine.doString(`
+            throw()
+            check()
+        `)
+    }).toThrow()
+    expect(check).not.toBeCalled()
+})
+
+test('catch a JS error with pcall should succeed', async () => {
+    const engine = await getEngine()
+    const check = jest.fn()
+    engine.global.set('check', check)
+    engine.global.set('throw', () => {
+        throw new Error('expected error')
+    })
+
+    expect(() => {
+        engine.doString(`
+            local success, err = pcall(throw)
+            assert(success == false)
+            assert(err == "expected error")
+            check()
+        `)
+    }).not.toThrow()
+    expect(check).toBeCalled()
+})
+
 test('call a JS function in a different thread should succeed', async () => {
     const engine = await getEngine()
     const sum = jest.fn((x, y) => x + y)

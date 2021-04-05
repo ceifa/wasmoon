@@ -74,7 +74,8 @@ export default class LuaWasm {
     public luaL_ref: (L: LuaState, table: number) => number
     public luaL_unref: (L: LuaState, table: number, ref: number) => void
     public lua_rawgeti: (L: LuaState, idx: number, ref: number) => number
-    public lua_typename: (L: LuaState, type: LuaType) => number
+    public lua_typename: (L: LuaState, type: LuaType) => string
+    public lua_error: (L: LuaState) => number
     public lua_close: (L: LuaState) => void
 
     private referenceTracker = new WeakMap<any, ReferenceMetadata>()
@@ -143,6 +144,7 @@ export default class LuaWasm {
         this.luaL_unref = this.module.cwrap('luaL_unref', null, ['number', 'number', 'number'])
         this.lua_rawgeti = this.module.cwrap('lua_rawgeti', 'number', ['number', 'number', 'number'])
         this.lua_typename = this.module.cwrap('lua_typename', 'string', ['number', 'number'])
+        this.lua_error = this.module.cwrap('lua_error', 'number', ['number'])
         this.lua_close = this.module.cwrap('lua_close', null, ['number'])
     }
 

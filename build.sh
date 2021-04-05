@@ -71,6 +71,7 @@ emcc \
         '_luaL_unref', \
         '_lua_rawgeti', \
         '_lua_typename', \
+        '_lua_error', \
         '_lua_close' \
     ]" \
     ${LUA_SRC}

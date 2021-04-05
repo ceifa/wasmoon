@@ -13,10 +13,10 @@ export default class Thread {
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
             ? new FinalizationRegistry((func: number) => {
-                  if (!this.closed) {
-                      this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
-                  }
-              })
+                if (!this.closed) {
+                    this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
+                }
+            })
             : undefined
 
     private global: Global | this
@@ -223,21 +223,31 @@ export default class Thread {
                     args.push(thread.getValue(i, undefined, { raw: decorations?.rawArguments?.includes(i - 1) }))
                 }
 
-                const result = target(...args)
+                try {
+                    const result = target(...args)
 
-                if (result === undefined) {
+                    if (result === undefined) {
+                        return 0
+                    }
+                    if (result instanceof MultiReturn) {
+                        for (const item of result) {
+                            thread.pushValue(item)
+                        }
+                        return result.length
+                    } else {
+                        thread.pushValue(result)
+                        return 1
+                    }
+                } catch (err) {
+                    // Yield errors should not be handled, it is lua managed
+                    if (this.cmodule.lua_status(thread.address) === LuaReturn.Yield) {
+                        throw err;
+                    }
+
+                    this.pushValue(err.message || err)
+                    this.cmodule.lua_error(thread.address)
                     return 0
                 }
-                if (result instanceof MultiReturn) {
-                    for (const item of result) {
-                        thread.pushValue(item)
-                    }
-                    return result.length
-                } else {
-                    thread.pushValue(result)
-                    return 1
-                }
-                // }
             }, 'ii')
             // Creates a new userdata with metatable pointing to the function pointer.
             // Pushes the new userdata onto the stack.
