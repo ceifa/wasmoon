@@ -151,7 +151,6 @@ test('await a thread run with async calls should succeed', async () => {
     expect(await asyncFunctionPromise).toEqual([50])
 })
 
-
 test('run thread with async calls and yields should succeed', async () => {
     const engine = await getEngine()
     engine.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
@@ -171,7 +170,7 @@ test('run thread with async calls and yields should succeed', async () => {
 
 test('reject a promise should succeed', async () => {
     const engine = await getEngine()
-    engine.global.set('throw', () => new Promise((_, reject) => reject('expected test error')))
+    engine.global.set('throw', () => new Promise((_, reject) => reject(new Error('expected test error'))))
     const asyncThread = engine.global.newThread()
 
     asyncThread.loadString(`
@@ -180,7 +179,7 @@ test('reject a promise should succeed', async () => {
         error(err)
     `)
 
-    await expect(asyncThread.run).rejects.toThrow()
+    await expect(() => asyncThread.run()).rejects.toThrow()
 })
 
 test('catch a promise rejection should succeed', async () => {
@@ -188,7 +187,7 @@ test('catch a promise rejection should succeed', async () => {
     const fulfilled = jest.fn()
     const rejected = jest.fn()
     engine.global.set('handlers', { fulfilled, rejected })
-    engine.global.set('throw', new Promise((_, reject) => reject('expected test error')))
+    engine.global.set('throw', new Promise((_, reject) => reject(new Error('expected test error'))))
 
     engine.doString(`
         throw:next(handlers.fulfilled, handlers.rejected)
@@ -196,7 +195,7 @@ test('catch a promise rejection should succeed', async () => {
 
     await tick()
     expect(fulfilled).not.toBeCalled()
-    expect(rejected).toBeCalledWith('expected test error')
+    expect(rejected).toBeCalled()
 })
 
 test('run with async callback', async () => {

@@ -206,10 +206,8 @@ test('lua_resume with async yield callback', async () => {
     }
 
     jest.runOnlyPendingTimers()
-    await yieldValue
 
-    const finalValue = thread.getValue(-1)
-    expect(finalValue).toEqual(30)
+    expect(await yieldValue).toEqual(30)
 })
 
 test('get memory use succeeds', async () => {

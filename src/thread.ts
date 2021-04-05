@@ -13,10 +13,10 @@ export default class Thread {
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
             ? new FinalizationRegistry((func: number) => {
-                if (!this.closed) {
-                    this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
-                }
-            })
+                  if (!this.closed) {
+                      this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
+                  }
+              })
             : undefined
 
     private global: Global | this
@@ -142,17 +142,18 @@ export default class Thread {
                         (thread: Thread) => {
                             let finished = false
 
-                            const handlePromiseResult = (fulfilledResult: any, errorReason: any) => {
+                            const handlePromiseResult = (fulfilledResult: any, errorReason: any): void => {
                                 thread.pushValue(fulfilledResult)
                                 thread.pushValue(errorReason)
                                 finished = true
+                                // if everything goes right, the result is only the promise and we don't need to pop it
                                 this.cmodule.lua_resume(thread.address, this.address, 0)
                             }
 
                             // eslint-disable-next-line
                             target.then(
                                 (result: any) => handlePromiseResult(result, undefined),
-                                (reason: any) => handlePromiseResult(undefined, reason)
+                                (reason: any) => handlePromiseResult(undefined, reason),
                             )
 
                             const continuance = this.cmodule.module.addFunction(() => {
