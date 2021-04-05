@@ -159,14 +159,12 @@ export default class Thread {
                             const continuance = this.cmodule.module.addFunction(() => {
                                 if (finished) {
                                     this.cmodule.module.removeFunction(continuance)
-
-                                    // return the values we just pushed above
+                                    // return the values we just pushed above in "handlePromiseResult"
                                     return 2
                                 } else {
                                     this.cmodule.lua_yieldk(thread.address, 1, 0, continuance)
+                                    return 0
                                 }
-
-                                return 1
                             }, 'iiii')
 
                             this.cmodule.lua_yieldk(thread.address, 1, 0, continuance)
