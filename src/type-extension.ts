@@ -11,6 +11,10 @@ export default abstract class LuaTypeExtension<T> {
         this.name = name
     }
 
+    public isType(_thread: Thread, _index: number, type: LuaType, name?: string): boolean {
+        return type === LuaType.UserData && name === this.name
+    }
+
     public abstract close(): void
 
     // A base implementation that assumes user data serialisation

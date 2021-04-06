@@ -244,33 +244,41 @@ export default class Thread {
         }
     }
 
+    public getMetatableName(index: number): string | undefined {
+        const metatableNameType = this.cmodule.luaL_getmetafield(this.address, index, '__name')
+        if (metatableNameType === LuaType.Nil) {
+            return undefined
+        }
+
+        if (metatableNameType !== LuaType.String) {
+            // Pop the metafield if it's not a string
+            this.pop(1)
+            return undefined
+        }
+
+        const name = this.cmodule.lua_tolstring(this.address, -1)
+        // This is popping the luaL_getmetafield result which only pushes with type is not nil.
+        this.pop(1)
+
+        return name
+    }
+
     public getValue(
         idx: number,
-        type: LuaType | undefined = undefined,
+        inputType: LuaType | undefined = undefined,
         options: Partial<{
             raw: boolean
             _done: Record<string, number>
         }> = {},
     ): any {
         // Before the below to allow overriding default behaviour.
-        const metatableNameType = this.cmodule.luaL_getmetafield(this.address, idx, '__name')
-        if (metatableNameType !== LuaType.Nil) {
-            if (metatableNameType === LuaType.String) {
-                const name = this.cmodule.lua_tolstring(this.address, -1)
-                // This is popping the luaL_getmetafield result which only pushes with type is not nil.
-                this.pop(1)
+        const metatableName = this.getMetatableName(idx)
+        const type: LuaType = inputType || this.cmodule.lua_type(this.address, idx)
 
-                const matchedType = this.typeExtensions.find((extension) => extension.name === name)
-                if (matchedType) {
-                    return matchedType.getValue(this, idx)
-                }
-            } else {
-                // Pop the metafield if it's not a string
-                this.pop(1)
-            }
+        const typeExtension = this.typeExtensions.find((extension) => extension.isType(this, idx, type, metatableName))
+        if (typeExtension) {
+            return typeExtension.getValue(this, idx)
         }
-
-        type = type || this.cmodule.lua_type(this.address, idx)
 
         switch (type) {
             case LuaType.None:
