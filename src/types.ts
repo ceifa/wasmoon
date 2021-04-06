@@ -15,6 +15,11 @@ export interface LuaResumeResult {
     resultCount: number
 }
 
+export interface LuaEngineOptions {
+    openStandardLibs: boolean
+    injectObjects: boolean
+}
+
 export const PointerSize = 4
 
 export const LUA_MULTRET = -1

@@ -5,7 +5,7 @@ import TypeExtension from '../type-extension'
 class ErrorTypeExtension extends TypeExtension<Error> {
     private gcPointer: number
 
-    public constructor(thread: Thread) {
+    public constructor(thread: Thread, injectObject: boolean) {
         super(thread, 'js_error')
 
         this.gcPointer = thread.cmodule.module.addFunction((functionStateAddress: LuaState) => {
@@ -46,16 +46,18 @@ class ErrorTypeExtension extends TypeExtension<Error> {
         // Pop the metatable from the stack.
         thread.cmodule.lua_pop(thread.address, 1)
 
-        // Lastly create a static Promise constructor.
-        thread.set('Error', {
-            create: (message: any) => {
-                if (message && typeof message !== 'string') {
-                    throw new Error('message must be a string')
-                }
+        if (injectObject) {
+            // Lastly create a static Promise constructor.
+            thread.set('Error', {
+                create: (message: any) => {
+                    if (message && typeof message !== 'string') {
+                        throw new Error('message must be a string')
+                    }
 
-                return new Error(message)
-            },
-        })
+                    return new Error(message)
+                },
+            })
+        }
     }
 
     public pushValue(thread: Thread, value: unknown): boolean {
@@ -70,6 +72,6 @@ class ErrorTypeExtension extends TypeExtension<Error> {
     }
 }
 
-export default function createTypeExtension(thread: Thread): TypeExtension<Error> {
-    return new ErrorTypeExtension(thread)
+export default function createTypeExtension(thread: Thread, injectObject: boolean): TypeExtension<Error> {
+    return new ErrorTypeExtension(thread, injectObject)
 }

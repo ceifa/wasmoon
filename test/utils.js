@@ -7,7 +7,9 @@ module.exports = {
         return new LuaFactory()
     },
     getEngine: () => {
-        return new LuaFactory().createEngine()
+        return new LuaFactory().createEngine({
+            injectObjects: true,
+        })
     },
     // Used to make the event loop cycle
     tick: () => {

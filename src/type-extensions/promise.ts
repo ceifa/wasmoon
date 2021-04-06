@@ -6,7 +6,7 @@ import TypeExtension from '../type-extension'
 class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     private gcPointer: number
 
-    public constructor(thread: Thread) {
+    public constructor(thread: Thread, injectObject: boolean) {
         super(thread, 'js_promise')
 
         this.gcPointer = thread.cmodule.module.addFunction((functionStateAddress: LuaState) => {
@@ -102,22 +102,24 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
         // Pop the metatable from the stack.
         thread.cmodule.lua_pop(thread.address, 1)
 
-        // Lastly create a static Promise constructor.
-        thread.set('Promise', {
-            create: (callback: any) => {
-                if (callback && typeof callback !== 'function') {
-                    throw new Error('callback must be a function')
-                }
+        if (injectObject) {
+            // Lastly create a static Promise constructor.
+            thread.set('Promise', {
+                create: (callback: any) => {
+                    if (callback && typeof callback !== 'function') {
+                        throw new Error('callback must be a function')
+                    }
 
-                return new Promise(callback)
-            },
-            all: (promiseArray: any) => {
-                if (!Array.isArray(promiseArray)) {
-                    throw new Error('argument must be an array of promises')
-                }
-                return Promise.all(promiseArray.map((potentialPromise) => Promise.resolve(potentialPromise)))
-            },
-        })
+                    return new Promise(callback)
+                },
+                all: (promiseArray: any) => {
+                    if (!Array.isArray(promiseArray)) {
+                        throw new Error('argument must be an array of promises')
+                    }
+                    return Promise.all(promiseArray.map((potentialPromise) => Promise.resolve(potentialPromise)))
+                },
+            })
+        }
     }
 
     public close(): void {
@@ -132,6 +134,6 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     }
 }
 
-export default function createTypeExtension<T = unknown>(thread: Thread): TypeExtension<Promise<T>> {
-    return new PromiseTypeExtension<T>(thread)
+export default function createTypeExtension<T = unknown>(thread: Thread, injectObject: boolean): TypeExtension<Promise<T>> {
+    return new PromiseTypeExtension<T>(thread, injectObject)
 }

@@ -1,8 +1,6 @@
 import { LuaMetatables, LuaReturn, LuaState } from './types'
 import LuaTypeExtension from './type-extension'
 import Thread from './thread'
-import createErrorType from './type-extensions/error'
-import createPromiseType from './type-extensions/promise'
 import type LuaWasm from './luawasm'
 
 interface LuaMemoryStats {
@@ -69,8 +67,6 @@ export default class Global extends Thread {
         }
         // Pop the metatable from the stack.
         cmodule.lua_pop(address, 1)
-
-        this.typeExtensions.push(...[createErrorType(this), createPromiseType(this)])
     }
 
     public close(): void {
