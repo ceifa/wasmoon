@@ -44,6 +44,48 @@ test('receive JS object on lua should succeed', async () => {
     expect(value).toBe(22)
 })
 
+test('receive JS object with circular references on lua should succeed', async () => {
+    const engine = await getEngine()
+    const obj = {
+        hello: 'world',
+    }
+    obj.self = obj
+    engine.global.set('obj', obj)
+
+    const value = await engine.doString('return obj.self.self.self.hello')
+
+    expect(value).toBe('world')
+})
+
+test('receive JS object with multiple circular references on lua should succeed', async () => {
+    const engine = await getEngine()
+    const obj1 = {
+        hello: 'world',
+    }
+    obj1.self = obj1
+    const obj2 = {
+        hello: 'everybody',
+    }
+    obj2.self = obj2
+    engine.global.set('obj', { obj1, obj2 })
+
+    await engine.doString(`
+        assert(obj.obj1.self.self.hello == "world")
+        assert(obj.obj2.self.self.hello == "everybody")
+    `)
+})
+
+test('receive JS object with null prototype on lua should succeed', async () => {
+    const engine = await getEngine()
+    const obj = Object.create(null)
+    obj.hello = 'world'
+    engine.global.set('obj', obj)
+
+    const value = await engine.doString(`return obj.hello`)
+
+    expect(value).toBe('world')
+})
+
 test('a lua error should throw on JS', async () => {
     const engine = await getEngine()
 
