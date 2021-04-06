@@ -1,5 +1,8 @@
 import { LuaMetatables, LuaReturn, LuaState } from './types'
+import LuaTypeExtension from './type-extension'
 import Thread from './thread'
+import createErrorType from './type-extensions/error'
+import createPromiseType from './type-extensions/promise'
 import type LuaWasm from './luawasm'
 
 interface LuaMemoryStats {
@@ -9,7 +12,6 @@ interface LuaMemoryStats {
 
 export default class Global extends Thread {
     public readonly functionGcPointer: number
-    public readonly jsRefGcPointer: number
     private memoryStats: LuaMemoryStats
     private allocatorFunctionPointer: number
 
@@ -39,7 +41,7 @@ export default class Global extends Thread {
         }, 'iiiii')
 
         const address = cmodule.lua_newstate(allocatorFunctionPointer, null)
-        super(cmodule, address)
+        super(cmodule, [], address)
 
         this.memoryStats = memoryStats
         this.allocatorFunctionPointer = allocatorFunctionPointer
@@ -68,27 +70,7 @@ export default class Global extends Thread {
         // Pop the metatable from the stack.
         cmodule.lua_pop(address, 1)
 
-        this.jsRefGcPointer = cmodule.module.addFunction((calledL: LuaState) => {
-            // Throws a lua error which does a jump if it does not match.
-            const userDataPointer = cmodule.luaL_checkudata(calledL, 1, LuaMetatables.JsReference)
-            const referencePointer = cmodule.module.getValue(userDataPointer, '*')
-            cmodule.unref(referencePointer)
-
-            return LuaReturn.Ok
-        }, 'ii')
-
-        // Creates metatable if it doesn't exist, always pushes it onto the stack.
-        if (cmodule.luaL_newmetatable(address, LuaMetatables.JsReference)) {
-            cmodule.lua_pushstring(address, '__gc')
-            cmodule.lua_pushcclosure(address, this.jsRefGcPointer, 0)
-            cmodule.lua_settable(address, -3)
-
-            cmodule.lua_pushstring(address, '__metatable')
-            cmodule.lua_pushstring(address, 'protected metatable')
-            cmodule.lua_settable(address, -3)
-        }
-        // Pop the metatable from the stack.
-        cmodule.lua_pop(address, 1)
+        this.typeExtensions.push(...[createErrorType(this), createPromiseType(this)])
     }
 
     public close(): void {
@@ -98,8 +80,15 @@ export default class Global extends Thread {
 
         super.close()
         this.cmodule.module.removeFunction(this.functionGcPointer)
-        this.cmodule.module.removeFunction(this.jsRefGcPointer)
         this.cmodule.module.removeFunction(this.allocatorFunctionPointer)
+        for (const extension of this.typeExtensions) {
+            extension.close()
+        }
+    }
+
+    // To allow library users to specify custom types
+    public registerTypeExtension(extension: LuaTypeExtension<unknown>): void {
+        this.typeExtensions.push(extension)
     }
 
     public getMemoryUsed(): number {

@@ -10,13 +10,14 @@ test('use promise next should succeed', async () => {
     const promise = new Promise((resolve) => setTimeout(() => resolve(60), 10))
     engine.global.set('promise', promise)
 
-    engine.doString(`
+    const res = engine.doString(`
         promise:next(check)
     `)
 
     expect(check).not.toBeCalled()
     jest.advanceTimersByTime(20)
     await promise
+    await res
     expect(check).toBeCalledWith(60)
 })
 
@@ -27,7 +28,7 @@ test('chain promises with next should succeed', async () => {
     const promise = new Promise((resolve) => resolve(60))
     engine.global.set('promise', promise)
 
-    engine.doString(`
+    const res = engine.doString(`
         promise:next(function(value)
             return value * 2
         end):next(check):next(check)
@@ -35,6 +36,7 @@ test('chain promises with next should succeed', async () => {
 
     await promise
     await tick()
+    await res
 
     expect(check).toBeCalledWith(120)
     expect(check).toBeCalledTimes(2)
@@ -46,11 +48,12 @@ test('call an async function should succeed', async () => {
     const check = jest.fn()
     engine.global.set('check', check)
 
-    engine.doString(`
+    const res = engine.doString(`
         asyncFunction():next(check)
     `)
 
     await tick()
+    await res
     expect(check).toBeCalledWith(60)
 })
 
@@ -58,7 +61,7 @@ test('return an async function should succeed', async () => {
     const engine = await getEngine()
     engine.global.set('asyncFunction', async () => Promise.resolve(60))
 
-    const asyncFunction = engine.doString(`
+    const asyncFunction = await engine.doString(`
         return asyncFunction
     `)
     const value = await asyncFunction()
@@ -70,7 +73,7 @@ test('return a chained promise should succeed', async () => {
     const engine = await getEngine()
     engine.global.set('asyncFunction', async () => Promise.resolve(60))
 
-    const asyncFunction = engine.doString(`
+    const asyncFunction = await engine.doString(`
         return asyncFunction():next(function(x) return x * 2 end)
     `)
     const value = await asyncFunction
@@ -85,16 +88,24 @@ test('await an promise inside coroutine should succeed', async () => {
     const promise = new Promise((resolve) => setTimeout(() => resolve(60), 10))
     engine.global.set('promise', promise)
 
-    engine.doString(`
-        coroutine.resume(coroutine.create(function()
+    const res = engine.doString(`
+        local co = coroutine.create(function()
             local value = promise:await()
             check(value)
-        end))
+        end)
+
+        while coroutine.status(co) == "suspended" do
+            local success, res = coroutine.resume(co)
+            -- yield to allow promises to resolve
+            -- this yields on the promise returned by the above
+            coroutine.yield(res)
+        end
     `)
 
     expect(check).not.toBeCalled()
     jest.advanceTimersByTime(20)
     await promise
+    await res
     expect(check).toBeCalledWith(60)
 })
 
@@ -105,35 +116,23 @@ test('awaited coroutines should ignore resume until it resolves the promise', as
     const promise = new Promise((resolve) => setTimeout(() => resolve(60), 10))
     engine.global.set('promise', promise)
 
-    engine.doString(`
+    const res = engine.doString(`
         local co = coroutine.create(function()
             local value = promise:await()
             check(value)
         end)
-        coroutine.resume(co)
-        coroutine.resume(co)
-        coroutine.resume(co)
-        coroutine.resume(co)
-        coroutine.resume(co)
+        while coroutine.status(co) == "suspended" do
+            coroutine.resume(co)
+            -- yields for a tick
+            coroutine.yield()
+        end
     `)
 
     expect(check).not.toBeCalled()
     jest.advanceTimersByTime(20)
     await promise
-    await tick()
+    await res
     expect(check).toBeCalledWith(60)
-})
-
-test('await an promise outside coroutine should throw', async () => {
-    const engine = await getEngine()
-    const promise = new Promise((resolve) => setTimeout(() => resolve(60), 10))
-    engine.global.set('promise', promise)
-
-    expect(() => {
-        engine.doString(`
-            promise:await()
-        `)
-    }).toThrow()
 })
 
 test('await a thread run with async calls should succeed', async () => {
@@ -164,6 +163,9 @@ test('run thread with async calls and yields should succeed', async () => {
     `)
 
     const asyncFunctionPromise = asyncThread.run()
+    // Wait 1 tick for the initial yield
+    await tick()
+    // Allow the timer to progress
     jest.runAllTimers()
     expect(await asyncFunctionPromise).toEqual([50])
 })
@@ -175,9 +177,10 @@ test('reject a promise should succeed', async () => {
 
     asyncThread.loadString(`
         throw():await()
+        error("this should not be reached")
     `)
 
-    await expect(() => asyncThread.run()).rejects.toThrow()
+    await expect(() => asyncThread.run()).rejects.toThrow('expected test error')
 })
 
 test('pcall a promise await should succeed', async () => {
@@ -186,8 +189,8 @@ test('pcall a promise await should succeed', async () => {
     const asyncThread = engine.global.newThread()
 
     asyncThread.loadString(`
-        local succeed, err = pcall(throw().await)
-        assert(err == "expected test error")
+        local succeed, err = pcall(function() throw():await() end)
+        assert(tostring(err) == "expected test error")
         return succeed
     `)
 
@@ -201,11 +204,12 @@ test('catch a promise rejection should succeed', async () => {
     engine.global.set('handlers', { fulfilled, rejected })
     engine.global.set('throw', new Promise((_, reject) => reject(new Error('expected test error'))))
 
-    engine.doString(`
-        throw:next(handlers.fulfilled, handlers.rejected)
+    const res = engine.doString(`
+        throw:next(handlers.fulfilled, handlers.rejected):catch(function() end)
     `)
 
     await tick()
+    await res
     expect(fulfilled).not.toBeCalled()
     expect(rejected).toBeCalled()
 })
@@ -231,4 +235,51 @@ test('run with async callback', async () => {
     const [finalValue] = await thread.run(1)
 
     expect(finalValue).toEqual(3 * 2 * 2)
+})
+
+test('promise creation from js', async () => {
+    const engine = await getEngine()
+    const res = await engine.doString(`
+        local promise = Promise.create(function (resolve)
+            resolve(10)
+        end)
+        local nested = promise:next(function (value)
+            return Promise.create(function (resolve2)
+                resolve2(value * 2)
+            end)
+        end)
+        return nested:await()
+    `)
+    expect(res).toEqual(20)
+})
+
+test('reject promise creation from js', async () => {
+    const engine = await getEngine()
+    const res = await engine.doString(`
+        local rejection = Promise.create(function (resolve, reject)
+            reject("expected rejection")
+        end)
+        return rejection:catch(function (err)
+            return err
+        end):await()
+    `)
+    expect(res).toEqual('expected rejection')
+})
+
+test('resolve multiple promises with promise.all', async () => {
+    const engine = await getEngine()
+    engine.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
+    const resPromise = engine.doString(`
+        local promises = {}
+        for i = 1, 10 do
+            table.insert(promises, sleep(50):next(function ()
+                return i
+            end))
+        end
+        return Promise.all(promises):await()
+    `)
+    jest.advanceTimersByTime(50)
+    const res = await resPromise
+
+    expect(res).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 })

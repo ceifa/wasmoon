@@ -32,6 +32,8 @@ emcc \
         '_luaL_openlibs', \
         '_luaL_loadstring', \
         '_luaL_loadfilex', \
+        '_luaL_getmetafield', \
+        '_luaL_tolstring', \
         '_lua_getglobal', \
         '_lua_tonumberx', \
         '_lua_tolstring', \
@@ -41,6 +43,8 @@ emcc \
         '_lua_newthread', \
         '_lua_resetthread', \
         '_lua_gettable', \
+        '_lua_rotate', \
+        '_lua_xmove', \
         '_lua_next', \
         '_lua_type', \
         '_lua_settop', \
@@ -62,6 +66,7 @@ emcc \
         '_lua_status', \
         '_lua_resume', \
         '_lua_pushcclosure', \
+        '_lua_setfield', \
         '_lua_getfield', \
         '_luaL_newmetatable', \
         '_lua_newuserdatauv', \

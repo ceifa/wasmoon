@@ -10,7 +10,7 @@ test('receive lua table on JS function should succeed', async () => {
         return JSON.stringify(table)
     })
 
-    engine.doString('value = stringify({ test = 1 })')
+    await engine.doString('value = stringify({ test = 1 })')
 
     expect(engine.global.get('value')).toBe(JSON.stringify({ test: 1 }))
 })
@@ -22,7 +22,7 @@ test('get a global table inside a JS function called by lua should succeed', asy
         return engine.global.get('t')
     })
 
-    const value = engine.doString('return test(2)')
+    const value = await engine.doString('return test(2)')
 
     expect(value).toEqual({ test: 1 })
 })
@@ -39,7 +39,7 @@ test('receive JS object on lua should succeed', async () => {
             },
         }
     })
-    const value = engine.doString('return test().test()')
+    const value = await engine.doString('return test().test()')
 
     expect(value).toBe(22)
 })
@@ -47,15 +47,13 @@ test('receive JS object on lua should succeed', async () => {
 test('a lua error should throw on JS', async () => {
     const engine = await getEngine()
 
-    expect(() => {
-        engine.doString(`x -`)
-    }).toThrow()
+    await expect(engine.doString(`x -`)).rejects.toThrow()
 })
 
 test('call a lua function from JS should succeed', async () => {
     const engine = await getEngine()
 
-    engine.doString(`function sum(x, y) return x + y end`)
+    await engine.doString(`function sum(x, y) return x + y end`)
     const sum = engine.global.get('sum')
 
     expect(sum(10, 50)).toBe(60)
@@ -65,7 +63,7 @@ test('scheduled lua calls should succeed', async () => {
     const engine = await getEngine()
     engine.global.set('setInterval', setInterval)
 
-    engine.doString(`
+    await engine.doString(`
     test = 0
     setInterval(function()
         test = test + 1
@@ -83,7 +81,7 @@ test('scheduled lua calls should fail silently if invalid', async () => {
         // Nothing to do.
     })
 
-    engine.doString(`
+    await engine.doString(`
     test = 0
     setInterval(function()
         test = test + 1
@@ -99,7 +97,7 @@ test('scheduled lua calls should fail silently if invalid', async () => {
 test('call lua function from JS passing an array argument should succeed', async () => {
     const engine = await getEngine()
 
-    const sum = engine.doString(`
+    const sum = await engine.doString(`
     return function(arr)
         local sum = 0
         for k, v in ipairs(arr) do
@@ -115,7 +113,7 @@ test('call lua function from JS passing an array argument should succeed', async
 test('call a global function with multiple returns should succeed', async () => {
     const engine = await getEngine()
 
-    engine.doString(`
+    await engine.doString(`
     function f(x,y)
         return 1,x,y,"Hello World",{},function() end
     end
@@ -129,7 +127,7 @@ test('call a global function with multiple returns should succeed', async () => 
 test('get a lua thread should succeed', async () => {
     const engine = await getEngine()
 
-    const thread = engine.doString(`
+    const thread = await engine.doString(`
     return coroutine.create(function()
         print("hey")
     end)
@@ -147,12 +145,12 @@ test('a JS error should pause lua execution', async () => {
         throw new Error('expected error')
     })
 
-    expect(() => {
+    await expect(
         engine.doString(`
-            throw()
-            check()
-        `)
-    }).toThrow()
+        throw()
+        check()
+    `),
+    ).rejects.toThrow()
     expect(check).not.toBeCalled()
 })
 
@@ -164,14 +162,13 @@ test('catch a JS error with pcall should succeed', async () => {
         throw new Error('expected error')
     })
 
-    expect(() => {
-        engine.doString(`
-            local success, err = pcall(throw)
-            assert(success == false)
-            assert(err == "expected error")
-            check()
-        `)
-    }).not.toThrow()
+    await engine.doString(`
+        local success, err = pcall(throw)
+        assert(success == false)
+        assert(tostring(err) == "expected error")
+        check()
+    `)
+
     expect(check).toBeCalled()
 })
 
@@ -180,7 +177,7 @@ test('call a JS function in a different thread should succeed', async () => {
     const sum = jest.fn((x, y) => x + y)
     engine.global.set('sum', sum)
 
-    engine.doString(`
+    await engine.doString(`
     coroutine.resume(coroutine.create(function()
         sum(10, 20)
     end))
@@ -213,37 +210,6 @@ test('lua_resume with yield succeeds', async () => {
 
     const finalValue = thread.getValue(-1)
     expect(finalValue).toEqual(20)
-})
-
-test('lua_resume with async yield callback', async () => {
-    jest.useFakeTimers()
-
-    const engine = await getEngine()
-    const thread = engine.global.newThread()
-
-    thread.set('asyncCallback', async (input) => {
-        await new Promise((resolve) => setTimeout(resolve, 5))
-        return Promise.resolve(input * 2)
-    })
-
-    thread.loadString(`
-        local result = asyncCallback(15):await()
-        return result
-    `)
-
-    const resumeResult = thread.resume(0)
-    expect(resumeResult.result).toEqual(LuaReturn.Yield)
-    expect(resumeResult.resultCount).toEqual(1)
-
-    const yieldValue = thread.getValue(-1)
-    thread.pop(resumeResult.resultCount)
-    if (Promise.resolve(yieldValue) !== yieldValue) {
-        throw new Error('expected a promise')
-    }
-
-    jest.runOnlyPendingTimers()
-
-    expect(await yieldValue).toEqual(30)
 })
 
 test('get memory use succeeds', async () => {

@@ -7,7 +7,7 @@
         "build:wasm:dev": "./build.sh 0",
         "build:wasm": "./build.sh 3",
         "start": "rollup -c -w",
-        "test": "jest --env=node ./test",
+        "test": "jest --env=node ./test/",
         "build": "rollup -c && tsc -d --emitDeclarationOnly --declarationDir dist",
         "clean": "rm -rf dist build",
         "lint": "./node_modules/@luvies/config/scripts/lint.sh",

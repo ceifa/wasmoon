@@ -7,6 +7,7 @@ export const decorateFunction = (
     options: Partial<{
         rawArguments: number[]
         receiveThread: boolean
+        rawResult: boolean
     }>,
 ): Decoration => {
     return new Decoration(target, options)

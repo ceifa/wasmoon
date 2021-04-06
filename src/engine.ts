@@ -1,5 +1,5 @@
-import { LuaReturn } from './types'
 import Global from './global'
+import Thread from './thread'
 import type LuaWasm from './luawasm'
 
 export default class Lua {
@@ -17,24 +17,27 @@ export default class Lua {
         }
     }
 
-    public doString(script: string): any {
-        this.global.loadString(script)
-        return this.callByteCode()
+    public doString(script: string): Promise<any> {
+        return this.callByteCode((thread) => thread.loadString(script))
     }
 
-    public doFile(filename: string): any {
-        this.global.loadFile(filename)
-        return this.callByteCode()
+    public doFile(filename: string): Promise<any> {
+        return this.callByteCode((thread) => thread.loadFile(filename))
     }
 
-    private callByteCode(): any {
-        const result = this.cmodule.lua_pcallk(this.global.address, 0, 1, 0, 0, undefined)
-
-        if (result !== LuaReturn.Ok) {
-            const error = this.cmodule.lua_tolstring(this.global.address, -1, undefined)
-            throw new Error(`Lua error(${result}): ${error}`)
+    private async callByteCode(loader: (thread: Thread) => void): Promise<any> {
+        const thread = this.global.newThread()
+        const threadIndex = this.global.getTop()
+        try {
+            loader(thread)
+            const result = await thread.run(0)
+            if (result.length > 0) {
+                this.cmodule.lua_xmove(thread.address, this.global.address, result.length)
+            }
+            return result[0]
+        } finally {
+            // Pop the read on success or failure
+            this.global.remove(threadIndex)
         }
-
-        return this.global.getValue(1)
     }
 }
