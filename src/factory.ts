@@ -1,3 +1,4 @@
+import { LuaEngineOptions } from './types'
 import Lua from './engine'
 import LuaWasm from './luawasm'
 
@@ -45,8 +46,8 @@ export default class LuaFactory {
         cmodule.module.FS.writeFile(path, content)
     }
 
-    public async createEngine(openStandardLibs = true): Promise<Lua> {
-        return new Lua(await this.getModule(), openStandardLibs)
+    public async createEngine(options?: Partial<LuaEngineOptions>): Promise<Lua> {
+        return new Lua(await this.getModule(), options)
     }
 
     private async getModule(): Promise<LuaWasm> {

@@ -1,40 +1,59 @@
-import { LuaReturn } from './types'
+import { LuaEngineOptions } from './types'
 import Global from './global'
+import Thread from './thread'
+import createErrorType from './type-extensions/error'
+import createPromiseType from './type-extensions/promise'
 import type LuaWasm from './luawasm'
+
+const defaultOptions: LuaEngineOptions = {
+    openStandardLibs: true,
+    injectObjects: false,
+}
 
 export default class Lua {
     public global: Global
 
-    public constructor(private cmodule: LuaWasm, openStandardLibs: boolean) {
+    public constructor(private cmodule: LuaWasm, userOptions?: Partial<LuaEngineOptions>) {
         this.global = new Global(this.cmodule)
+
+        const options: LuaEngineOptions = {
+            ...defaultOptions,
+            ...(userOptions || {}),
+        }
+
+        this.global.registerTypeExtension(createErrorType(this.global, options.injectObjects))
+        this.global.registerTypeExtension(createPromiseType(this.global, options.injectObjects))
 
         if (this.global.isClosed()) {
             throw new Error('Lua state could not be created (probably due to lack of memory)')
         }
 
-        if (openStandardLibs) {
+        if (options.openStandardLibs) {
             this.cmodule.luaL_openlibs(this.global.address)
         }
     }
 
-    public doString(script: string): any {
-        this.global.loadString(script)
-        return this.callByteCode()
+    public doString(script: string): Promise<any> {
+        return this.callByteCode((thread) => thread.loadString(script))
     }
 
-    public doFile(filename: string): any {
-        this.global.loadFile(filename)
-        return this.callByteCode()
+    public doFile(filename: string): Promise<any> {
+        return this.callByteCode((thread) => thread.loadFile(filename))
     }
 
-    private callByteCode(): any {
-        const result = this.cmodule.lua_pcallk(this.global.address, 0, 1, 0, 0, undefined)
-
-        if (result !== LuaReturn.Ok) {
-            const error = this.cmodule.lua_tolstring(this.global.address, -1, undefined)
-            throw new Error(`Lua error(${result}): ${error}`)
+    private async callByteCode(loader: (thread: Thread) => void): Promise<any> {
+        const thread = this.global.newThread()
+        const threadIndex = this.global.getTop()
+        try {
+            loader(thread)
+            const result = await thread.run(0)
+            if (result.length > 0) {
+                this.cmodule.lua_xmove(thread.address, this.global.address, result.length)
+            }
+            return result[0]
+        } finally {
+            // Pop the read on success or failure
+            this.global.remove(threadIndex)
         }
-
-        return this.global.getValue(1)
     }
 }

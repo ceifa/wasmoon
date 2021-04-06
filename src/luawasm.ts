@@ -36,6 +36,8 @@ export default class LuaWasm {
     public luaL_openlibs: (L: LuaState) => void
     public luaL_loadstring: (L: LuaState, code: string) => LuaReturn
     public luaL_loadfilex: (L: LuaState, filename: string, mode?: string) => LuaReturn
+    public luaL_getmetafield: (L: LuaState, index: number, name: string) => LuaType
+    public luaL_tolstring: (L: LuaState, index: number) => string
     public lua_getglobal: (L: LuaState, name: string) => LuaType
     public lua_tonumberx: (L: LuaState, idx: number, isnum?: number) => number
     public lua_tolstring: (L: LuaState, idx: number, size?: number) => string
@@ -59,6 +61,8 @@ export default class LuaWasm {
     public lua_createtable: (L: LuaState, narr: number, nrec: number) => void
     public lua_gettop: (L: LuaState) => number
     public lua_settop: (L: LuaState, idx: number) => void
+    public lua_rotate: (L: LuaState, idx: number, count: number) => void
+    public lua_xmove: (fromState: LuaState, toState: LuaState, count: number) => void
     public lua_settable: (L: LuaState, idx: number) => void
     public lua_callk: (L: LuaState, nargs: number, nresults: number, ctx: number, func?: number) => void
     public lua_pcallk: (L: LuaState, nargs: number, nresults: number, msgh: number, ctx: number, func?: number) => number
@@ -67,6 +71,7 @@ export default class LuaWasm {
     public lua_resume: (L: LuaState, fromState: LuaState | undefined, argCount: number) => LuaResumeResult
     public lua_pushcclosure: (L: LuaState, cfunction: number, n: number) => void
     public luaL_newmetatable: (L: LuaState, name: string) => boolean
+    public lua_setfield: (L: LuaState, index: number, name: string) => void
     public lua_getfield: (L: LuaState, index: number, name: string) => LuaType
     public lua_newuserdatauv: (L: LuaState, size: number, nuvalue: number) => number // pointer
     public luaL_checkudata: (L: LuaState, arg: number, name: string) => number // pointer
@@ -90,6 +95,8 @@ export default class LuaWasm {
         this.luaL_openlibs = this.module.cwrap('luaL_openlibs', null, ['number'])
         this.luaL_loadstring = this.module.cwrap('luaL_loadstring', 'number', ['number', 'string'])
         this.luaL_loadfilex = this.module.cwrap('luaL_loadfilex', 'number', ['number', 'string', 'string'])
+        this.luaL_getmetafield = this.module.cwrap('luaL_getmetafield', 'number', ['number', 'number', 'string'])
+        this.luaL_tolstring = this.module.cwrap('luaL_tolstring', 'string', ['number', 'number'])
         this.lua_getglobal = this.module.cwrap('lua_getglobal', 'number', ['number', 'string'])
         this.lua_tonumberx = this.module.cwrap('lua_tonumberx', 'number', ['number', 'number', 'number'])
         this.lua_tolstring = this.module.cwrap('lua_tolstring', 'string', ['number', 'number', 'number'])
@@ -113,11 +120,13 @@ export default class LuaWasm {
         this.lua_createtable = this.module.cwrap('lua_createtable', null, ['number', 'number', 'number'])
         this.lua_gettop = this.module.cwrap('lua_gettop', 'number', ['number'])
         this.lua_settop = this.module.cwrap('lua_settop', null, ['number', 'number'])
+        this.lua_xmove = this.module.cwrap('lua_xmove', null, ['number', 'number', 'number'])
         this.lua_settable = this.module.cwrap('lua_settable', null, ['number', 'number'])
         this.lua_callk = this.module.cwrap('lua_callk', null, ['number', 'number', 'number', 'number', 'number'])
         this.lua_pcallk = this.module.cwrap('lua_pcallk', 'number', ['number', 'number', 'number', 'number', 'number', 'number'])
         this.lua_yieldk = this.module.cwrap('lua_yieldk', 'number', ['number', 'number', 'number', 'number'])
         this.lua_status = this.module.cwrap('lua_status', 'number', ['number'])
+        this.lua_rotate = this.module.cwrap('lua_rotate', null, ['number', 'number', 'number'])
 
         const lua_resume_raw = this.module.cwrap('lua_resume', 'number', ['number', 'number', 'number', 'number'])
         this.lua_resume = (luaState, fromState, argCount) => {
@@ -136,6 +145,7 @@ export default class LuaWasm {
 
         this.lua_pushcclosure = this.module.cwrap('lua_pushcclosure', null, ['number', 'number', 'number'])
         this.luaL_newmetatable = this.module.cwrap('luaL_newmetatable', 'boolean', ['number', 'string'])
+        this.lua_setfield = this.module.cwrap('lua_setfield', null, ['number', 'number', 'string'])
         this.lua_getfield = this.module.cwrap('lua_getfield', 'number', ['number', 'number', 'string'])
         this.lua_newuserdatauv = this.module.cwrap('lua_newuserdatauv', 'number', ['number', 'number', 'number'])
         this.luaL_checkudata = this.module.cwrap('luaL_checkudata', 'number', ['number', 'number', 'string'])
@@ -146,6 +156,11 @@ export default class LuaWasm {
         this.lua_typename = this.module.cwrap('lua_typename', 'string', ['number', 'number'])
         this.lua_error = this.module.cwrap('lua_error', 'number', ['number'])
         this.lua_close = this.module.cwrap('lua_close', null, ['number'])
+    }
+
+    public lua_remove(luaState: LuaState, index: number): void {
+        this.lua_rotate(luaState, index, -1)
+        this.lua_pop(luaState, 1)
     }
 
     public lua_pop(luaState: LuaState, count: number): void {
