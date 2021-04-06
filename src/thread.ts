@@ -53,13 +53,22 @@ export default class Thread {
     }
 
     public loadFile(filename: string): void {
-        this.assertOk(this.cmodule.luaL_loadfilex(this.address, filename))
+        this.assertOk(this.cmodule.luaL_loadfilex(this.address, filename, null))
     }
 
     public resume(argCount = 0): LuaResumeResult {
-        const resumeResult = this.cmodule.lua_resume(this.address, undefined, argCount)
-        this.assertOk(resumeResult.result)
-        return resumeResult
+        const dataPointer = this.cmodule.module._malloc(PointerSize)
+        try {
+            this.cmodule.module.setValue(dataPointer, 0, 'i32')
+            const luaResult = this.cmodule.lua_resume(this.address, null, argCount, dataPointer)
+            this.assertOk(luaResult)
+            return {
+                result: luaResult,
+                resultCount: this.cmodule.module.getValue(dataPointer, 'i32'),
+            }
+        } finally {
+            this.cmodule.module._free(dataPointer)
+        }
     }
 
     public getTop(): number {
@@ -108,7 +117,7 @@ export default class Thread {
             this.pushValue(arg)
         }
 
-        this.cmodule.lua_callk(this.address, args.length, LUA_MULTRET, 0, undefined)
+        this.cmodule.lua_callk(this.address, args.length, LUA_MULTRET, 0, null)
         return this.getStackValues()
     }
 
@@ -256,7 +265,7 @@ export default class Thread {
             return undefined
         }
 
-        const name = this.cmodule.lua_tolstring(this.address, -1)
+        const name = this.cmodule.lua_tolstring(this.address, -1, null)
         // This is popping the luaL_getmetafield result which only pushes with type is not nil.
         this.pop(1)
 
@@ -286,9 +295,9 @@ export default class Thread {
             case LuaType.Nil:
                 return null
             case LuaType.Number:
-                return this.cmodule.lua_tonumberx(this.address, idx, undefined)
+                return this.cmodule.lua_tonumberx(this.address, idx, null)
             case LuaType.String:
-                return this.cmodule.lua_tolstring(this.address, idx, undefined)
+                return this.cmodule.lua_tolstring(this.address, idx, null)
             case LuaType.Boolean:
                 return Boolean(this.cmodule.lua_toboolean(this.address, idx))
             case LuaType.Table:
@@ -319,7 +328,7 @@ export default class Thread {
                             this.pushValue(arg)
                         }
 
-                        this.cmodule.lua_callk(this.address, args.length, 1, 0, undefined)
+                        this.cmodule.lua_callk(this.address, args.length, 1, 0, null)
                         return this.getValue(-1)
                     }
 
@@ -375,11 +384,11 @@ export default class Thread {
             if (this.cmodule.lua_gettop(this.address) > 0) {
                 if (result === LuaReturn.ErrorMem) {
                     // If there's no memory just do a normal to string.
-                    const error = this.cmodule.lua_tolstring(this.address, -1)
+                    const error = this.cmodule.lua_tolstring(this.address, -1, null)
                     message += `: ${error}`
                 } else {
                     // Calls __tostring if it exists and pushes onto the stack.
-                    const error = this.cmodule.luaL_tolstring(this.address, -1)
+                    const error = this.cmodule.luaL_tolstring(this.address, -1, null)
                     message += `: ${error}`
                     // Pops the string pushed by luaL_tolstring
                     this.pop()
