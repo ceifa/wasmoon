@@ -16,7 +16,7 @@ export const decorateFunction = (
 export const decorate = (
     target: object,
     options: Partial<{
-        reference: boolean,
+        reference: boolean
         metatable: object
     }>,
 ): Decoration => {

@@ -1,9 +1,9 @@
+import { LuaReturn, LuaState, LuaType } from '../types'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LuaReturn, LuaState, LuaType } from '../types';
 
 class UserdataTypeExtension extends TypeExtension<any> {
-    private readonly gcPointer: number;
+    private readonly gcPointer: number
 
     public constructor(thread: Thread) {
         super(thread, 'userdata')
