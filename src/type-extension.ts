@@ -1,8 +1,11 @@
-import { BaseDecorationOptions, decorate, Decoration } from './decoration'
+import { BaseDecorationOptions, Decoration, decorate } from './decoration'
 import { LuaType, PointerSize } from './types'
 import Thread from './thread'
+import { Pointer } from './pointer'
 
 export default abstract class LuaTypeExtension<T, K extends BaseDecorationOptions = BaseDecorationOptions> {
+    protected gcPointer: number | undefined = undefined
+
     // Type name, for metatables and lookups.
     public readonly name: string
     protected thread: Thread
@@ -33,27 +36,24 @@ export default abstract class LuaTypeExtension<T, K extends BaseDecorationOption
     public pushValue(thread: Thread, decoratedValue: Decoration<T, K>, _userdata?: any): boolean {
         const { target, options: decorations } = decoratedValue
 
-        const pointer = thread.cmodule.ref(target)
+        const pointer = target instanceof Pointer ? target.valueOf() : thread.cmodule.ref(target)
         // 4 = size of pointer in wasm.
         const userDataPointer = thread.cmodule.lua_newuserdatauv(thread.address, PointerSize, 0)
         thread.cmodule.module.setValue(userDataPointer, pointer, '*')
 
-        if (LuaType.Nil === thread.cmodule.luaL_getmetatable(thread.address, this.name)) {
-            // Pop the pushed nil value and the user data. Don't need to unref because it's
-            // already associated with the user data pointer.
-            thread.pop(2)
-            throw new Error(`metatable not found: ${this.name}`)
-        }
-
         if (decorations?.metatable) {
             // If we already have a gc handler, let's keep, otherwise inherit it
-            if (!decorations.metatable.__gc) {
-                const gcType = thread.cmodule.lua_getfield(thread.address, -1, '__gc')
-                if (LuaType.Function === gcType) {
-                    decorations.metatable.__gc = decorate<any>(thread.getPointer(-1), { functionPointer: true })
-                }
+            if (!decorations.metatable.__gc && this.gcPointer) {
+                decorations.metatable.__gc = decorate<any>(this.gcPointer, { functionPointer: true })
             }
-        } else {    
+        } else {
+            if (LuaType.Nil === thread.cmodule.luaL_getmetatable(thread.address, this.name)) {
+                // Pop the pushed nil value and the user data. Don't need to unref because it's
+                // already associated with the user data pointer.
+                thread.pop(2)
+                throw new Error(`metatable not found: ${this.name}`)
+            }
+
             // Set as the metatable for the userdata.
             // -1 is the metatable, -2 is the user data.
             thread.cmodule.lua_setmetatable(thread.address, -2)

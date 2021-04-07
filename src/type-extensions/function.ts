@@ -1,14 +1,14 @@
 import { BaseDecorationOptions, Decoration } from '../decoration'
 import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from '../types'
+import { Pointer } from '../pointer'
 import MultiReturn from '../multireturn'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { Pointer } from '../pointer'
 
 export interface FunctionDecoration extends BaseDecorationOptions {
     rawArguments?: number[]
     receiveThread?: boolean
-    rawResult?: boolean,
+    rawResult?: boolean
     functionPointer?: boolean
 }
 
@@ -29,13 +29,11 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
             ? new FinalizationRegistry((func: number) => {
-                if (!this.thread.isClosed()) {
-                    this.thread.cmodule.luaL_unref(this.thread.address, LUA_REGISTRYINDEX, func)
-                }
-            })
+                  if (!this.thread.isClosed()) {
+                      this.thread.cmodule.luaL_unref(this.thread.address, LUA_REGISTRYINDEX, func)
+                  }
+              })
             : undefined
-
-    private gcPointer: number
 
     public constructor(thread: Thread) {
         super(thread, 'js_function')
@@ -66,7 +64,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
     }
 
     public close(): void {
-        this.thread.cmodule.module.removeFunction(this.gcPointer)
+        this.thread.cmodule.module.removeFunction(this.gcPointer!)
     }
 
     public isType(_thread: Thread, _index: number, type: LuaType): boolean {
@@ -135,7 +133,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
         }, 'ii')
         // Creates a new userdata with metatable pointing to the function pointer.
         // Pushes the new userdata onto the stack.
-        this.createAndPushFunctionReference(thread, pointer)
+        super.pushValue(thread, new Decoration(new Pointer(pointer), {}))
         // Pass 1 to associate the closure with the userdata.
         thread.cmodule.lua_pushcclosure(thread.address, pointer, 1)
 
@@ -171,22 +169,6 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
         this.functionRegistry?.register(jsFunc, func)
 
         return jsFunc
-    }
-
-    private createAndPushFunctionReference(thread: Thread, pointer: number): void {
-        // 4 = size of pointer in wasm.
-        const userDataPointer = thread.cmodule.lua_newuserdatauv(thread.address, PointerSize, 0)
-        thread.cmodule.module.setValue(userDataPointer, pointer, '*')
-
-        if (LuaType.Nil === thread.cmodule.luaL_getmetatable(thread.address, this.name)) {
-            // Pop the pushed nil value and user data
-            thread.pop(2)
-            throw new Error(`metatable not found: ${this.name}`)
-        }
-
-        // Set as the metatable for the userdata.
-        // -1 is the metatable, -2 is the user data.
-        thread.cmodule.lua_setmetatable(thread.address, -2)
     }
 }
 

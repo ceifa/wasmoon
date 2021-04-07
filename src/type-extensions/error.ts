@@ -4,8 +4,6 @@ import Thread from '../thread'
 import TypeExtension from '../type-extension'
 
 class ErrorTypeExtension extends TypeExtension<Error> {
-    private gcPointer: number
-
     public constructor(thread: Thread, injectObject: boolean) {
         super(thread, 'js_error')
 
@@ -69,7 +67,7 @@ class ErrorTypeExtension extends TypeExtension<Error> {
     }
 
     public close(): void {
-        this.thread.cmodule.module.removeFunction(this.gcPointer)
+        this.thread.cmodule.module.removeFunction(this.gcPointer!)
     }
 }
 

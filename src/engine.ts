@@ -26,7 +26,7 @@ export default class Lua {
 
         // Generic handlers - These may be required to be registered for additional types.
         this.global.registerTypeExtension(0, createTableType(this.global))
-        this.global.registerTypeExtension(0, createFunctionType(this.global))
+        this.global.registerTypeExtension(1, createFunctionType(this.global))
         // Specific type handlers. These depend on the above but should be evaluated first.
         this.global.registerTypeExtension(1, createErrorType(this.global, options.injectObjects))
         this.global.registerTypeExtension(1, createPromiseType(this.global, options.injectObjects))

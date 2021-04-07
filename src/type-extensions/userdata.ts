@@ -12,8 +12,6 @@ export function decorateUserData(target: any, options: UserDataDecorationOptions
 }
 
 class UserdataTypeExtension extends TypeExtension<any, UserDataDecorationOptions> {
-    private readonly gcPointer: number
-
     public constructor(thread: Thread) {
         super(thread, 'js_userdata')
 
@@ -62,7 +60,7 @@ class UserdataTypeExtension extends TypeExtension<any, UserDataDecorationOptions
     }
 
     public close(): void {
-        this.thread.cmodule.module.removeFunction(this.gcPointer)
+        this.thread.cmodule.module.removeFunction(this.gcPointer!)
     }
 }
 

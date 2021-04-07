@@ -5,8 +5,6 @@ import Thread from '../thread'
 import TypeExtension from '../type-extension'
 
 class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
-    private gcPointer: number
-
     public constructor(thread: Thread, injectObject: boolean) {
         super(thread, 'js_promise')
 
@@ -124,7 +122,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     }
 
     public close(): void {
-        this.thread.cmodule.module.removeFunction(this.gcPointer)
+        this.thread.cmodule.module.removeFunction(this.gcPointer!)
     }
 
     public pushValue(thread: Thread, decoration: Decoration<Promise<T>>): boolean {
