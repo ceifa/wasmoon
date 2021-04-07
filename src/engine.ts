@@ -2,7 +2,9 @@ import { LuaEngineOptions } from './types'
 import Global from './global'
 import Thread from './thread'
 import createErrorType from './type-extensions/error'
+import createFunctionType from './type-extensions/function'
 import createPromiseType from './type-extensions/promise'
+import createTableType from './type-extensions/table'
 import createUserdataType from './type-extensions/userdata'
 import type LuaWasm from './luawasm'
 
@@ -22,9 +24,13 @@ export default class Lua {
             ...(userOptions || {}),
         }
 
-        this.global.registerTypeExtension(createErrorType(this.global, options.injectObjects))
-        this.global.registerTypeExtension(createPromiseType(this.global, options.injectObjects))
-        this.global.registerTypeExtension(createUserdataType(this.global))
+        // Generic handlers - These may be required to be registered for additional types.
+        this.global.registerTypeExtension(0, createTableType(this.global))
+        this.global.registerTypeExtension(0, createFunctionType(this.global))
+        // Specific type handlers. These depend on the above but should be evaluated first.
+        this.global.registerTypeExtension(1, createErrorType(this.global, options.injectObjects))
+        this.global.registerTypeExtension(1, createPromiseType(this.global, options.injectObjects))
+        this.global.registerTypeExtension(2, createUserdataType(this.global))
 
         if (this.global.isClosed()) {
             throw new Error('Lua state could not be created (probably due to lack of memory)')

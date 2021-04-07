@@ -38,12 +38,3 @@ export enum LuaType {
     UserData = 7,
     Thread = 8,
 }
-
-export enum LuaMetatables {
-    FunctionReference = 'function_reference',
-    JsReference = 'js_reference',
-}
-
-declare global {
-    const FinalizationRegistry: any
-}

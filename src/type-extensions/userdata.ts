@@ -1,12 +1,21 @@
+import { BaseDecorationOptions, Decoration } from '../decoration'
 import { LuaReturn, LuaState, LuaType } from '../types'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
 
-class UserdataTypeExtension extends TypeExtension<any> {
+export interface UserDataDecorationOptions extends BaseDecorationOptions {
+    reference?: boolean
+}
+
+export function decorateUserData(target: any, options: UserDataDecorationOptions): Decoration<any, UserDataDecorationOptions> {
+    return new Decoration<any, UserDataDecorationOptions>(target, options)
+}
+
+class UserdataTypeExtension extends TypeExtension<any, UserDataDecorationOptions> {
     private readonly gcPointer: number
 
     public constructor(thread: Thread) {
-        super(thread, 'userdata')
+        super(thread, 'js_userdata')
 
         this.gcPointer = thread.cmodule.module.addFunction((functionStateAddress: LuaState) => {
             // Throws a lua error which does a jump if it does not match.
@@ -33,8 +42,8 @@ class UserdataTypeExtension extends TypeExtension<any> {
         thread.cmodule.lua_pop(thread.address, 1)
     }
 
-    public isType(_thread: Thread, _index: number, type: LuaType): boolean {
-        return type === LuaType.UserData
+    public isType(_thread: Thread, _index: number, type: LuaType, name?: string): boolean {
+        return type === LuaType.UserData && name === this.name
     }
 
     public getValue(thread: Thread, index: number): any {
@@ -43,12 +52,13 @@ class UserdataTypeExtension extends TypeExtension<any> {
         return thread.cmodule.getRef(referencePointer)
     }
 
-    public pushValue(thread: Thread, value: unknown, decorations: Record<string, any>): boolean {
-        if (!decorations?.reference) {
+    public pushValue(thread: Thread, decoratedValue: Decoration<any, UserDataDecorationOptions>): boolean {
+        const { options } = decoratedValue
+        if (!options?.reference) {
             return false
         }
 
-        return super.pushValue(thread, value, decorations)
+        return super.pushValue(thread, decoratedValue)
     }
 
     public close(): void {

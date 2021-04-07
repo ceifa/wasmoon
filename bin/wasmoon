@@ -11,12 +11,16 @@ if (snippets.length === 2 && snippets[0] === '-f') {
     code = fs.readFileSync(0, 'utf-8');
 }
 
-(async () => {
+async function main() {
     const lua = await new LuaFactory().createEngine();
-
     try {
-        lua.doString(code);
+        console.log(await lua.doString(code));
     } finally {
         lua.global.close();
     }
-})();
+}
+
+main().catch(err => {
+    console.error(err);
+    process.exit(1);
+});
