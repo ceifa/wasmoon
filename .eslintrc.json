@@ -12,6 +12,7 @@
         "@typescript-eslint/no-non-null-assertion": "off",
         "@typescript-eslint/camelcase": "off",
         "@typescript-eslint/member-naming": "off",
+        "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
         "@typescript-eslint/member-ordering": [
             "error",
             {

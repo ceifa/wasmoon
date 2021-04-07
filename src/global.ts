@@ -1,4 +1,3 @@
-import { LuaMetatables, LuaReturn, LuaState } from './types'
 import LuaTypeExtension from './type-extension'
 import Thread from './thread'
 import type LuaWasm from './luawasm'
@@ -9,7 +8,6 @@ interface LuaMemoryStats {
 }
 
 export default class Global extends Thread {
-    public readonly functionGcPointer: number
     private memoryStats: LuaMemoryStats
     private allocatorFunctionPointer: number
 
@@ -43,30 +41,6 @@ export default class Global extends Thread {
 
         this.memoryStats = memoryStats
         this.allocatorFunctionPointer = allocatorFunctionPointer
-
-        this.functionGcPointer = cmodule.module.addFunction((calledL: LuaState) => {
-            // Throws a lua error which does a jump if it does not match.
-            const userDataPointer = cmodule.luaL_checkudata(calledL, 1, LuaMetatables.FunctionReference)
-            const functionPointer = cmodule.module.getValue(userDataPointer, '*')
-            // Safe to do without a reference count because each time a function is pushed it creates a new and unique
-            // anonymous function.
-            cmodule.module.removeFunction(functionPointer)
-
-            return LuaReturn.Ok
-        }, 'ii')
-
-        // Creates metatable if it doesn't exist, always pushes it onto the stack.
-        if (cmodule.luaL_newmetatable(address, LuaMetatables.FunctionReference)) {
-            cmodule.lua_pushstring(address, '__gc')
-            cmodule.lua_pushcclosure(address, this.functionGcPointer, 0)
-            cmodule.lua_settable(address, -3)
-
-            cmodule.lua_pushstring(address, '__metatable')
-            cmodule.lua_pushstring(address, 'protected metatable')
-            cmodule.lua_settable(address, -3)
-        }
-        // Pop the metatable from the stack.
-        cmodule.lua_pop(address, 1)
     }
 
     public close(): void {
@@ -75,16 +49,17 @@ export default class Global extends Thread {
         }
 
         super.close()
-        this.cmodule.module.removeFunction(this.functionGcPointer)
         this.cmodule.module.removeFunction(this.allocatorFunctionPointer)
-        for (const extension of this.typeExtensions) {
-            extension.close()
+        for (const wrapper of this.typeExtensions) {
+            wrapper.extension.close()
         }
     }
 
     // To allow library users to specify custom types
-    public registerTypeExtension(extension: LuaTypeExtension<unknown>): void {
-        this.typeExtensions.push(extension)
+    // Higher is more important and will be evaluated first.
+    public registerTypeExtension(priority: number, extension: LuaTypeExtension<unknown>): void {
+        this.typeExtensions.push({ extension, priority })
+        this.typeExtensions.sort((a, b) => b.priority - a.priority)
     }
 
     public getMemoryUsed(): number {

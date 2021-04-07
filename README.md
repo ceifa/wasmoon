@@ -48,7 +48,7 @@ try {
     // Set a JS function to be a global lua function
     lua.global.set('sum', (x, y) => x + y)
     // Run a lua string
-    lua.doString(`
+    await lua.doString(`
     print(sum(10, 10))
     function multiply(x, y)
         return x * y

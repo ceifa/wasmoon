@@ -291,3 +291,18 @@ test('limit memory use causes program runtime failure succeeds', async () => {
 
     await expect(engine.global.run()).rejects.toThrow('Lua Error(ErrorMem/4): not enough memory')
 })
+
+test('table supported circular dependencies', async () => {
+    const engine = await getEngine()
+
+    const a = { name: 'a' }
+    const b = { name: 'b' }
+    b.a = a
+    a.b = b
+
+    engine.global.pushValue(a)
+    const res = engine.global.getValue(-1)
+
+    // Jest does not cope well with comparing these
+    expect(res.b.a === res).toEqual(true)
+})

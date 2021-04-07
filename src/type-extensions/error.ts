@@ -1,3 +1,4 @@
+import { Decoration } from '../decoration'
 import { LuaReturn, LuaState } from '../types'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
@@ -60,11 +61,11 @@ class ErrorTypeExtension extends TypeExtension<Error> {
         }
     }
 
-    public pushValue(thread: Thread, value: unknown, decorations: Record<string, any>): boolean {
-        if (!(value instanceof Error)) {
+    public pushValue(thread: Thread, decoration: Decoration<Error>): boolean {
+        if (!(decoration.target instanceof Error)) {
             return false
         }
-        return super.pushValue(thread, value, decorations)
+        return super.pushValue(thread, decoration)
     }
 
     public close(): void {

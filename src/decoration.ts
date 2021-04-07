@@ -1,24 +1,11 @@
-export class Decoration {
-    constructor(public target: any, public options: any) {}
+export interface BaseDecorationOptions {
+    metatable?: Record<any, any>
 }
 
-export const decorateFunction = (
-    target: Function,
-    options: Partial<{
-        rawArguments: number[]
-        receiveThread: boolean
-        rawResult: boolean
-    }>,
-): Decoration => {
-    return new Decoration(target, options)
+export class Decoration<T = any, K extends BaseDecorationOptions = BaseDecorationOptions> {
+    public constructor(public target: T, public options: K) {}
 }
 
-export const decorate = (
-    target: object,
-    options: Partial<{
-        reference: boolean
-        metatable: object
-    }>,
-): Decoration => {
-    return new Decoration(target, options)
+export function decorate(target: any, options: BaseDecorationOptions): Decoration<any, BaseDecorationOptions> {
+    return new Decoration<any, BaseDecorationOptions>(target, options)
 }

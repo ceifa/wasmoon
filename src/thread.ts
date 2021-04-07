@@ -1,29 +1,26 @@
 import { Decoration } from './decoration'
-import { LUA_MULTRET, LUA_REGISTRYINDEX, LuaMetatables, LuaResumeResult, LuaReturn, LuaState, LuaType, PointerSize } from './types'
+import { LUA_MULTRET, LuaResumeResult, LuaReturn, LuaState, LuaType, PointerSize } from './types'
 import { Pointer } from './pointer'
 import LuaTypeExtension from './type-extension'
 import MultiReturn from './multireturn'
 import type Global from './global'
 import type LuaWasm from './luawasm'
 
+export interface OrderedExtension {
+    // Bigger is more important
+    priority: number
+    extension: LuaTypeExtension<unknown>
+}
+
 export default class Thread {
     public readonly address: LuaState = 0
     public readonly cmodule: LuaWasm
-    protected typeExtensions: Array<LuaTypeExtension<unknown>>
+    protected typeExtensions: OrderedExtension[]
     private closed = false
-    // Backward compatibility
-    private readonly functionRegistry =
-        typeof FinalizationRegistry !== 'undefined'
-            ? new FinalizationRegistry((func: number) => {
-                  if (!this.closed) {
-                      this.cmodule.luaL_unref(this.address, LUA_REGISTRYINDEX, func)
-                  }
-              })
-            : undefined
 
     private global: Global | this
 
-    public constructor(cmodule: LuaWasm, typeExtensions: Array<LuaTypeExtension<unknown>>, address: number, global?: Global) {
+    public constructor(cmodule: LuaWasm, typeExtensions: OrderedExtension[], address: number, global?: Global) {
         this.cmodule = cmodule
         this.typeExtensions = typeExtensions
         this.address = address
@@ -75,6 +72,10 @@ export default class Thread {
         return this.cmodule.lua_gettop(this.address)
     }
 
+    public setTop(index: number): void {
+        this.cmodule.lua_settop(this.address, index)
+    }
+
     public remove(index: number): void {
         return this.cmodule.lua_remove(this.address, index)
     }
@@ -95,7 +96,7 @@ export default class Thread {
                 }
             } else {
                 // If there's nothing to yield, then skip a tick to yield for promises, timers, etc.
-                await new Promise((resolve) => setImmediate(resolve, 0))
+                await new Promise((resolve) => setImmediate(resolve))
             }
 
             resumeResult = this.resume(0)
@@ -136,127 +137,58 @@ export default class Thread {
         return L === this.global.address ? this.global : new Thread(this.cmodule, this.typeExtensions, L, this.global as Global)
     }
 
-    public pushValue(value: any, options: Partial<{ _done?: Map<any, number> }> = {}): void {
-        const { value: target, decorations } = this.getValueDecorations(value)
+    public pushValue(rawValue: any, userdata?: any): void {
+        const decoratedValue = this.getValueDecorations(rawValue)
+        const options = decoratedValue.options
+        let target = decoratedValue.target
 
-        // First to allow overriding default behaviour
-        if (this.typeExtensions.find((extension) => extension.pushValue(this, target, decorations))) {
-            if (typeof decorations.metatable === 'object') {
-                this.pushValue(decorations.metatable)
-                this.cmodule.lua_setmetatable(this.address, -2)
-            }
-
+        if (target instanceof Thread) {
+            this.cmodule.lua_pushthread(target.address)
             return
         }
 
-        const type = typeof target
-
-        const done = options?._done?.get(target)
-        if (done) {
-            this.cmodule.lua_pushvalue(this.address, done)
-            return
-        }
-
-        if (type === 'undefined' || target === null) {
-            this.cmodule.lua_pushnil(this.address)
-        } else if (type === 'number') {
-            if (Number.isInteger(target)) {
-                this.cmodule.lua_pushinteger(this.address, target)
-            } else {
-                this.cmodule.lua_pushnumber(this.address, target)
+        // First to allow overriding default behaviour, except for threads
+        if (!this.typeExtensions.find((wrapper) => wrapper.extension.pushValue(this, decoratedValue, userdata))) {
+            if (target === null) {
+                target = undefined
             }
-        } else if (type === 'string') {
-            this.cmodule.lua_pushstring(this.address, target)
-        } else if (type === 'boolean') {
-            this.cmodule.lua_pushboolean(this.address, target)
-        } else if (type === 'object') {
-            if (target instanceof Thread) {
-                this.cmodule.lua_pushthread(target.address)
-            } else {
-                const table = this.cmodule.lua_gettop(this.address) + 1
 
-                options._done ??= new Map<any, number>()
-                options._done.set(target, table)
-
-                if (Array.isArray(target)) {
-                    this.cmodule.lua_createtable(this.address, target.length, 0)
-
-                    for (let i = 0; i < target.length; i++) {
-                        this.pushValue(i + 1)
-                        this.pushValue(target[i], { _done: options._done })
-
-                        this.cmodule.lua_settable(this.address, table)
-                    }
-                } else {
-                    this.cmodule.lua_createtable(this.address, 0, Object.getOwnPropertyNames(target).length)
-
-                    for (const key in target) {
-                        this.pushValue(key)
-                        this.pushValue(target[key], { _done: options._done })
-
-                        this.cmodule.lua_settable(this.address, table)
-                    }
-                }
-            }
-        } else if (type === 'function') {
-            const pointer = this.cmodule.module.addFunction((calledL: LuaState) => {
-                const argsQuantity = this.cmodule.lua_gettop(calledL)
-                const args = []
-
-                const thread = this.stateToThread(calledL)
-
-                if (decorations.receiveThread) {
-                    args.push(thread)
-                }
-
-                for (let i = 1; i <= argsQuantity; i++) {
-                    args.push(thread.getValue(i, undefined, { raw: decorations?.rawArguments?.includes(i - 1) }))
-                }
-
-                if (decorations.rawResult) {
-                    // Interestingly yieldk does a longjmp and that's handled
-                    // by throwing an error. So for anything that yields it needs
-                    // to not be in the try/catch.
-                    const result = target(...args)
-                    if (typeof result !== 'number') {
-                        throw new Error('result must be a number')
-                    }
-                    return result
-                }
-
-                try {
-                    const result = target(...args)
-
-                    if (result === undefined) {
-                        return 0
-                    }
-                    if (result instanceof MultiReturn) {
-                        for (const item of result) {
-                            thread.pushValue(item)
-                        }
-                        return result.length
+            switch (typeof target) {
+                case 'undefined':
+                    this.cmodule.lua_pushnil(this.address)
+                    break
+                case 'number':
+                    if (Number.isInteger(target)) {
+                        this.cmodule.lua_pushinteger(this.address, target)
                     } else {
-                        thread.pushValue(result)
-                        return 1
+                        this.cmodule.lua_pushnumber(this.address, target)
                     }
-                } catch (err) {
-                    thread.pushValue(err)
-                    return this.cmodule.lua_error(thread.address)
-                }
-            }, 'ii')
-            // Creates a new userdata with metatable pointing to the function pointer.
-            // Pushes the new userdata onto the stack.
-            this.createAndPushFunctionReference(pointer)
-            // Pass 1 to associate the closure with the userdata.
-            this.cmodule.lua_pushcclosure(this.address, pointer, 1)
-        } else {
-            throw new Error(`The type '${type}' is not supported by Lua`)
+                    break
+                case 'string':
+                    this.cmodule.lua_pushstring(this.address, target)
+                    break
+                case 'boolean':
+                    this.cmodule.lua_pushboolean(this.address, target ? 1 : 0)
+                    break
+                default:
+                    throw new Error(`The type '${typeof target}' is not supported by Lua`)
+            }
         }
 
-        if (typeof decorations.metatable === 'object') {
-            this.pushValue(decorations.metatable)
-            this.cmodule.lua_setmetatable(this.address, -2)
+        if (options?.metatable) {
+            this.setMetatable(options.metatable, -1)
         }
+    }
+
+    public setMetatable(metatable: Record<any, any>, index: number): void {
+        index = this.cmodule.lua_absindex(this.address, index)
+        if (this.cmodule.lua_getmetatable(this.address, index)) {
+            this.pop(1)
+            throw new Error('data already has associated metatable')
+        }
+
+        this.pushValue(metatable)
+        this.cmodule.lua_setmetatable(this.address, index)
     }
 
     public getMetatableName(index: number): string | undefined {
@@ -278,21 +210,16 @@ export default class Thread {
         return name
     }
 
-    public getValue(
-        idx: number,
-        inputType: LuaType | undefined = undefined,
-        options: Partial<{
-            raw: boolean
-            _done: Record<number, any>
-        }> = {},
-    ): any {
+    public getValue(idx: number, inputType: LuaType | undefined = undefined, userdata?: any): any {
+        idx = this.cmodule.lua_absindex(this.address, idx)
+
         // Before the below to allow overriding default behaviour.
         const metatableName = this.getMetatableName(idx)
         const type: LuaType = inputType || this.cmodule.lua_type(this.address, idx)
 
-        const typeExtension = this.typeExtensions.find((extension) => extension.isType(this, idx, type, metatableName))
-        if (typeExtension) {
-            return typeExtension.getValue(this, idx)
+        const typeExtensionWrapper = this.typeExtensions.find((wrapper) => wrapper.extension.isType(this, idx, type, metatableName))
+        if (typeExtensionWrapper) {
+            return typeExtensionWrapper.extension.getValue(this, idx, userdata)
         }
 
         switch (type) {
@@ -306,49 +233,8 @@ export default class Thread {
                 return this.cmodule.lua_tolstring(this.address, idx, null)
             case LuaType.Boolean:
                 return Boolean(this.cmodule.lua_toboolean(this.address, idx))
-            case LuaType.Table:
-                if (options.raw) {
-                    return new Pointer(this.cmodule.lua_topointer(this.address, idx))
-                } else {
-                    return this.getTableValue(idx, options?._done)
-                }
-            case LuaType.Function:
-                if (options.raw) {
-                    return new Pointer(this.cmodule.lua_topointer(this.address, idx))
-                } else {
-                    this.cmodule.lua_pushvalue(this.address, idx)
-                    const func = this.cmodule.luaL_ref(this.address, LUA_REGISTRYINDEX)
-
-                    const jsFunc = (...args: any[]): any => {
-                        if (this.closed) {
-                            console.warn('Tried to call a function after closing lua state')
-                            return
-                        }
-
-                        const internalType = this.cmodule.lua_rawgeti(this.address, LUA_REGISTRYINDEX, func)
-                        if (internalType !== LuaType.Function) {
-                            throw new Error(`A function of type '${type}' was pushed, expected is ${LuaType.Function}`)
-                        }
-
-                        for (const arg of args) {
-                            this.pushValue(arg)
-                        }
-
-                        this.cmodule.lua_callk(this.address, args.length, 1, 0, null)
-                        return this.getValue(-1)
-                    }
-
-                    this.functionRegistry?.register(jsFunc, func)
-
-                    return jsFunc
-                }
             case LuaType.Thread: {
-                const value = this.cmodule.lua_tothread(this.address, idx)
-                if (options.raw) {
-                    return new Pointer(value)
-                } else {
-                    return this.stateToThread(value)
-                }
+                return this.stateToThread(this.cmodule.lua_tothread(this.address, idx))
             }
             // Fallthrough if unrecognised user data
             default:
@@ -367,6 +253,10 @@ export default class Thread {
         this.cmodule.lua_close(this.address)
     }
 
+    public getPointer(index: number): Pointer {
+        return new Pointer(this.cmodule.lua_topointer(this.address, index))
+    }
+
     public isClosed(): boolean {
         return !this.address || this.closed
     }
@@ -376,10 +266,13 @@ export default class Thread {
 
         for (let i = 1; i <= top; i++) {
             const type = this.cmodule.lua_type(this.address, i)
-            const value = this.getValue(i, type, { raw: true })
+            const pointer = this.getPointer(i)
+            const name = this.cmodule.luaL_tolstring(this.address, i, null)
+            this.pop(1)
+            const value = this.getValue(i, type)
 
             const typename = this.cmodule.lua_typename(this.address, type)
-            log(i, typename, value)
+            log(i, typename, pointer, name, value)
         }
     }
 
@@ -404,72 +297,7 @@ export default class Thread {
         }
     }
 
-    private getTableValue(idx: number, done: Record<number, any> = {}): Record<any, any> | any[] {
-        const table: Record<any, any> = {}
-
-        const pointer = this.cmodule.lua_topointer(this.address, idx)
-        if (done[pointer]) {
-            return done[pointer]
-        }
-
-        done[pointer] = table
-
-        this.cmodule.lua_pushnil(this.address)
-
-        if (idx < 0) {
-            idx--
-        }
-
-        while (this.cmodule.lua_next(this.address, idx)) {
-            const keyType = this.cmodule.lua_type(this.address, -2)
-            const key = this.getValue(-2, keyType, { _done: done })
-
-            const valueType = this.cmodule.lua_type(this.address, -1)
-            const value = this.getValue(-1, valueType, { _done: done })
-
-            table[key] = value
-
-            this.pop()
-        }
-
-        const tableLength = Object.keys(table).length
-        // Specifically return an object if there's no way of telling whether
-        // it's an array or object.
-        if (tableLength === 0) {
-            return {}
-        }
-
-        let isArray = true
-        const array: any[] = []
-        for (let i = 1; i <= tableLength; i++) {
-            const value = table[String(i)]
-            if (value === undefined) {
-                isArray = false
-                break
-            }
-            array.push(value)
-        }
-
-        return isArray ? array : table
-    }
-
-    private createAndPushFunctionReference(pointer: number): void {
-        // 4 = size of pointer in wasm.
-        const userDataPointer = this.cmodule.lua_newuserdatauv(this.address, PointerSize, 0)
-        this.cmodule.module.setValue(userDataPointer, pointer, '*')
-
-        if (LuaType.Nil === this.cmodule.luaL_getmetatable(this.address, LuaMetatables.FunctionReference)) {
-            // Pop the pushed nil value and user data
-            this.pop(2)
-            throw new Error(`metatable not found: ${LuaMetatables.FunctionReference}`)
-        }
-
-        // Set as the metatable for the userdata.
-        // -1 is the metatable, -2 is the user data.
-        this.cmodule.lua_setmetatable(this.address, -2)
-    }
-
-    private getValueDecorations(value: any): { value: any; decorations: any } {
-        return value instanceof Decoration ? { value: value.target, decorations: value.options } : { value, decorations: {} }
+    private getValueDecorations(value: any): Decoration {
+        return value instanceof Decoration ? value : new Decoration(value, {})
     }
 }

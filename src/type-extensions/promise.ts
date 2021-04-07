@@ -1,5 +1,6 @@
+import { Decoration } from '../decoration'
 import { LuaReturn, LuaState } from '../types'
-import { decorateFunction } from '../decoration'
+import { decorateFunction } from './function'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
 
@@ -126,11 +127,11 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
         this.thread.cmodule.module.removeFunction(this.gcPointer)
     }
 
-    public pushValue(thread: Thread, value: unknown, decorations: Record<string, any>): boolean {
-        if (Promise.resolve(value) !== value) {
+    public pushValue(thread: Thread, decoration: Decoration<Promise<T>>): boolean {
+        if (Promise.resolve(decoration.target) !== decoration.target) {
             return false
         }
-        return super.pushValue(thread, value, decorations)
+        return super.pushValue(thread, decoration)
     }
 }
 
