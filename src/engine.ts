@@ -3,6 +3,7 @@ import Global from './global'
 import Thread from './thread'
 import createErrorType from './type-extensions/error'
 import createPromiseType from './type-extensions/promise'
+import createUserdataType from './type-extensions/userdata'
 import type LuaWasm from './luawasm'
 
 const defaultOptions: LuaEngineOptions = {
@@ -23,6 +24,7 @@ export default class Lua {
 
         this.global.registerTypeExtension(createErrorType(this.global, options.injectObjects))
         this.global.registerTypeExtension(createPromiseType(this.global, options.injectObjects))
+        this.global.registerTypeExtension(createUserdataType(this.global))
 
         if (this.global.isClosed()) {
             throw new Error('Lua state could not be created (probably due to lack of memory)')

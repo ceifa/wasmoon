@@ -29,7 +29,7 @@ export default abstract class LuaTypeExtension<T> {
 
     // Return false if type not matched, otherwise true. This base method does not
     // check the type. That must be done by the class extending this.
-    public pushValue(thread: Thread, value: unknown): boolean {
+    public pushValue(thread: Thread, value: unknown, _: object): boolean {
         const pointer = thread.cmodule.ref(value)
         // 4 = size of pointer in wasm.
         const userDataPointer = thread.cmodule.lua_newuserdatauv(thread.address, PointerSize, 0)

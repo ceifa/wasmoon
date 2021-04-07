@@ -13,19 +13,11 @@ export const decorateFunction = (
     return new Decoration(target, options)
 }
 
-export const decorateTable = (
-    target: object,
-    options: Partial<{
-        metatable: object
-    }>,
-): Decoration => {
-    return new Decoration(target, options)
-}
-
 export const decorate = (
     target: object,
     options: Partial<{
-        reference: boolean
+        reference: boolean,
+        metatable: object
     }>,
 ): Decoration => {
     return new Decoration(target, options)

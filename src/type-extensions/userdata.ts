@@ -1,12 +1,12 @@
-import { LuaReturn, LuaState } from '../types'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
+import { LuaReturn, LuaState, LuaType } from '../types';
 
-class ErrorTypeExtension extends TypeExtension<Error> {
-    private gcPointer: number
+class UserdataTypeExtension extends TypeExtension<any> {
+    private readonly gcPointer: number;
 
-    public constructor(thread: Thread, injectObject: boolean) {
-        super(thread, 'js_error')
+    public constructor(thread: Thread) {
+        super(thread, 'userdata')
 
         this.gcPointer = thread.cmodule.module.addFunction((functionStateAddress: LuaState) => {
             // Throws a lua error which does a jump if it does not match.
@@ -27,43 +27,27 @@ class ErrorTypeExtension extends TypeExtension<Error> {
             // Add the gc function
             thread.cmodule.lua_pushcclosure(thread.address, this.gcPointer, 0)
             thread.cmodule.lua_setfield(thread.address, metatableIndex, '__gc')
-
-            // Add an __index method that returns the message field
-            thread.pushValue((jsRefError: Error, key: unknown) => {
-                if (key === 'message') {
-                    return jsRefError.message
-                }
-                return null
-            })
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__index')
-
-            // Add a tostring method that returns the message.
-            thread.pushValue((jsRefError: Error) => {
-                return jsRefError.message
-            })
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__tostring')
         }
+
         // Pop the metatable from the stack.
         thread.cmodule.lua_pop(thread.address, 1)
+    }
 
-        if (injectObject) {
-            // Lastly create a static Promise constructor.
-            thread.set('Error', {
-                create: (message: any) => {
-                    if (message && typeof message !== 'string') {
-                        throw new Error('message must be a string')
-                    }
+    public isType(_thread: Thread, _index: number, type: LuaType): boolean {
+        return type === LuaType.UserData
+    }
 
-                    return new Error(message)
-                },
-            })
-        }
+    public getValue(thread: Thread, index: number): any {
+        const refUserData = thread.cmodule.lua_touserdata(thread.address, index)
+        const referencePointer = thread.cmodule.module.getValue(refUserData, '*')
+        return thread.cmodule.getRef(referencePointer)
     }
 
     public pushValue(thread: Thread, value: unknown, decorations: Record<string, any>): boolean {
-        if (!(value instanceof Error)) {
+        if (!decorations?.reference) {
             return false
         }
+
         return super.pushValue(thread, value, decorations)
     }
 
@@ -72,6 +56,6 @@ class ErrorTypeExtension extends TypeExtension<Error> {
     }
 }
 
-export default function createTypeExtension(thread: Thread, injectObject: boolean): TypeExtension<Error> {
-    return new ErrorTypeExtension(thread, injectObject)
+export default function createTypeExtension(thread: Thread): TypeExtension<Error> {
+    return new UserdataTypeExtension(thread)
 }

@@ -136,18 +136,24 @@ export default class Thread {
         return L === this.global.address ? this.global : new Thread(this.cmodule, this.typeExtensions, L, this.global as Global)
     }
 
-    public pushValue(value: any, options: Partial<{ _done?: Record<string, number> }> = {}): void {
+    public pushValue(value: any, options: Partial<{ _done?: Map<any, number> }> = {}): void {
+        const { value: target, decorations } = this.getValueDecorations(value)
+
         // First to allow overriding default behaviour
-        if (this.typeExtensions.find((extension) => extension.pushValue(this, value))) {
+        if (this.typeExtensions.find((extension) => extension.pushValue(this, target, decorations))) {
+            if (typeof decorations.metatable === 'object') {
+                this.pushValue(decorations.metatable)
+                this.cmodule.lua_setmetatable(this.address, -2)
+            }
+
             return
         }
 
-        const { value: target, decorations } = this.getValueDecorations(value)
-
         const type = typeof target
 
-        if (options?._done?.[target]) {
-            this.cmodule.lua_pushvalue(this.address, options._done[target])
+        const done = options?._done?.get(target)
+        if (done) {
+            this.cmodule.lua_pushvalue(this.address, done)
             return
         }
 
@@ -169,8 +175,8 @@ export default class Thread {
             } else {
                 const table = this.cmodule.lua_gettop(this.address) + 1
 
-                options._done ??= {}
-                options._done[target] = table
+                options._done ??= new Map<any, number>()
+                options._done.set(target, table)
 
                 if (Array.isArray(target)) {
                     this.cmodule.lua_createtable(this.address, target.length, 0)
@@ -190,11 +196,6 @@ export default class Thread {
 
                         this.cmodule.lua_settable(this.address, table)
                     }
-                }
-
-                if (typeof decorations.metatable === 'object') {
-                    this.pushValue(decorations.metatable)
-                    this.cmodule.lua_setmetatable(this.address, -2)
                 }
             }
         } else if (type === 'function') {
@@ -251,6 +252,11 @@ export default class Thread {
         } else {
             throw new Error(`The type '${type}' is not supported by Lua`)
         }
+
+        if (typeof decorations.metatable === 'object') {
+            this.pushValue(decorations.metatable)
+            this.cmodule.lua_setmetatable(this.address, -2)
+        }
     }
 
     public getMetatableName(index: number): string | undefined {
@@ -277,7 +283,7 @@ export default class Thread {
         inputType: LuaType | undefined = undefined,
         options: Partial<{
             raw: boolean
-            _done: Record<string, number>
+            _done: Record<number, any>
         }> = {},
     ): any {
         // Before the below to allow overriding default behaviour.
@@ -398,7 +404,7 @@ export default class Thread {
         }
     }
 
-    private getTableValue(idx: number, done: Record<string, any> = {}): Record<any, any> | any[] {
+    private getTableValue(idx: number, done: Record<number, any> = {}): Record<any, any> | any[] {
         const table: Record<any, any> = {}
 
         const pointer = this.cmodule.lua_topointer(this.address, idx)

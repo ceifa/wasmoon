@@ -126,11 +126,11 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
         this.thread.cmodule.module.removeFunction(this.gcPointer)
     }
 
-    public pushValue(thread: Thread, value: unknown): boolean {
+    public pushValue(thread: Thread, value: unknown, decorations: Record<string, any>): boolean {
         if (Promise.resolve(value) !== value) {
             return false
         }
-        return super.pushValue(thread, value)
+        return super.pushValue(thread, value, decorations)
     }
 }
 
