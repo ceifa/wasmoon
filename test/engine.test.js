@@ -1,6 +1,6 @@
 const { expect, test } = require('@jest/globals')
 const { getEngine } = require('./utils')
-const { Thread, LuaReturn } = require('../dist')
+const { Thread, LuaReturn, decorate, decorateUserData } = require('../dist')
 
 jest.useFakeTimers()
 
@@ -305,4 +305,44 @@ test('table supported circular dependencies', async () => {
 
     // Jest does not cope well with comparing these
     expect(res.b.a === res).toEqual(true)
+})
+
+test('wrap a js object', async () => {
+    class TestClass {
+        constructor(name) {
+            this.name = name
+        }
+
+        getName() {
+            return this.name
+        }
+    }
+
+    const engine = await getEngine()
+    engine.global.set('TestClass', {
+        create: (name) => {
+            return decorate(
+                {
+                    instance: decorateUserData(new TestClass(name), { reference: true }),
+                },
+                {
+                    metatable: {
+                        __name: 'js_TestClass',
+                        __index: (self, key) => {
+                            if (key === 'name') {
+                                return self.instance.getName()
+                            }
+                            return null
+                        },
+                    },
+                },
+            )
+        },
+    })
+
+    const res = await engine.doString(`
+        local instance = TestClass.create("demo name")
+        return instance.name
+    `)
+    expect(res).toEqual('demo name')
 })
