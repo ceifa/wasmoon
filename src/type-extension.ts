@@ -1,13 +1,12 @@
 import { BaseDecorationOptions, Decoration, decorate } from './decoration'
 import { LuaType, PointerSize } from './types'
-import Thread from './thread'
 import { Pointer } from './pointer'
+import Thread from './thread'
 
 export default abstract class LuaTypeExtension<T, K extends BaseDecorationOptions = BaseDecorationOptions> {
-    protected gcPointer: number | undefined = undefined
-
     // Type name, for metatables and lookups.
     public readonly name: string
+    protected gcPointer: number | undefined = undefined
     protected thread: Thread
 
     public constructor(thread: Thread, name: string) {

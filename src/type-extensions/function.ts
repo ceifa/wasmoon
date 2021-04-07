@@ -1,5 +1,5 @@
 import { BaseDecorationOptions, Decoration } from '../decoration'
-import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from '../types'
+import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType } from '../types'
 import { Pointer } from '../pointer'
 import MultiReturn from '../multireturn'
 import Thread from '../thread'
