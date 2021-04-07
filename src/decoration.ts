@@ -6,6 +6,6 @@ export class Decoration<T = any, K extends BaseDecorationOptions = BaseDecoratio
     public constructor(public target: T, public options: K) {}
 }
 
-export function decorate(target: any, options: BaseDecorationOptions): Decoration<any, BaseDecorationOptions> {
-    return new Decoration<any, BaseDecorationOptions>(target, options)
+export function decorate<T extends BaseDecorationOptions = BaseDecorationOptions>(target: any, options: T): Decoration<any, T> {
+    return new Decoration<any, T>(target, options)
 }

@@ -3,16 +3,21 @@ import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from '..
 import MultiReturn from '../multireturn'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
+import { Pointer } from '../pointer'
 
 export interface FunctionDecoration extends BaseDecorationOptions {
     rawArguments?: number[]
     receiveThread?: boolean
-    rawResult?: boolean
+    rawResult?: boolean,
+    functionPointer?: boolean
 }
 
-export type FunctionType = (...args: any[]) => Promise<any> | any
+export type FunctionType = ((...args: any[]) => Promise<any> | any) | Pointer
 
-export function decorateFunction(target: FunctionType, options: FunctionDecoration): Decoration<FunctionType, FunctionDecoration> {
+export function decorateFunction(target: FunctionType, options: FunctionDecoration = {}): Decoration<FunctionType, FunctionDecoration> {
+    if (target instanceof Pointer) {
+        options.functionPointer = true
+    }
     return new Decoration<FunctionType, FunctionDecoration>(target, options)
 }
 
@@ -24,10 +29,10 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
             ? new FinalizationRegistry((func: number) => {
-                  if (!this.thread.isClosed()) {
-                      this.thread.cmodule.luaL_unref(this.thread.address, LUA_REGISTRYINDEX, func)
-                  }
-              })
+                if (!this.thread.isClosed()) {
+                    this.thread.cmodule.luaL_unref(this.thread.address, LUA_REGISTRYINDEX, func)
+                }
+            })
             : undefined
 
     private gcPointer: number
@@ -70,8 +75,13 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
 
     public pushValue(thread: Thread, decoratedValue: Decoration<FunctionType, FunctionDecoration>): boolean {
         const { target, options } = decoratedValue
-        if (typeof target !== 'function') {
+        if (typeof target !== 'function' && (!options?.functionPointer || !(target instanceof Pointer))) {
             return false
+        }
+
+        if (target instanceof Pointer) {
+            thread.cmodule.lua_pushcclosure(thread.address, target.valueOf(), 0)
+            return true
         }
 
         const pointer = thread.cmodule.module.addFunction((calledL: LuaState) => {

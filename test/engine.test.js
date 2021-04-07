@@ -1,6 +1,6 @@
 const { expect, test } = require('@jest/globals')
 const { getEngine } = require('./utils')
-const { Thread, LuaReturn } = require('../dist')
+const { Thread, LuaReturn, decorate } = require('../dist')
 
 jest.useFakeTimers()
 
@@ -305,4 +305,17 @@ test('table supported circular dependencies', async () => {
 
     // Jest does not cope well with comparing these
     expect(res.b.a === res).toEqual(true)
+})
+
+test('inject a userdata with a metatable should succeed', async () => {
+    const engine = await getEngine()
+    const obj = decorate({}, {
+        reference: true,
+        metatable: { __index: (t, k) => `Hello ${k}!` }
+    })
+    engine.global.set('obj', obj)
+
+    const res = await engine.doString('return obj.World')
+
+    expect(res).toEqual('Hello World!')
 })

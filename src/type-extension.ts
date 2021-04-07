@@ -1,4 +1,4 @@
-import { BaseDecorationOptions, Decoration } from './decoration'
+import { BaseDecorationOptions, decorate, Decoration } from './decoration'
 import { LuaType, PointerSize } from './types'
 import Thread from './thread'
 
@@ -31,7 +31,7 @@ export default abstract class LuaTypeExtension<T, K extends BaseDecorationOption
     // Return false if type not matched, otherwise true. This base method does not
     // check the type. That must be done by the class extending this.
     public pushValue(thread: Thread, decoratedValue: Decoration<T, K>, _userdata?: any): boolean {
-        const { target } = decoratedValue
+        const { target, options: decorations } = decoratedValue
 
         const pointer = thread.cmodule.ref(target)
         // 4 = size of pointer in wasm.
@@ -45,9 +45,19 @@ export default abstract class LuaTypeExtension<T, K extends BaseDecorationOption
             throw new Error(`metatable not found: ${this.name}`)
         }
 
-        // Set as the metatable for the userdata.
-        // -1 is the metatable, -2 is the user data.
-        thread.cmodule.lua_setmetatable(thread.address, -2)
+        if (decorations?.metatable) {
+            // If we already have a gc handler, let's keep, otherwise inherit it
+            if (!decorations.metatable.__gc) {
+                const gcType = thread.cmodule.lua_getfield(thread.address, -1, '__gc')
+                if (LuaType.Function === gcType) {
+                    decorations.metatable.__gc = decorate<any>(thread.getPointer(-1), { functionPointer: true })
+                }
+            }
+        } else {    
+            // Set as the metatable for the userdata.
+            // -1 is the metatable, -2 is the user data.
+            thread.cmodule.lua_setmetatable(thread.address, -2)
+        }
 
         return true
     }
