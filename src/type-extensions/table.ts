@@ -51,7 +51,7 @@ class TableTypeExtension extends TypeExtension<TableType> {
     }
 
     public pushValue(thread: Thread, decoratedValue: Decoration<TableType>, userdata?: any): boolean {
-        const { target, options } = decoratedValue
+        const { target } = decoratedValue
         if (typeof target !== 'object' || target === null) {
             return false
         }
@@ -92,11 +92,6 @@ class TableTypeExtension extends TypeExtension<TableType> {
 
                     thread.cmodule.lua_settable(thread.address, tableIndex)
                 }
-            }
-
-            if (typeof options.metatable === 'object') {
-                thread.pushValue(options.metatable)
-                thread.cmodule.lua_setmetatable(thread.address, tableIndex)
             }
         } finally {
             if (userdata === undefined) {

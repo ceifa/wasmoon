@@ -1,6 +1,10 @@
 const { expect, test } = require('@jest/globals')
 const { getEngine } = require('./utils')
+<<<<<<< HEAD
 const { Thread, LuaReturn, decorate } = require('../dist')
+=======
+const { Thread, LuaReturn, decorate, decorateUserData } = require('../dist')
+>>>>>>> 98117ea45930645c80f87332bb575984038d9c7d
 
 jest.useFakeTimers()
 
@@ -318,4 +322,44 @@ test('inject a userdata with a metatable should succeed', async () => {
     const res = await engine.doString('return obj.World')
 
     expect(res).toEqual('Hello World!')
+})
+
+test('wrap a js object', async () => {
+    class TestClass {
+        constructor(name) {
+            this.name = name
+        }
+
+        getName() {
+            return this.name
+        }
+    }
+
+    const engine = await getEngine()
+    engine.global.set('TestClass', {
+        create: (name) => {
+            return decorate(
+                {
+                    instance: decorateUserData(new TestClass(name), { reference: true }),
+                },
+                {
+                    metatable: {
+                        __name: 'js_TestClass',
+                        __index: (self, key) => {
+                            if (key === 'name') {
+                                return self.instance.getName()
+                            }
+                            return null
+                        },
+                    },
+                },
+            )
+        },
+    })
+
+    const res = await engine.doString(`
+        local instance = TestClass.create("demo name")
+        return instance.name
+    `)
+    expect(res).toEqual('demo name')
 })

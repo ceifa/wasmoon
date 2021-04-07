@@ -147,6 +147,7 @@ export default class Thread {
             return
         }
 
+        const startTop = this.getTop()
         // First to allow overriding default behaviour, except for threads
         if (!this.typeExtensions.find((wrapper) => wrapper.extension.pushValue(this, decoratedValue, userdata))) {
             if (target === null) {
@@ -174,6 +175,9 @@ export default class Thread {
                     throw new Error(`The type '${typeof target}' is not supported by Lua`)
             }
         }
+        if (this.getTop() !== startTop + 1) {
+            throw new Error(`pushValue expected stack size ${startTop + 1}, got ${this.getTop()}`)
+        }
 
         if (options?.metatable) {
             this.setMetatable(options.metatable, -1)
@@ -182,9 +186,11 @@ export default class Thread {
 
     public setMetatable(metatable: Record<any, any>, index: number): void {
         index = this.cmodule.lua_absindex(this.address, index)
+
         if (this.cmodule.lua_getmetatable(this.address, index)) {
             this.pop(1)
-            throw new Error('data already has associated metatable')
+            const name = this.getMetatableName(index)
+            throw new Error(`data already has associated metatable: ${name || 'unknown name'}`)
         }
 
         this.pushValue(metatable)
