@@ -16,7 +16,14 @@ export default class LuaFactory {
     }
 
     public async mountFile(path: string, content: string | ArrayBufferView): Promise<void> {
-        const cmodule = await this.getModule()
+        await this.getModule()
+        this.mountFileSync(path, content)
+    }
+
+    public mountFileSync(path: string, content: string | ArrayBufferView): void {
+        if (!this.cmodule) {
+            throw new Error("Module is not initialized, instead call 'mountFile' to ensure initialization")
+        }
 
         const fileSep = path.lastIndexOf('/')
         const file = path.substr(fileSep + 1)
@@ -34,7 +41,7 @@ export default class LuaFactory {
 
                 const current = `${parent}/${part}`
                 try {
-                    cmodule.module.FS.mkdir(current)
+                    this.cmodule.module.FS.mkdir(current)
                 } catch (err) {
                     // ignore EEXIST
                 }
@@ -43,7 +50,7 @@ export default class LuaFactory {
             }
         }
 
-        cmodule.module.FS.writeFile(path, content)
+        this.cmodule.module.FS.writeFile(path, content)
     }
 
     public async createEngine(options?: Partial<LuaEngineOptions>): Promise<Lua> {
