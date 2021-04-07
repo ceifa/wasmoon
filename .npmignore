@@ -2,9 +2,13 @@ glue
 lua
 test
 src
+build
+utils
 tsconfig.json
 build.sh
 rollup.config.js
 .github
 .gitmodules
-build
+.eslintrc
+.prettierignore
+.prettierrc.js
