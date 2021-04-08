@@ -326,13 +326,10 @@ test('inject a userdata with a metatable should succeed', async () => {
 test('a userdata with a metatable should be collected', async () => {
     const engine = await getEngine()
     const obj = {}
-    const decoratedObj = decorate(
-        obj,
-        {
-            reference: true,
-            metatable: { __index: (t, k) => `Hello ${k}!` },
-        },
-    )
+    const decoratedObj = decorate(obj, {
+        reference: true,
+        metatable: { __index: (t, k) => `Hello ${k}!` },
+    })
     engine.global.set('obj', decoratedObj)
     const oldRef = engine.global.cmodule.getRef(1)
 
