@@ -43,7 +43,7 @@ export default abstract class LuaTypeExtension<T, K extends BaseDecorationOption
         if (decorations?.metatable) {
             // If we already have a gc handler, let's keep, otherwise inherit it
             if (!decorations.metatable.__gc && this.gcPointer) {
-                decorations.metatable.__gc = decorate<any>(this.gcPointer, { functionPointer: true })
+                decorations.metatable.__gc = decorate<any>(new Pointer(this.gcPointer), { functionPointer: true })
             }
         } else {
             if (LuaType.Nil === thread.cmodule.luaL_getmetatable(thread.address, this.name)) {

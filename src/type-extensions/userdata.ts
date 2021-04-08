@@ -16,8 +16,7 @@ class UserdataTypeExtension extends TypeExtension<any, UserDataDecorationOptions
         super(thread, 'js_userdata')
 
         this.gcPointer = thread.cmodule.module.addFunction((functionStateAddress: LuaState) => {
-            // Throws a lua error which does a jump if it does not match.
-            const userDataPointer = thread.cmodule.luaL_checkudata(functionStateAddress, 1, this.name)
+            const userDataPointer = thread.cmodule.lua_touserdata(functionStateAddress, -1)
             const referencePointer = thread.cmodule.module.getValue(userDataPointer, '*')
             thread.cmodule.unref(referencePointer)
 
