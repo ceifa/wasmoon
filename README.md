@@ -17,18 +17,10 @@ This will install `wasmoon` globally so that it may be run from the command line
 
 #### Running on-demand:
 
-Using `npx` you can run the script without installing it first:
+Using `npx` you can run the CLI without installing it first, its very simple to open the interactive wasmoon:
 
 ```sh
 $: npx wasmoon
-```
-
-## CLI Usage
-
-Wasmoon by default reads and execute code from stdin, but you can force it to read from file passing the `-f` argument:
-
-```sh
-$: wasmoon -f file.lua
 ```
 
 ## API Usage
@@ -62,6 +54,26 @@ try {
     lua.global.close()
 }
 ```
+
+## CLI Usage
+
+Although Wasmoon has been designed to be embedded, you can run it on command line as well, but, if you want something more robust on this, we recommend to take a look at [demoon](https://github.com/ceifa/demoon).
+
+```sh
+$: wasmoon [options] [files] [-- [args]]
+```
+
+Available options are:
+
+* `-l`: Include a file or directory
+* `-i`: Enter interactive mode after running the *files*
+
+### Example:
+
+```
+$: wasmoon -i sum.lua -- 10 30
+```
+
 
 ## Fixing common errors on web environment
 

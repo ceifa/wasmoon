@@ -1,26 +1,120 @@
 #!/usr/bin/env node
-const { LuaFactory } = require('../dist');
-const fs = require('fs');
+const { LuaFactory, LuaReturn, LuaType, LUA_MULTRET } = require('../dist')
+const fs = require('fs')
+const path = require('path')
+const readline = require('readline')
 
-const snippets = process.argv.splice(2);
-let code;
-
-if (snippets.length === 2 && snippets[0] === '-f') {
-    code = fs.readFileSync(snippets[1], 'utf-8')
-} else {
-    code = fs.readFileSync(0, 'utf-8');
+async function* walk(dir) {
+    const dirents = await fs.promises.readdir(dir, { withFileTypes: true })
+    for (const dirent of dirents) {
+        const res = path.resolve(dir, dirent.name)
+        if (dirent.isDirectory()) {
+            yield* walk(res)
+        } else {
+            yield res
+        }
+    }
 }
 
 async function main() {
-    const lua = await new LuaFactory().createEngine();
-    try {
-        console.log(await lua.doString(code));
-    } finally {
-        lua.global.close();
+    const factory = new LuaFactory()
+    const luamodule = await factory.getModule()
+    const lua = await factory.createEngine()
+
+    let snippets = process.argv.splice(2)
+
+    const consumeOption = (option, single = false) => {
+        const optionIndex = snippets.indexOf(option)
+        return optionIndex < 0 ? [] : [
+            snippets.splice(optionIndex, single ? 1 : 2).reverse()[0],
+            optionIndex
+        ]
+    }
+
+    let [_, argsSeparator] = consumeOption('--', true)
+    let luaargs = []
+    if (argsSeparator >= 0) {
+        luaargs = snippets.splice(argsSeparator)
+        lua.global.set('arg', luaargs)
+    }
+
+    while (([include] = consumeOption('-l')).length) {
+        const stat = await fs.promises.lstat(include)
+        if (stat.isFile()) {
+            await factory.mountFile(include, await fs.promises.readFile(include))
+        } else {
+            for await (const file of walk(include)) {
+                await factory.mountFile(file, await fs.promises.readFile(file))
+            }
+        }
+    }
+
+    let interactive = process.stdin.isTTY && (consumeOption('-i', true).length || snippets.length === 0)
+
+    if (snippets.length > 0) {
+        while ((runFile = snippets.shift())) {
+            //runFile = path.resolve(process.cwd(), runFile)
+            //luamodule.module.FS.chdir(path.dirname(runFile))
+
+            await factory.mountFile(runFile, await fs.promises.readFile(runFile))
+            const result = await lua.doFile(runFile)
+            if (result) {
+                console.log(result)
+            }
+        }
+
+        if (!interactive) {
+            return
+        }
+    }
+    
+    if (interactive) {
+        // Call directly from module to bypass the result verification
+        const loadcode = (code) => !lua.global.setTop(0) && luamodule.luaL_loadstring(lua.global.address, code) === LuaReturn.Ok
+
+        const version = require('../package.json').version
+        console.log('Welcome to Wasmoon v' + version)
+
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+            terminal: true,
+            removeHistoryDuplicates: true
+        })
+
+        rl.prompt()
+
+        for await (const line of rl) {
+            const loaded = loadcode(line) || loadcode(`return ${line}`)
+            if (!loaded) {
+                console.log(lua.global.getValue(-1, LuaType.String))
+                rl.prompt()
+                continue
+            }
+
+            const result = luamodule.lua_pcallk(lua.global.address, 0, LUA_MULTRET, 0, 0, null)
+            if (result === LuaReturn.Ok) {
+                const returnValues = Array.from({ length: lua.global.getTop() })
+                    .map((_, i) => luamodule.luaL_tolstring(lua.global.address, i + 1, null))
+
+                if (returnValues.length) {
+                    console.log(...returnValues)
+                }
+            } else {
+                console.log(lua.global.getValue(-1, LuaType.String))
+            }
+
+            rl.prompt()
+        }
+    } else {
+        const result = await lua.doString(fs.readFileSync(0, 'utf-8'))
+        if (result) {
+            console.log(result)
+        }
     }
 }
 
 main().catch(err => {
-    console.error(err);
-    process.exit(1);
-});
+    console.error(err)
+    process.exit(1)
+})

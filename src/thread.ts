@@ -63,7 +63,6 @@ export default class Thread {
         try {
             this.cmodule.module.setValue(dataPointer, 0, 'i32')
             const luaResult = this.cmodule.lua_resume(this.address, null, argCount, dataPointer)
-            this.assertOk(luaResult)
             return {
                 result: luaResult,
                 resultCount: this.cmodule.module.getValue(dataPointer, 'i32'),
@@ -128,6 +127,8 @@ export default class Thread {
 
                 resumeResult = this.resume(0)
             }
+
+            this.assertOk(resumeResult.result)
             return this.getStackValues()
         } finally {
             if (options?.forcedYieldCount !== undefined) {
@@ -315,16 +316,16 @@ export default class Thread {
     }
 
     public dumpStack(log = console.log): void {
-        const top = this.cmodule.lua_gettop(this.address)
+        const top = this.getTop()
 
         for (let i = 1; i <= top; i++) {
             const type = this.cmodule.lua_type(this.address, i)
+            const typename = this.cmodule.lua_typename(this.address, type)
             const pointer = this.getPointer(i)
             const name = this.cmodule.luaL_tolstring(this.address, i, null)
-            this.pop(1)
+            this.pop() // luaL_tolstring pushes the returned value into the stack
             const value = this.getValue(i, type)
 
-            const typename = this.cmodule.lua_typename(this.address, type)
             log(i, typename, pointer, name, value)
         }
     }

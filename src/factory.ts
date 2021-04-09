@@ -57,7 +57,7 @@ export default class LuaFactory {
         return new Lua(await this.getModule(), options)
     }
 
-    private async getModule(): Promise<LuaWasm> {
+    public async getModule(): Promise<LuaWasm> {
         if (!this.cmodule) {
             this.cmodule = await LuaWasm.initialize(this.customWasmUri)
         }
