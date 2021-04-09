@@ -1,3 +1,7 @@
+declare global {
+    const FinalizationRegistry: any
+}
+
 export type LuaState = number
 
 export enum LuaReturn {
@@ -21,6 +25,11 @@ export interface LuaEngineOptions {
     enableProxy: boolean
 }
 
+export interface LuaThreadRunOptions {
+    timeout?: number
+    forcedYieldCount?: number
+}
+
 export const PointerSize = 4
 
 export const LUA_MULTRET = -1
@@ -39,3 +48,20 @@ export enum LuaType {
     UserData = 7,
     Thread = 8,
 }
+
+export enum LuaEventCodes {
+    Call = 0,
+    Ret = 1,
+    Line = 2,
+    Count = 3,
+    TailCall = 4,
+}
+
+export enum LuaEventMasks {
+    Call = 1 << LuaEventCodes.Call,
+    Ret = 1 << LuaEventCodes.Ret,
+    Line = 1 << LuaEventCodes.Line,
+    Count = 1 << LuaEventCodes.Count,
+}
+
+export class LuaTimeoutError extends Error {}

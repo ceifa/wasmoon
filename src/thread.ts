@@ -1,9 +1,18 @@
 import { Decoration } from './decoration'
-import { LUA_MULTRET, LuaResumeResult, LuaReturn, LuaState, LuaType, PointerSize } from './types'
+import {
+    LUA_MULTRET,
+    LuaEventMasks,
+    LuaResumeResult,
+    LuaReturn,
+    LuaState,
+    LuaThreadRunOptions,
+    LuaTimeoutError,
+    LuaType,
+    PointerSize,
+} from './types'
 import { Pointer } from './pointer'
 import LuaTypeExtension from './type-extension'
 import MultiReturn from './multireturn'
-import type Global from './global'
 import type LuaWasm from './luawasm'
 
 export interface OrderedExtension {
@@ -17,14 +26,20 @@ export default class Thread {
     public readonly cmodule: LuaWasm
     protected typeExtensions: OrderedExtension[]
     private closed = false
+    private yieldFunctionPointer: number
+    private forcedYieldCount?: number
 
-    private global: Global | this
+    private parent?: Thread
 
-    public constructor(cmodule: LuaWasm, typeExtensions: OrderedExtension[], address: number, global?: Global) {
+    public constructor(cmodule: LuaWasm, typeExtensions: OrderedExtension[], address: number, parent?: Thread) {
         this.cmodule = cmodule
         this.typeExtensions = typeExtensions
         this.address = address
-        this.global = global ?? this
+        this.parent = parent
+
+        this.yieldFunctionPointer = cmodule.module.addFunction((state: LuaState): void => {
+            cmodule.lua_yield(state, 0)
+        }, 'vii')
     }
 
     public get(name: string): any {
@@ -80,28 +95,49 @@ export default class Thread {
         return this.cmodule.lua_remove(this.address, index)
     }
 
-    public async run(argCount = 0): Promise<MultiReturn> {
-        let resumeResult: LuaResumeResult = this.resume(argCount)
-        while (resumeResult.result === LuaReturn.Yield) {
-            if (resumeResult.resultCount > 0) {
-                const lastValue = this.getValue(-1)
-                this.pop(resumeResult.resultCount)
+    public async run(argCount = 0, options?: Partial<LuaThreadRunOptions>): Promise<MultiReturn> {
+        const originalYieldCount = this.getForcedYieldCount()
+        try {
+            if (options?.forcedYieldCount !== undefined) {
+                this.setForcedYieldCount(options.forcedYieldCount)
+            }
+            const start = Date.now()
+            let resumeResult: LuaResumeResult = this.resume(argCount)
+            while (resumeResult.result === LuaReturn.Yield) {
+                // If it's yielded check the timeout. If it's completed no need to
+                // needlessly discard the output.
+                if (options?.timeout) {
+                    if (Date.now() - start > options.timeout) {
+                        if (resumeResult.resultCount > 0) {
+                            this.pop(resumeResult.resultCount)
+                        }
+                        throw new LuaTimeoutError(`run exceeded timeout of ${options.timeout}ms`)
+                    }
+                }
+                if (resumeResult.resultCount > 0) {
+                    const lastValue = this.getValue(-1)
+                    this.pop(resumeResult.resultCount)
 
-                // If there's a result and it's a promise, then wait for it.
-                if (lastValue === Promise.resolve(lastValue)) {
-                    await lastValue
+                    // If there's a result and it's a promise, then wait for it.
+                    if (lastValue === Promise.resolve(lastValue)) {
+                        await lastValue
+                    } else {
+                        // If it's a non-promise, then skip a tick to yield for promises, timers, etc.
+                        await new Promise((resolve) => setImmediate(resolve))
+                    }
                 } else {
-                    // If it's a non-promise, then skip a tick to yield for promises, timers, etc.
+                    // If there's nothing to yield, then skip a tick to yield for promises, timers, etc.
                     await new Promise((resolve) => setImmediate(resolve))
                 }
-            } else {
-                // If there's nothing to yield, then skip a tick to yield for promises, timers, etc.
-                await new Promise((resolve) => setImmediate(resolve))
-            }
 
-            resumeResult = this.resume(0)
+                resumeResult = this.resume(0)
+            }
+            return this.getStackValues()
+        } finally {
+            if (options?.forcedYieldCount !== undefined) {
+                this.setForcedYieldCount(originalYieldCount)
+            }
         }
-        return this.getStackValues()
     }
 
     public pop(count = 1): void {
@@ -134,7 +170,7 @@ export default class Thread {
     }
 
     public stateToThread(L: LuaState): Thread {
-        return L === this.global.address ? this.global : new Thread(this.cmodule, this.typeExtensions, L, this.global as Global)
+        return L === this.parent?.address ? this.parent : new Thread(this.cmodule, this.typeExtensions, L, this.parent || this)
     }
 
     public pushValue(rawValue: any, userdata?: any): void {
@@ -250,13 +286,28 @@ export default class Thread {
     }
 
     public close(): void {
-        if (!this.closed) {
+        if (this.isClosed()) {
             return
         }
 
+        this.cmodule.module.removeFunction(this.yieldFunctionPointer)
+
         this.closed = true
-        // Do this before removing the gc to force
-        this.cmodule.lua_close(this.address)
+    }
+
+    // Set to > 0 to enable, otherwise disable.
+    public setForcedYieldCount(count: number | undefined): void {
+        if (count && count > 0) {
+            this.forcedYieldCount = count
+            this.cmodule.lua_sethook(this.address, this.yieldFunctionPointer, LuaEventMasks.Count, count)
+        } else {
+            this.forcedYieldCount = undefined
+            this.cmodule.lua_sethook(this.address, null, 0, 0)
+        }
+    }
+
+    public getForcedYieldCount(): number | undefined {
+        return this.forcedYieldCount
     }
 
     public getPointer(index: number): Pointer {
@@ -264,7 +315,7 @@ export default class Thread {
     }
 
     public isClosed(): boolean {
-        return !this.address || this.closed
+        return !this.address || this.closed || Boolean(this.parent?.isClosed())
     }
 
     public dumpStack(log = console.log): void {

@@ -49,6 +49,13 @@ export default class Global extends Thread {
         }
 
         super.close()
+
+        // Do this before removing the gc to force.
+        // Here rather than in the threads because you don't
+        // actually close threads, just pop them. Only the top-level
+        // lua state needs closing.
+        this.cmodule.lua_close(this.address)
+
         this.cmodule.module.removeFunction(this.allocatorFunctionPointer)
         for (const wrapper of this.typeExtensions) {
             wrapper.extension.close()

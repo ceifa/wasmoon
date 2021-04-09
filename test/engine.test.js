@@ -398,3 +398,15 @@ test('classes should be a userdata when proxied', async () => {
 
     expect(testClass).toBe(TestClass)
 })
+
+test('timeout blocking lua program', async () => {
+    const engine = await getEngine()
+    const thread = engine.global.newThread()
+
+    thread.loadString(`
+        local i = 0
+        while true do i = i + 1 end
+    `)
+
+    await expect(thread.run(0, { timeout: 5, forcedYieldCount: 1000 })).rejects.toThrow('run exceeded timeout of 5ms')
+})

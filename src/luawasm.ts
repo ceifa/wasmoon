@@ -350,6 +350,10 @@ export default class LuaWasm {
         return this.lua_getfield(luaState, LUA_REGISTRYINDEX, name)
     }
 
+    public lua_yield(luaState: LuaState, count: number): number {
+        return this.lua_yieldk(luaState, count, 0, null)
+    }
+
     public ref(data: any): number {
         const existing = this.referenceTracker.get(data)
         if (existing) {

@@ -16,10 +16,6 @@ export function decorateFunction(target: FunctionType, options: FunctionDecorati
     return new Decoration<FunctionType, FunctionDecoration>(target, options)
 }
 
-declare global {
-    const FinalizationRegistry: any
-}
-
 class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecoration> {
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
@@ -34,6 +30,10 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
 
     public constructor(thread: Thread) {
         super(thread, 'js_function')
+
+        if (!this.functionRegistry) {
+            console.warn('FunctionTypeExtension: FinalizationRegistry not found. Memory leaks likely.')
+        }
 
         this.gcPointer = thread.cmodule.module.addFunction((calledL: LuaState) => {
             // Throws a lua error which does a jump if it does not match.
