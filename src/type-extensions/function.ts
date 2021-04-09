@@ -1,5 +1,6 @@
 import { BaseDecorationOptions, Decoration } from '../decoration'
 import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from '../types'
+import Global from '../global'
 import MultiReturn from '../multireturn'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
@@ -28,7 +29,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
 
     private gcPointer: number
 
-    public constructor(thread: Thread) {
+    public constructor(thread: Global) {
         super(thread, 'js_function')
 
         if (!this.functionRegistry) {
@@ -180,6 +181,6 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
     }
 }
 
-export default function createTypeExtension(thread: Thread): TypeExtension<FunctionType, FunctionDecoration> {
+export default function createTypeExtension(thread: Global): TypeExtension<FunctionType, FunctionDecoration> {
     return new FunctionTypeExtension(thread)
 }

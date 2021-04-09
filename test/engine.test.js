@@ -1,6 +1,6 @@
 const { expect, test } = require('@jest/globals')
 const { getEngine } = require('./utils')
-const { Thread, LuaReturn, decorate, decorateUserData } = require('../dist')
+const { Thread, LuaReturn, decorate, decorateUserData, LuaLibraries } = require('../dist')
 
 jest.useFakeTimers()
 
@@ -409,4 +409,23 @@ test('timeout blocking lua program', async () => {
     `)
 
     await expect(thread.run(0, { timeout: 5, forcedYieldCount: 1000 })).rejects.toThrow('run exceeded timeout of 5ms')
+})
+
+test('overwrite lib function', async () => {
+    const engine = await getEngine()
+
+    let output = ''
+    engine.global.getTable(LuaLibraries.Base, (index) => {
+        engine.global.setField(index, 'print', (val) => {
+            // Not a proper print implementation.
+            output += `${val}\n`
+        })
+    })
+
+    await engine.doString(`
+        print("hello")
+        print("world")
+    `)
+
+    expect(output).toEqual('hello\nworld\n')
 })

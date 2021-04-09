@@ -1,3 +1,4 @@
+import { LuaLibraries, LuaType } from './types'
 import LuaTypeExtension from './type-extension'
 import Thread from './thread'
 import type LuaWasm from './luawasm'
@@ -67,6 +68,68 @@ export default class Global extends Thread {
     public registerTypeExtension(priority: number, extension: LuaTypeExtension<unknown>): void {
         this.typeExtensions.push({ extension, priority })
         this.typeExtensions.sort((a, b) => b.priority - a.priority)
+    }
+
+    public loadLibrary(library: LuaLibraries): void {
+        switch (library) {
+            case LuaLibraries.Base:
+                this.cmodule.luaopen_base(this.address)
+                break
+            case LuaLibraries.Coroutine:
+                this.cmodule.luaopen_coroutine(this.address)
+                break
+            case LuaLibraries.Table:
+                this.cmodule.luaopen_table(this.address)
+                break
+            case LuaLibraries.IO:
+                this.cmodule.luaopen_io(this.address)
+                break
+            case LuaLibraries.OS:
+                this.cmodule.luaopen_os(this.address)
+                break
+            case LuaLibraries.String:
+                this.cmodule.luaopen_string(this.address)
+                break
+            case LuaLibraries.UTF8:
+                this.cmodule.luaopen_string(this.address)
+                break
+            case LuaLibraries.Math:
+                this.cmodule.luaopen_math(this.address)
+                break
+            case LuaLibraries.Debug:
+                this.cmodule.luaopen_debug(this.address)
+                break
+            case LuaLibraries.Package:
+                this.cmodule.luaopen_package(this.address)
+                break
+        }
+    }
+
+    public get(name: string): any {
+        const type = this.cmodule.lua_getglobal(this.address, name)
+        return this.getValue(-1, type)
+    }
+
+    public set(name: string, value: any): void {
+        this.pushValue(value)
+        this.cmodule.lua_setglobal(this.address, name)
+    }
+
+    public getTable(name: string, callback: (index: number) => void): void {
+        const startStackTop = this.getTop()
+        const type = this.cmodule.lua_getglobal(this.address, name)
+        try {
+            if (type !== LuaType.Table) {
+                throw new TypeError(`Unexpected type in ${name}. Expected ${LuaType[LuaType.Table]}. Got ${LuaType[type]}.`)
+            }
+            callback(startStackTop + 1)
+        } finally {
+            // +1 for the table
+            if (this.getTop() !== startStackTop + 1) {
+                console.warn(`getTable: expected stack size ${startStackTop} got ${this.getTop()}`)
+            }
+            this.setTop(startStackTop)
+        }
     }
 
     public getMemoryUsed(): number {

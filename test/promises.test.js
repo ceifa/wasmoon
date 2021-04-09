@@ -218,7 +218,7 @@ test('run with async callback', async () => {
     const engine = await getEngine()
     const thread = engine.global.newThread()
 
-    thread.set('asyncCallback', async (input) => {
+    engine.global.set('asyncCallback', async (input) => {
         return Promise.resolve(input * 2)
     })
 

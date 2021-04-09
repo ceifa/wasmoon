@@ -1,6 +1,7 @@
 import { BaseDecorationOptions, Decoration } from '../decoration'
 import { LuaReturn, LuaState, LuaType } from '../types'
 import { decorateUserData } from './userdata'
+import Global from '../global'
 import MultiReturn from '../multireturn'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
@@ -16,7 +17,7 @@ export function decorateProxy(target: any, options?: ProxyDecorationOptions): De
 class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
     private readonly gcPointer: number
 
-    public constructor(thread: Thread) {
+    public constructor(thread: Global) {
         super(thread, 'js_proxy')
 
         this.gcPointer = thread.cmodule.module.addFunction((functionStateAddress: LuaState) => {
@@ -167,6 +168,6 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
     }
 }
 
-export default function createTypeExtension(thread: Thread): TypeExtension<any, ProxyDecorationOptions> {
+export default function createTypeExtension(thread: Global): TypeExtension<any, ProxyDecorationOptions> {
     return new ProxyTypeExtension(thread)
 }
