@@ -53,7 +53,7 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
                 }
 
                 const value = self[key as string | number]
-                if (typeof value === 'function') {
+                if (typeof value === 'function' && value?.prototype?.constructor !== value) {
                     return (...args: any[]) => {
                         if (args[0] === self) {
                             args.shift()
