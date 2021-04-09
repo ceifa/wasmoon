@@ -1,5 +1,6 @@
 import { BaseDecorationOptions, Decoration } from '../decoration'
 import { LuaReturn, LuaState, LuaType } from '../types'
+import { decorateUserData } from './userdata'
 import MultiReturn from '../multireturn'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
@@ -53,14 +54,21 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
                 }
 
                 const value = self[key as string | number]
-                if (typeof value === 'function' && value?.prototype?.constructor !== value) {
-                    return (...args: any[]) => {
-                        if (args[0] === self) {
-                            args.shift()
+                if (typeof value === 'function') {
+                    const isClass = value?.prototype?.constructor === value && value.toString().startsWith('class ')
+
+                    if (isClass) {
+                        return decorateUserData(value)
+                    } else {
+                        return (...args: any[]) => {
+                            if (args[0] === self) {
+                                args.shift()
+                            }
+                            return value.bind(self)(...args)
                         }
-                        return value.bind(self)(...args)
                     }
                 }
+
                 return value
             })
             thread.cmodule.lua_setfield(thread.address, metatableIndex, '__index')
