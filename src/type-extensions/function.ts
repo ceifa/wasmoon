@@ -3,7 +3,6 @@ import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from '..
 import MultiReturn from '../multireturn'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
-import type { UserDataDecorationOptions } from './userdata'
 
 export interface FunctionDecoration extends BaseDecorationOptions {
     rawArguments?: number[]
@@ -71,7 +70,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
 
     public pushValue(thread: Thread, decoratedValue: Decoration<FunctionType, FunctionDecoration>): boolean {
         const { target, options } = decoratedValue
-        if (typeof target !== 'function' && !(options as UserDataDecorationOptions).reference) {
+        if (typeof target !== 'function') {
             return false
         }
 

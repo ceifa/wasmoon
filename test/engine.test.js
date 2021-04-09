@@ -395,6 +395,6 @@ test('classes should be a userdata when proxied', async () => {
     const testClass = await engine.doString(`
         return obj.TestClass
     `)
-    
+
     expect(testClass).toBe(TestClass)
 })

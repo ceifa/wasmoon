@@ -1,9 +1,9 @@
 import { BaseDecorationOptions, Decoration } from '../decoration'
 import { LuaReturn, LuaState, LuaType } from '../types'
+import { decorateUserData } from './userdata'
 import MultiReturn from '../multireturn'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { decorateUserData } from './userdata'
 
 export interface ProxyDecorationOptions extends BaseDecorationOptions {
     disableProxy?: boolean
