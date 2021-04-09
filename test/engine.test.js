@@ -387,3 +387,14 @@ test('wrap a js object using proxy and apply metatable in lua', async () => {
     `)
     expect(res).toEqual('wrapped: demo')
 })
+
+test('classes should be a userdata when proxied', async () => {
+    const engine = await getEngine()
+    engine.global.set('obj', { TestClass })
+
+    const testClass = await engine.doString(`
+        return obj.TestClass
+    `)
+    
+    expect(testClass).toBe(TestClass)
+})
