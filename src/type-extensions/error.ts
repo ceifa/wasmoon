@@ -40,7 +40,7 @@ class ErrorTypeExtension extends TypeExtension<Error> {
 
             // Add a tostring method that returns the message.
             thread.pushValue((jsRefError: Error) => {
-                return jsRefError.message
+                return jsRefError.toString()
             })
             thread.cmodule.lua_setfield(thread.address, metatableIndex, '__tostring')
         }

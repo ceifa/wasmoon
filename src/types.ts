@@ -18,6 +18,7 @@ export interface LuaResumeResult {
 export interface LuaEngineOptions {
     openStandardLibs: boolean
     injectObjects: boolean
+    enableProxy: boolean
 }
 
 export const PointerSize = 4
