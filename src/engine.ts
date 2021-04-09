@@ -4,6 +4,7 @@ import Thread from './thread'
 import createErrorType from './type-extensions/error'
 import createFunctionType from './type-extensions/function'
 import createPromiseType from './type-extensions/promise'
+import createProxyType from './type-extensions/proxy'
 import createTableType from './type-extensions/table'
 import createUserdataType from './type-extensions/userdata'
 import type LuaWasm from './luawasm'
@@ -11,6 +12,7 @@ import type LuaWasm from './luawasm'
 const defaultOptions: LuaEngineOptions = {
     openStandardLibs: true,
     injectObjects: false,
+    enableProxy: true,
 }
 
 export default class Lua {
@@ -27,10 +29,22 @@ export default class Lua {
         // Generic handlers - These may be required to be registered for additional types.
         this.global.registerTypeExtension(0, createTableType(this.global))
         this.global.registerTypeExtension(0, createFunctionType(this.global))
-        // Specific type handlers. These depend on the above but should be evaluated first.
-        this.global.registerTypeExtension(1, createErrorType(this.global, options.injectObjects))
+
+        // Contains the :await functionality.
         this.global.registerTypeExtension(1, createPromiseType(this.global, options.injectObjects))
-        this.global.registerTypeExtension(2, createUserdataType(this.global))
+
+        if (options.enableProxy) {
+            // This extension only really overrides tables and arrays.
+            // When a function is looked up in one of it's tables it's bound and then
+            // handled by the function type extension.
+            this.global.registerTypeExtension(3, createProxyType(this.global))
+        } else {
+            // No need to register this when the proxy is enabled.
+            this.global.registerTypeExtension(1, createErrorType(this.global, options.injectObjects))
+        }
+
+        // Higher priority than proxied objects to allow custom user data without exposing methods.
+        this.global.registerTypeExtension(4, createUserdataType(this.global))
 
         if (this.global.isClosed()) {
             throw new Error('Lua state could not be created (probably due to lack of memory)')

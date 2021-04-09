@@ -190,7 +190,7 @@ test('pcall a promise await should succeed', async () => {
 
     asyncThread.loadString(`
         local succeed, err = pcall(function() throw():await() end)
-        assert(tostring(err) == "expected test error")
+        assert(tostring(err) == "Error: expected test error")
         return succeed
     `)
 

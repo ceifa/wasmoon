@@ -4,6 +4,16 @@ const { Thread, LuaReturn, decorate, decorateUserData } = require('../dist')
 
 jest.useFakeTimers()
 
+class TestClass {
+    constructor(name) {
+        this.name = name
+    }
+
+    getName() {
+        return this.name
+    }
+}
+
 test('receive lua table on JS function should succeed', async () => {
     const engine = await getEngine()
     engine.global.set('stringify', (table) => {
@@ -207,7 +217,7 @@ test('catch a JS error with pcall should succeed', async () => {
     await engine.doString(`
         local success, err = pcall(throw)
         assert(success == false)
-        assert(tostring(err) == "expected error")
+        assert(tostring(err) == "Error: expected error")
         check()
     `)
 
@@ -307,23 +317,13 @@ test('table supported circular dependencies', async () => {
     expect(res.b.a === res).toEqual(true)
 })
 
-test('wrap a js object', async () => {
-    class TestClass {
-        constructor(name) {
-            this.name = name
-        }
-
-        getName() {
-            return this.name
-        }
-    }
-
+test('wrap a js object (with metatable)', async () => {
     const engine = await getEngine()
     engine.global.set('TestClass', {
         create: (name) => {
             return decorate(
                 {
-                    instance: decorateUserData(new TestClass(name), { reference: true }),
+                    instance: decorateUserData(new TestClass(name)),
                 },
                 {
                     metatable: {
@@ -345,4 +345,45 @@ test('wrap a js object', async () => {
         return instance.name
     `)
     expect(res).toEqual('demo name')
+})
+
+test('wrap a js object using proxy', async () => {
+    const engine = await getEngine()
+    engine.global.set('TestClass', {
+        create: (name) => new TestClass(name),
+    })
+    const res = await engine.doString(`
+        local instance = TestClass.create("demo name 2")
+        return instance:getName()
+    `)
+    expect(res).toEqual('demo name 2')
+})
+
+test('wrap a js object using proxy and apply metatable in lua', async () => {
+    const engine = await getEngine()
+    engine.global.set('TestClass', {
+        create: (name) => new TestClass(name),
+    })
+    const res = await engine.doString(`
+        local instance = TestClass.create("demo name 2")
+
+        -- Based in the simple lua classes tutotial
+        local Wrapped = {}
+        Wrapped.__index = Wrapped
+
+        function Wrapped:create(name)
+            local wrapped = {}
+            wrapped.instance = TestClass.create(name)
+            setmetatable(wrapped, Wrapped)
+            return wrapped
+        end
+
+        function Wrapped:getName()
+            return "wrapped: "..self.instance:getName()
+        end
+
+        local wr = Wrapped:create("demo")
+        return wr:getName()
+    `)
+    expect(res).toEqual('wrapped: demo')
 })

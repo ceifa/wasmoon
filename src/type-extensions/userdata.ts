@@ -7,8 +7,8 @@ export interface UserDataDecorationOptions extends BaseDecorationOptions {
     reference?: boolean
 }
 
-export function decorateUserData(target: any, options: UserDataDecorationOptions): Decoration<any, UserDataDecorationOptions> {
-    return new Decoration<any, UserDataDecorationOptions>(target, options)
+export function decorateUserData(target: any): Decoration<any, UserDataDecorationOptions> {
+    return new Decoration<any, UserDataDecorationOptions>(target, { reference: true })
 }
 
 class UserdataTypeExtension extends TypeExtension<any, UserDataDecorationOptions> {
