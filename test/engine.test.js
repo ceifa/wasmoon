@@ -429,3 +429,38 @@ test('overwrite lib function', async () => {
 
     expect(output).toEqual('hello\nworld\n')
 })
+
+test('inject a userdata with a metatable should succeed', async () => {
+    const engine = await getEngine()
+    const obj = decorate(
+        {},
+        {
+            metatable: { __index: (t, k) => `Hello ${k}!` },
+        },
+    )
+    engine.global.set('obj', obj)
+
+    const res = await engine.doString('return obj.World')
+
+    expect(res).toEqual('Hello World!')
+})
+
+test('a userdata should be collected', async () => {
+    const engine = await getEngine()
+    const obj = {}
+    engine.global.set('obj', obj)
+    const oldRef = engine.global.cmodule.getRef(1)
+
+    await engine.doString(`
+        local weaktable = {}
+        setmetatable(weaktable, { __mode = "v" })
+        table.insert(weaktable, obj)
+        obj = nil
+        collectgarbage()
+        assert(next(weaktable) == nil)
+    `)
+
+    expect(oldRef).toEqual(obj)
+    const newRef = engine.global.cmodule.getRef(1)
+    expect(newRef).toEqual(undefined)
+})

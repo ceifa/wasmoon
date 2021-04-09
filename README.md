@@ -65,15 +65,14 @@ $: wasmoon [options] [files] [-- [args]]
 
 Available options are:
 
-* `-l`: Include a file or directory
-* `-i`: Enter interactive mode after running the *files*
+-   `-l`: Include a file or directory
+-   `-i`: Enter interactive mode after running the _files_
 
 ### Example:
 
 ```
 $: wasmoon -i sum.lua -- 10 30
 ```
-
 
 ## Fixing common errors on web environment
 
