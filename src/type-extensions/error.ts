@@ -1,12 +1,13 @@
 import { Decoration } from '../decoration'
 import { LuaReturn, LuaState } from '../types'
+import Global from '../global'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
 
 class ErrorTypeExtension extends TypeExtension<Error> {
     private gcPointer: number
 
-    public constructor(thread: Thread, injectObject: boolean) {
+    public constructor(thread: Global, injectObject: boolean) {
         super(thread, 'js_error')
 
         this.gcPointer = thread.cmodule.module.addFunction((functionStateAddress: LuaState) => {
@@ -73,6 +74,6 @@ class ErrorTypeExtension extends TypeExtension<Error> {
     }
 }
 
-export default function createTypeExtension(thread: Thread, injectObject: boolean): TypeExtension<Error> {
+export default function createTypeExtension(thread: Global, injectObject: boolean): TypeExtension<Error> {
     return new ErrorTypeExtension(thread, injectObject)
 }

@@ -1,12 +1,13 @@
 import { Decoration } from '../decoration'
 import { LUA_REGISTRYINDEX, LuaType } from '../types'
+import Global from '../global'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
 
 export type TableType = Record<any, any> | any[]
 
 class TableTypeExtension extends TypeExtension<TableType> {
-    public constructor(thread: Thread) {
+    public constructor(thread: Global) {
         super(thread, 'js_table')
     }
 
@@ -120,6 +121,6 @@ class TableTypeExtension extends TypeExtension<TableType> {
     }
 }
 
-export default function createTypeExtension(thread: Thread): TypeExtension<any> {
+export default function createTypeExtension(thread: Global): TypeExtension<any> {
     return new TableTypeExtension(thread)
 }

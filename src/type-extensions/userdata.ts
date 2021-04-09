@@ -1,5 +1,6 @@
 import { BaseDecorationOptions, Decoration } from '../decoration'
 import { LuaReturn, LuaState, LuaType } from '../types'
+import Global from '../global'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
 
@@ -14,7 +15,7 @@ export function decorateUserData(target: any): Decoration<any, UserDataDecoratio
 class UserdataTypeExtension extends TypeExtension<any, UserDataDecorationOptions> {
     private readonly gcPointer: number
 
-    public constructor(thread: Thread) {
+    public constructor(thread: Global) {
         super(thread, 'js_userdata')
 
         this.gcPointer = thread.cmodule.module.addFunction((functionStateAddress: LuaState) => {
@@ -66,6 +67,6 @@ class UserdataTypeExtension extends TypeExtension<any, UserDataDecorationOptions
     }
 }
 
-export default function createTypeExtension(thread: Thread): TypeExtension<Error> {
+export default function createTypeExtension(thread: Global): TypeExtension<Error> {
     return new UserdataTypeExtension(thread)
 }

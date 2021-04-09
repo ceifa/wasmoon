@@ -1,6 +1,7 @@
 import { Decoration } from '../decoration'
 import { LuaReturn, LuaState } from '../types'
 import { decorateFunction } from './function'
+import Global from '../global'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
 
@@ -13,7 +14,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
               })
             : undefined
 
-    public constructor(thread: Thread, injectObject: boolean) {
+    public constructor(thread: Global, injectObject: boolean) {
         super(thread, 'js_promise')
 
         if (!this.functionRegistry) {
@@ -146,6 +147,6 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     }
 }
 
-export default function createTypeExtension<T = unknown>(thread: Thread, injectObject: boolean): TypeExtension<Promise<T>> {
+export default function createTypeExtension<T = unknown>(thread: Global, injectObject: boolean): TypeExtension<Promise<T>> {
     return new PromiseTypeExtension<T>(thread, injectObject)
 }

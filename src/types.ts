@@ -64,4 +64,17 @@ export enum LuaEventMasks {
     Count = 1 << LuaEventCodes.Count,
 }
 
+export enum LuaLibraries {
+    Base = '_G',
+    Coroutine = 'coroutine',
+    Table = 'table',
+    IO = 'io',
+    OS = 'os',
+    String = 'string',
+    UTF8 = 'utf8',
+    Math = 'math',
+    Debug = 'debug',
+    Package = 'package',
+}
+
 export class LuaTimeoutError extends Error {}

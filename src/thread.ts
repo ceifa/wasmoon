@@ -42,16 +42,6 @@ export default class Thread {
         }, 'vii')
     }
 
-    public get(name: string): any {
-        const type = this.cmodule.lua_getglobal(this.address, name)
-        return this.getValue(-1, type)
-    }
-
-    public set(name: string, value: any): void {
-        this.pushValue(value)
-        this.cmodule.lua_setglobal(this.address, name)
-    }
-
     public newThread(): Thread {
         return new Thread(this.cmodule, this.typeExtensions, this.cmodule.lua_newthread(this.address))
     }
@@ -93,6 +83,12 @@ export default class Thread {
 
     public remove(index: number): void {
         return this.cmodule.lua_remove(this.address, index)
+    }
+
+    public setField(index: number, name: string, value: any): void {
+        index = this.cmodule.lua_absindex(this.address, index)
+        this.pushValue(value)
+        this.cmodule.lua_setfield(this.address, index, name)
     }
 
     public async run(argCount = 0, options?: Partial<LuaThreadRunOptions>): Promise<MultiReturn> {
