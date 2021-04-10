@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const { LuaFactory, LuaReturn, LuaType, LUA_MULTRET } = require('../dist')
+const { LuaFactory, LuaReturn, LuaType, LUA_MULTRET, decorate } = require('../dist')
 const fs = require('fs')
 const path = require('path')
 const readline = require('readline')
@@ -23,22 +23,21 @@ async function main() {
 
     let snippets = process.argv.splice(2)
 
-    const consumeOption = (option, single = false) => {
-        const optionIndex = snippets.indexOf(option)
-        return optionIndex < 0 ? [] : [
-            snippets.splice(optionIndex, single ? 1 : 2).reverse()[0],
-            optionIndex
-        ]
+    const consumeOption = (option, single) => {
+        let i = -1
+        const values = []
+        while ((i = snippets.indexOf(option)) >= 0) {
+            values.push(snippets.splice(i, single ? 1 : 2).reverse()[0])
+        }
+        return values
     }
 
-    let [_, argsSeparator] = consumeOption('--', true)
-    let luaargs = []
-    if (argsSeparator >= 0) {
-        luaargs = snippets.splice(argsSeparator)
-        lua.global.set('arg', luaargs)
-    }
+    const includes = consumeOption('-l')
+    const forceInteractive = consumeOption('-i', true).length > 0
+    let runFile = process.stdin.isTTY && consumeOption(snippets[0], true)[0]
+    const args = snippets
 
-    while (([include] = consumeOption('-l')).length) {
+    for (const include of includes) {
         const stat = await fs.promises.lstat(include)
         if (stat.isFile()) {
             await factory.mountFile(include, await fs.promises.readFile(include))
@@ -49,25 +48,24 @@ async function main() {
         }
     }
 
-    let interactive = process.stdin.isTTY && (consumeOption('-i', true).length || snippets.length === 0)
+    lua.global.set('arg', decorate(args, { disableProxy: true }))
 
-    if (snippets.length > 0) {
-        while ((runFile = snippets.shift())) {
-            //runFile = path.resolve(process.cwd(), runFile)
-            //luamodule.module.FS.chdir(path.dirname(runFile))
+    let interactive = process.stdin.isTTY && (forceInteractive || !runFile)
 
-            await factory.mountFile(runFile, await fs.promises.readFile(runFile))
-            const result = await lua.doFile(runFile)
-            if (result) {
-                console.log(result)
-            }
-        }
+    if (runFile) {
+        runFile = path.resolve(process.cwd(), runFile)
+        await factory.mountFile(runFile, await fs.promises.readFile(runFile))
 
-        if (!interactive) {
-            return
+        const result = await lua.doFile(runFile)
+        if (result) {
+            console.log(result)
         }
     }
-    
+
+    if (!interactive && runFile) {
+        return
+    }
+
     if (interactive) {
         // Call directly from module to bypass the result verification
         const loadcode = (code) => !lua.global.setTop(0) && luamodule.luaL_loadstring(lua.global.address, code) === LuaReturn.Ok

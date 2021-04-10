@@ -60,18 +60,29 @@ try {
 Although Wasmoon has been designed to be embedded, you can run it on command line as well, but, if you want something more robust on this, we recommend to take a look at [demoon](https://github.com/ceifa/demoon).
 
 ```sh
-$: wasmoon [options] [files] [-- [args]]
+$: wasmoon [options] [file] [args]
 ```
 
 Available options are:
 
 -   `-l`: Include a file or directory
--   `-i`: Enter interactive mode after running the _files_
+-   `-i`: Enter interactive mode after running the files
 
 ### Example:
 
+```sh
+$: wasmoon -i sum.lua 10 30
 ```
-$: wasmoon -i sum.lua -- 10 30
+
+And if you are in Unix, you can also use it as a script interpreter with [Shebang](<https://en.wikipedia.org/wiki/Shebang_(Unix)>):
+
+```lua
+#!/usr/bin/env wasmoon
+return arg[1] + arg[2]
+```
+
+```sh
+$: ./sum.lua 10 30
 ```
 
 ## Fixing common errors on web environment
