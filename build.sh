@@ -4,17 +4,16 @@ mkdir -p build
 
 LUA_SRC=$(ls ./lua/*.c | grep -v "luac.c" | grep -v "lua.c" | tr "\n" " ")
 
-extension=$1
-if [ "$extension" == "3" ];
+extension=""
+if [ "$1" == "dev" ];
 then
-    extension="$extension --closure 1"
-elif [ "$extension" == "3" ];
-then
-    extension="$extension -s ASSERTIONS=1"
+    extension="$extension -O0 -s ASSERTIONS=1"
+else
+    extension="$extension -O3 --closure 1"
 fi
 
 emcc \
-    -s WASM=1 -O$1 -o ./build/glue.js \
+    -s WASM=1 $extension -o ./build/glue.js \
     -s EXTRA_EXPORTED_RUNTIME_METHODS="['cwrap', 'addFunction', 'removeFunction', 'FS', 'getValue', 'setValue']" \
     -s MODULARIZE=1 \
     -s ALLOW_TABLE_GROWTH \

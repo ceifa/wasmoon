@@ -63,6 +63,18 @@ export default class Lua {
         return this.callByteCode((thread) => thread.loadFile(filename))
     }
 
+    public doStringSync(script: string): Promise<any> {
+        this.global.loadString(script)
+        const result = this.global.runSync()
+        return result[0]
+    }
+
+    public doFileSync(filename: string): Promise<any> {
+        this.global.loadFile(filename)
+        const result = this.global.runSync()
+        return result[0]
+    }
+
     private async callByteCode(loader: (thread: Thread) => void): Promise<any> {
         const thread = this.global.newThread()
         const threadIndex = this.global.getTop()

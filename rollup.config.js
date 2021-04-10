@@ -7,7 +7,6 @@ export default {
         file: 'dist/index.js',
         format: 'umd',
         name: 'wasmoon',
-        sourcemap: true,
     },
     plugins: [
         url({

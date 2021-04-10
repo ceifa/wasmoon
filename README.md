@@ -111,7 +111,7 @@ module.exports = {
 
 ### Rollup
 
-With the package [rollup-plugin-ignore](), add this snippet to your config:
+With the package [rollup-plugin-ignore](https://www.npmjs.com/package/rollup-plugin-ignore), add this snippet to your config:
 
 ```js
 export default {

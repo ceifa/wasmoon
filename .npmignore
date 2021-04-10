@@ -1,4 +1,3 @@
-glue
 lua
 test
 src
@@ -9,6 +8,6 @@ build.sh
 rollup.config.js
 .github
 .gitmodules
-.eslintrc
+.eslintrc.json
 .prettierignore
 .prettierrc.js

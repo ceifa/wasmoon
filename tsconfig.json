@@ -4,9 +4,9 @@
         "noImplicitAny": true,
         "incremental": false,
         "moduleResolution": "node",
-        "inlineSources": true,
+        "inlineSources": false,
         "removeComments": true,
-        "sourceMap": true,
+        "sourceMap": false,
         "target": "ES6",
         "skipLibCheck": true,
         "lib": ["ES2016", "DOM"]

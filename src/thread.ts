@@ -137,6 +137,11 @@ export default class Thread {
         }
     }
 
+    public runSync(argCount = 0): MultiReturn {
+        this.assertOk(this.cmodule.lua_pcallk(this.address, argCount, LUA_MULTRET, 0, 0, null) as LuaReturn)
+        return this.getStackValues()
+    }
+
     public pop(count = 1): void {
         this.cmodule.lua_pop(this.address, count)
     }
