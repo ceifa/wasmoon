@@ -9,6 +9,7 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     setValue: typeof setValue
     getValue: typeof getValue
     FS: typeof FS
+    ENV: Record<string, string | undefined>
     _realloc: (pointer: number, size: number) => number
 }
 

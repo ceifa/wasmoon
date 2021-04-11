@@ -14,7 +14,15 @@ fi
 
 emcc \
     -s WASM=1 $extension -o ./build/glue.js \
-    -s EXTRA_EXPORTED_RUNTIME_METHODS="['cwrap', 'addFunction', 'removeFunction', 'FS', 'getValue', 'setValue']" \
+    -s EXTRA_EXPORTED_RUNTIME_METHODS="[
+        'cwrap', \
+        'addFunction', \
+        'removeFunction', \
+        'FS', \
+        'ENV', \
+        'getValue', \
+        'setValue'
+    ]" \
     -s MODULARIZE=1 \
     -s ALLOW_TABLE_GROWTH \
     -s EXPORT_NAME="initWasmModule" \
