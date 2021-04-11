@@ -21,12 +21,12 @@ export default abstract class LuaTypeExtension<T, K extends BaseDecorationOption
 
     // A base implementation that assumes user data serialisation
     public getValue(thread: Thread, index: number, _userdata?: any): T {
-        const refUserData = thread.cmodule.luaL_testudata(thread.address, index, this.name)
+        const refUserData = thread.lua.luaL_testudata(thread.address, index, this.name)
         if (!refUserData) {
             throw new Error(`data does not have the expected metatable: ${this.name}`)
         }
-        const referencePointer = thread.cmodule.module.getValue(refUserData, '*')
-        return thread.cmodule.getRef(referencePointer)
+        const referencePointer = thread.lua.module.getValue(refUserData, '*')
+        return thread.lua.getRef(referencePointer)
     }
 
     // Return false if type not matched, otherwise true. This base method does not
@@ -34,12 +34,12 @@ export default abstract class LuaTypeExtension<T, K extends BaseDecorationOption
     public pushValue(thread: Thread, decoratedValue: Decoration<T, K>, _userdata?: any): boolean {
         const { target } = decoratedValue
 
-        const pointer = thread.cmodule.ref(target)
+        const pointer = thread.lua.ref(target)
         // 4 = size of pointer in wasm.
-        const userDataPointer = thread.cmodule.lua_newuserdatauv(thread.address, PointerSize, 0)
-        thread.cmodule.module.setValue(userDataPointer, pointer, '*')
+        const userDataPointer = thread.lua.lua_newuserdatauv(thread.address, PointerSize, 0)
+        thread.lua.module.setValue(userDataPointer, pointer, '*')
 
-        if (LuaType.Nil === thread.cmodule.luaL_getmetatable(thread.address, this.name)) {
+        if (LuaType.Nil === thread.lua.luaL_getmetatable(thread.address, this.name)) {
             // Pop the pushed nil value and the user data. Don't need to unref because it's
             // already associated with the user data pointer.
             thread.pop(2)
@@ -48,7 +48,7 @@ export default abstract class LuaTypeExtension<T, K extends BaseDecorationOption
 
         // Set as the metatable for the userdata.
         // -1 is the metatable, -2 is the user data.
-        thread.cmodule.lua_setmetatable(thread.address, -2)
+        thread.lua.lua_setmetatable(thread.address, -2)
 
         return true
     }

@@ -10,7 +10,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
             ? new FinalizationRegistry((func: number) => {
-                  this.thread.cmodule.module.removeFunction(func)
+                  this.thread.lua.module.removeFunction(func)
               })
             : undefined
 
@@ -21,25 +21,25 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
             console.warn('PromiseTypeExtension: FinalizationRegistry not found. Memory leaks likely.')
         }
 
-        this.gcPointer = thread.cmodule.module.addFunction((functionStateAddress: LuaState) => {
+        this.gcPointer = thread.lua.module.addFunction((functionStateAddress: LuaState) => {
             // Throws a lua error which does a jump if it does not match.
-            const userDataPointer = thread.cmodule.luaL_checkudata(functionStateAddress, 1, this.name)
-            const referencePointer = thread.cmodule.module.getValue(userDataPointer, '*')
-            thread.cmodule.unref(referencePointer)
+            const userDataPointer = thread.lua.luaL_checkudata(functionStateAddress, 1, this.name)
+            const referencePointer = thread.lua.module.getValue(userDataPointer, '*')
+            thread.lua.unref(referencePointer)
 
             return LuaReturn.Ok
         }, 'ii')
 
-        if (thread.cmodule.luaL_newmetatable(thread.address, this.name)) {
-            const metatableIndex = thread.cmodule.lua_gettop(thread.address)
+        if (thread.lua.luaL_newmetatable(thread.address, this.name)) {
+            const metatableIndex = thread.lua.lua_gettop(thread.address)
 
             // Mark it as uneditable
-            thread.cmodule.lua_pushstring(thread.address, 'protected metatable')
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__metatable')
+            thread.lua.lua_pushstring(thread.address, 'protected metatable')
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__metatable')
 
             // Add the gc function
-            thread.cmodule.lua_pushcclosure(thread.address, this.gcPointer, 0)
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__gc')
+            thread.lua.lua_pushcclosure(thread.address, this.gcPointer, 0)
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__gc')
 
             thread.pushValue({
                 next: (self: Promise<unknown>, ...args: any[]) => {
@@ -75,7 +75,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                                 promiseResult = { status: 'rejected', value: err }
                             })
 
-                        const continuance = this.thread.cmodule.module.addFunction((continuanceState: LuaState) => {
+                        const continuance = this.thread.lua.module.addFunction((continuanceState: LuaState) => {
                             // If this yield has been called from within a coroutine and so manually resumed
                             // then there may not yet be any results. In that case yield again.
                             if (!promiseResult) {
@@ -84,7 +84,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                                 // 0 because this is called between resumes so the first one should've
                                 // popped the promise before returning the result. This is true within
                                 // Lua's coroutine.resume too.
-                                return thread.cmodule.lua_yieldk(functionThread.address, 0, 0, continuance)
+                                return thread.lua.lua_yieldk(functionThread.address, 0, 0, continuance)
                             }
 
                             const continuanceThread = thread.stateToThread(continuanceState)
@@ -95,7 +95,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
 
                             if (promiseResult.status === 'rejected') {
                                 continuanceThread.pushValue(promiseResult.value || new Error('promise rejected with no error'))
-                                return this.thread.cmodule.lua_error(continuanceState)
+                                return this.thread.lua.lua_error(continuanceState)
                             }
 
                             continuanceThread.pushValue(promiseResult.value)
@@ -105,15 +105,15 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                         this.functionRegistry?.register(awaitPromise, continuance)
 
                         functionThread.pushValue(awaitPromise)
-                        return thread.cmodule.lua_yieldk(functionThread.address, 1, 0, continuance)
+                        return thread.lua.lua_yieldk(functionThread.address, 1, 0, continuance)
                     },
                     { receiveThread: true, rawResult: true },
                 ),
             })
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__index')
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__index')
         }
         // Pop the metatable from the stack.
-        thread.cmodule.lua_pop(thread.address, 1)
+        thread.lua.lua_pop(thread.address, 1)
 
         if (injectObject) {
             // Lastly create a static Promise constructor.
@@ -136,7 +136,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     }
 
     public close(): void {
-        this.thread.cmodule.module.removeFunction(this.gcPointer)
+        this.thread.lua.module.removeFunction(this.gcPointer)
     }
 
     public pushValue(thread: Thread, decoration: Decoration<Promise<T>>): boolean {

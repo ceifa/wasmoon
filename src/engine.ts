@@ -15,7 +15,7 @@ const defaultOptions: LuaEngineOptions = {
     enableProxy: true,
 }
 
-export default class Lua {
+export default class LuaEngine {
     public global: Global
 
     public constructor(private cmodule: LuaWasm, userOptions?: Partial<LuaEngineOptions>) {

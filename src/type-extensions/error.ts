@@ -10,25 +10,25 @@ class ErrorTypeExtension extends TypeExtension<Error> {
     public constructor(thread: Global, injectObject: boolean) {
         super(thread, 'js_error')
 
-        this.gcPointer = thread.cmodule.module.addFunction((functionStateAddress: LuaState) => {
+        this.gcPointer = thread.lua.module.addFunction((functionStateAddress: LuaState) => {
             // Throws a lua error which does a jump if it does not match.
-            const userDataPointer = thread.cmodule.luaL_checkudata(functionStateAddress, 1, this.name)
-            const referencePointer = thread.cmodule.module.getValue(userDataPointer, '*')
-            thread.cmodule.unref(referencePointer)
+            const userDataPointer = thread.lua.luaL_checkudata(functionStateAddress, 1, this.name)
+            const referencePointer = thread.lua.module.getValue(userDataPointer, '*')
+            thread.lua.unref(referencePointer)
 
             return LuaReturn.Ok
         }, 'ii')
 
-        if (thread.cmodule.luaL_newmetatable(thread.address, this.name)) {
-            const metatableIndex = thread.cmodule.lua_gettop(thread.address)
+        if (thread.lua.luaL_newmetatable(thread.address, this.name)) {
+            const metatableIndex = thread.lua.lua_gettop(thread.address)
 
             // Mark it as uneditable
-            thread.cmodule.lua_pushstring(thread.address, 'protected metatable')
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__metatable')
+            thread.lua.lua_pushstring(thread.address, 'protected metatable')
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__metatable')
 
             // Add the gc function
-            thread.cmodule.lua_pushcclosure(thread.address, this.gcPointer, 0)
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__gc')
+            thread.lua.lua_pushcclosure(thread.address, this.gcPointer, 0)
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__gc')
 
             // Add an __index method that returns the message field
             thread.pushValue((jsRefError: Error, key: unknown) => {
@@ -37,16 +37,16 @@ class ErrorTypeExtension extends TypeExtension<Error> {
                 }
                 return null
             })
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__index')
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__index')
 
             // Add a tostring method that returns the message.
             thread.pushValue((jsRefError: Error) => {
                 return jsRefError.toString()
             })
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__tostring')
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__tostring')
         }
         // Pop the metatable from the stack.
-        thread.cmodule.lua_pop(thread.address, 1)
+        thread.lua.lua_pop(thread.address, 1)
 
         if (injectObject) {
             // Lastly create a static Promise constructor.
@@ -70,7 +70,7 @@ class ErrorTypeExtension extends TypeExtension<Error> {
     }
 
     public close(): void {
-        this.thread.cmodule.module.removeFunction(this.gcPointer)
+        this.thread.lua.module.removeFunction(this.gcPointer)
     }
 }
 

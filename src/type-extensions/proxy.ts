@@ -20,25 +20,25 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
     public constructor(thread: Global) {
         super(thread, 'js_proxy')
 
-        this.gcPointer = thread.cmodule.module.addFunction((functionStateAddress: LuaState) => {
+        this.gcPointer = thread.lua.module.addFunction((functionStateAddress: LuaState) => {
             // Throws a lua error which does a jump if it does not match.
-            const userDataPointer = thread.cmodule.luaL_checkudata(functionStateAddress, 1, this.name)
-            const referencePointer = thread.cmodule.module.getValue(userDataPointer, '*')
-            thread.cmodule.unref(referencePointer)
+            const userDataPointer = thread.lua.luaL_checkudata(functionStateAddress, 1, this.name)
+            const referencePointer = thread.lua.module.getValue(userDataPointer, '*')
+            thread.lua.unref(referencePointer)
 
             return LuaReturn.Ok
         }, 'ii')
 
-        if (thread.cmodule.luaL_newmetatable(thread.address, this.name)) {
-            const metatableIndex = thread.cmodule.lua_gettop(thread.address)
+        if (thread.lua.luaL_newmetatable(thread.address, this.name)) {
+            const metatableIndex = thread.lua.lua_gettop(thread.address)
 
             // Mark it as uneditable
-            thread.cmodule.lua_pushstring(thread.address, 'protected metatable')
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__metatable')
+            thread.lua.lua_pushstring(thread.address, 'protected metatable')
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__metatable')
 
             // Add the gc function
-            thread.cmodule.lua_pushcclosure(thread.address, this.gcPointer, 0)
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__gc')
+            thread.lua.lua_pushcclosure(thread.address, this.gcPointer, 0)
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__gc')
 
             thread.pushValue((self: any, key: unknown) => {
                 switch (typeof key) {
@@ -72,7 +72,7 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
 
                 return value
             })
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__index')
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__index')
 
             thread.pushValue((self: any, key: unknown, value: any) => {
                 switch (typeof key) {
@@ -87,17 +87,17 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
                 }
                 self[key as string | number] = value
             })
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__newindex')
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__newindex')
 
             thread.pushValue((self: any) => {
                 return self?.toString?.() ?? typeof self
             })
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__tostring')
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__tostring')
 
             thread.pushValue((self: any) => {
                 return self?.length || 0
             })
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__len')
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__len')
 
             thread.pushValue((self: any) => {
                 const keys = Object.getOwnPropertyNames(self)
@@ -113,16 +113,16 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
                     null,
                 ])
             })
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__pairs')
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__pairs')
 
             thread.pushValue((self: any, other: any) => {
                 return self === other
             })
-            thread.cmodule.lua_setfield(thread.address, metatableIndex, '__eq')
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__eq')
         }
 
         // Pop the metatable from the stack.
-        thread.cmodule.lua_pop(thread.address, 1)
+        thread.lua.lua_pop(thread.address, 1)
     }
 
     public isType(_thread: Thread, _index: number, type: LuaType, name?: string): boolean {
@@ -131,9 +131,9 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
     }
 
     public getValue(thread: Thread, index: number): any {
-        const refUserData = thread.cmodule.lua_touserdata(thread.address, index)
-        const referencePointer = thread.cmodule.module.getValue(refUserData, '*')
-        return thread.cmodule.getRef(referencePointer)
+        const refUserData = thread.lua.lua_touserdata(thread.address, index)
+        const referencePointer = thread.lua.module.getValue(refUserData, '*')
+        return thread.lua.getRef(referencePointer)
     }
 
     public pushValue(thread: Thread, decoratedValue: Decoration<any, ProxyDecorationOptions>, parent?: any): boolean {
@@ -164,7 +164,7 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
     }
 
     public close(): void {
-        this.thread.cmodule.module.removeFunction(this.gcPointer)
+        this.thread.lua.module.removeFunction(this.gcPointer)
     }
 }
 
