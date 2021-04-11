@@ -213,12 +213,13 @@ export default class Thread {
                     throw new Error(`The type '${typeof target}' is not supported by Lua`)
             }
         }
-        if (this.getTop() !== startTop + 1) {
-            throw new Error(`pushValue expected stack size ${startTop + 1}, got ${this.getTop()}`)
-        }
 
         if (options?.metatable) {
             this.setMetatable(options.metatable, -1)
+        }
+
+        if (this.getTop() !== startTop + 1) {
+            throw new Error(`pushValue expected stack size ${startTop + 1}, got ${this.getTop()}`)
         }
     }
 

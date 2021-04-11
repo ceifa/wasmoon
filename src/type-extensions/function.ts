@@ -76,10 +76,10 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
         }
 
         const pointer = thread.cmodule.module.addFunction((calledL: LuaState) => {
-            const argsQuantity = thread.cmodule.lua_gettop(calledL)
-            const args = []
-
             const calledThread = thread.stateToThread(calledL)
+
+            const argsQuantity = calledThread.getTop()
+            const args = []
 
             if (options.receiveThread) {
                 args.push(calledThread)
@@ -152,11 +152,11 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                 thread.pushValue(arg)
             }
 
-            const startTop = thread.getTop()
             thread.cmodule.lua_callk(thread.address, args.length, 1, 0, null)
-            const res = thread.getValue(-1)
-            thread.setTop(startTop)
-            return res
+            const result = thread.getValue(-1)
+
+            thread.pop()
+            return result
         }
 
         this.functionRegistry?.register(jsFunc, func)

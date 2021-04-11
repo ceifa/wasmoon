@@ -65,7 +65,7 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
                             if (args[0] === self) {
                                 args.shift()
                             }
-                            return value.bind(self)(...args)
+                            return value.apply(self, args)
                         }
                     }
                 }
@@ -90,7 +90,7 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
             thread.cmodule.lua_setfield(thread.address, metatableIndex, '__newindex')
 
             thread.pushValue((self: any) => {
-                return self?.toString?.()
+                return self?.toString?.() ?? typeof self
             })
             thread.cmodule.lua_setfield(thread.address, metatableIndex, '__tostring')
 

@@ -75,6 +75,7 @@ export default class Lua {
         return result[0]
     }
 
+    // WARNING: It will not wait for open handles and can potentially cause bugs if JS code tries to reference Lua after executed
     private async callByteCode(loader: (thread: Thread) => void): Promise<any> {
         const thread = this.global.newThread()
         const threadIndex = this.global.getTop()
