@@ -26,7 +26,7 @@ export default class Thread {
     public readonly cmodule: LuaWasm
     protected typeExtensions: OrderedExtension[]
     private closed = false
-    private yieldFunctionPointer: number
+    private yieldFunctionPointer: number | undefined
     private forcedYieldCount?: number
 
     private parent?: Thread
@@ -36,10 +36,6 @@ export default class Thread {
         this.typeExtensions = typeExtensions
         this.address = address
         this.parent = parent
-
-        this.yieldFunctionPointer = cmodule.module.addFunction((state: LuaState): void => {
-            cmodule.lua_yield(state, 0)
-        }, 'vii')
     }
 
     public newThread(): Thread {
@@ -181,7 +177,10 @@ export default class Thread {
         let target = decoratedValue.target
 
         if (target instanceof Thread) {
-            this.cmodule.lua_pushthread(target.address)
+            const isMain = this.cmodule.lua_pushthread(target.address) === 1
+            if (!isMain) {
+                this.cmodule.lua_xmove(target.address, this.address, 1)
+            }
             return
         }
 
@@ -293,7 +292,9 @@ export default class Thread {
             return
         }
 
-        this.cmodule.module.removeFunction(this.yieldFunctionPointer)
+        if (this.yieldFunctionPointer) {
+            this.cmodule.module.removeFunction(this.yieldFunctionPointer)
+        }
 
         this.closed = true
     }
@@ -301,6 +302,12 @@ export default class Thread {
     // Set to > 0 to enable, otherwise disable.
     public setForcedYieldCount(count: number | undefined): void {
         if (count && count > 0) {
+            if (!this.yieldFunctionPointer) {
+                this.yieldFunctionPointer = this.cmodule.module.addFunction((state: LuaState): void => {
+                    this.cmodule.lua_yield(state, 0)
+                }, 'vii')
+            }
+
             this.forcedYieldCount = count
             this.cmodule.lua_sethook(this.address, this.yieldFunctionPointer, LuaEventMasks.Count, count)
         } else {
