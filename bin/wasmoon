@@ -18,7 +18,7 @@ async function* walk(dir) {
 
 async function main() {
     const factory = new LuaFactory()
-    const luamodule = await factory.getModule()
+    const luamodule = await factory.getLuaModule()
     const lua = await factory.createEngine()
 
     let snippets = process.argv.splice(2)

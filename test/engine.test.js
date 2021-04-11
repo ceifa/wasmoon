@@ -449,7 +449,7 @@ test('a userdata should be collected', async () => {
     const engine = await getEngine()
     const obj = {}
     engine.global.set('obj', obj)
-    const oldRef = engine.global.cmodule.getRef(1)
+    const oldRef = engine.global.lua.getRef(1)
 
     await engine.doString(`
         local weaktable = {}
@@ -461,6 +461,6 @@ test('a userdata should be collected', async () => {
     `)
 
     expect(oldRef).toEqual(obj)
-    const newRef = engine.global.cmodule.getRef(1)
+    const newRef = engine.global.lua.getRef(1)
     expect(newRef).toEqual(undefined)
 })
