@@ -24,12 +24,11 @@ export interface OrderedExtension {
 export default class Thread {
     public readonly address: LuaState = 0
     public readonly lua: LuaWasm
-    protected typeExtensions: OrderedExtension[]
+    protected readonly typeExtensions: OrderedExtension[]
     private closed = false
     private yieldFunctionPointer: number | undefined
     private forcedYieldCount?: number
-
-    private parent?: Thread
+    private readonly parent?: Thread
 
     public constructor(lua: LuaWasm, typeExtensions: OrderedExtension[], address: number, parent?: Thread) {
         this.lua = lua
