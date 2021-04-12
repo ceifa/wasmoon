@@ -4,6 +4,8 @@ declare global {
 
 export type LuaState = number
 
+export type EnvironmentVariables = Record<string, string | undefined>
+
 export enum LuaReturn {
     Ok = 0,
     Yield = 1,

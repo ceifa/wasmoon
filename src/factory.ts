@@ -1,11 +1,11 @@
-import { LuaEngineOptions } from './types'
+import { EnvironmentVariables, LuaEngineOptions } from './types'
 import LuaEngine from './engine'
 import LuaWasm from './luawasm'
 
 export default class LuaFactory {
     private lua?: LuaWasm
 
-    public constructor(private customWasmUri?: string) {
+    public constructor(private readonly customWasmUri?: string, private readonly environmentVariables?: EnvironmentVariables) {
         if (this.customWasmUri === undefined) {
             const isBrowser = typeof window !== 'undefined' && typeof window.document !== 'undefined'
 
@@ -59,7 +59,7 @@ export default class LuaFactory {
 
     public async getLuaModule(): Promise<LuaWasm> {
         if (!this.lua) {
-            this.lua = await LuaWasm.initialize(this.customWasmUri)
+            this.lua = await LuaWasm.initialize(this.customWasmUri, this.environmentVariables)
         }
 
         return this.lua

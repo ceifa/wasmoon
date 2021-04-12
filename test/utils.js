@@ -3,8 +3,8 @@ const { LuaFactory } = require('../dist')
 process.setMaxListeners(0)
 
 module.exports = {
-    getFactory: () => {
-        return new LuaFactory()
+    getFactory: (env) => {
+        return new LuaFactory(undefined, env)
     },
     getEngine: () => {
         return new LuaFactory().createEngine({
