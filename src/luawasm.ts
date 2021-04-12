@@ -1,5 +1,5 @@
 import '../build/glue.wasm'
-import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType } from './types'
+import { EnvironmentVariables, LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType } from './types'
 import initWasmModule from '../build/glue.js'
 
 interface LuaEmscriptenModule extends EmscriptenModule {
@@ -9,7 +9,7 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     setValue: typeof setValue
     getValue: typeof getValue
     FS: typeof FS
-    ENV: Record<string, string | undefined>
+    ENV: EnvironmentVariables
     _realloc: (pointer: number, size: number) => number
 }
 
@@ -19,12 +19,17 @@ interface ReferenceMetadata {
 }
 
 export default class LuaWasm {
-    public static async initialize(customName?: string): Promise<LuaWasm> {
+    public static async initialize(customName?: string, env?: EnvironmentVariables): Promise<LuaWasm> {
         const module: LuaEmscriptenModule = await initWasmModule({
             print: console.log,
             printErr: console.error,
             locateFile: (path: string, scriptDirectory: string) => {
                 return customName || scriptDirectory + path
+            },
+            preRun: (initializedModule: LuaEmscriptenModule) => {
+                if (typeof env === 'object') {
+                    Object.entries(env).forEach(([k, v]) => (initializedModule.ENV[k] = v))
+                }
             },
         })
         return new LuaWasm(module)

@@ -1,5 +1,5 @@
 const { expect, test } = require('@jest/globals')
-const { getEngine } = require('./utils')
+const { getEngine, getFactory } = require('./utils')
 const { Thread, LuaReturn, decorate, decorateUserData, LuaLibraries } = require('../dist')
 
 jest.useFakeTimers()
@@ -463,4 +463,13 @@ test('a userdata should be collected', async () => {
     expect(oldRef).toEqual(obj)
     const newRef = engine.global.lua.getRef(1)
     expect(newRef).toEqual(undefined)
+})
+
+test('environment variables should be set', async () => {
+    const factory = getFactory({ TEST: 'true' })
+    const engine = await factory.createEngine()
+
+    const testEnvVar = await engine.doString(`return os.getenv('TEST')`)
+
+    expect(testEnvVar).toEqual('true')
 })
