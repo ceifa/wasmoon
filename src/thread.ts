@@ -341,8 +341,7 @@ export default class Thread {
             const type = this.lua.lua_type(this.address, i)
             const typename = this.lua.lua_typename(this.address, type)
             const pointer = this.getPointer(i)
-            const name = this.lua.luaL_tolstring(this.address, i, null)
-            this.pop() // luaL_tolstring pushes the returned value into the stack
+            const name = this.indexToString(i)
             const value = this.getValue(i, type)
 
             log(i, typename, pointer, name, value)
@@ -353,17 +352,15 @@ export default class Thread {
         if (result !== LuaReturn.Ok && result !== LuaReturn.Yield) {
             const resultString = LuaReturn[result]
             let message = `Lua Error(${resultString}/${result})`
-            if (this.lua.lua_gettop(this.address) > 0) {
+            if (this.getTop() > 0) {
                 if (result === LuaReturn.ErrorMem) {
                     // If there's no memory just do a normal to string.
                     const error = this.lua.lua_tolstring(this.address, -1, null)
                     message += `: ${error}`
                 } else {
                     // Calls __tostring if it exists and pushes onto the stack.
-                    const error = this.lua.luaL_tolstring(this.address, -1, null)
+                    const error = this.indexToString(-1)
                     message += `: ${error}`
-                    // Pops the string pushed by luaL_tolstring
-                    this.pop()
                 }
             }
             throw new Error(message)
