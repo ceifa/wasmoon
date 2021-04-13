@@ -1,6 +1,6 @@
 const { expect, test } = require('@jest/globals')
 const { getEngine, getFactory } = require('./utils')
-const { Thread, LuaReturn, decorate, decorateUserData, LuaLibraries } = require('../dist')
+const { LuaThread, LuaReturn, decorate, decorateUserData, LuaLibraries } = require('../dist')
 
 jest.useFakeTimers()
 
@@ -185,7 +185,7 @@ test('get a lua thread should succeed', async () => {
     end)
     `)
 
-    expect(thread).toBeInstanceOf(Thread)
+    expect(thread).toBeInstanceOf(LuaThread)
     expect(thread).not.toBe(0)
 })
 
