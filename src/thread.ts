@@ -327,6 +327,13 @@ export default class Thread {
         return !this.address || this.closed || Boolean(this.parent?.isClosed())
     }
 
+    public indexToString(index: number): string {
+        const str = this.lua.luaL_tolstring(this.address, index, null)
+        // Pops the string pushed by luaL_tolstring
+        this.pop()
+        return str
+    }
+
     public dumpStack(log = console.log): void {
         const top = this.getTop()
 
