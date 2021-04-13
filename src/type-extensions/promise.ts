@@ -111,6 +111,9 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                 ),
             })
             thread.lua.lua_setfield(thread.address, metatableIndex, '__index')
+
+            thread.pushValue((self: Promise<unknown>, other: Promise<unknown>) => self === other)
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__eq')
         }
         // Pop the metatable from the stack.
         thread.lua.lua_pop(thread.address, 1)
@@ -131,6 +134,9 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                     }
                     return Promise.all(promiseArray.map((potentialPromise) => Promise.resolve(potentialPromise)))
                 },
+                resolve: (value: any) => {
+                    return Promise.resolve(value)
+                }
             })
         }
     }
