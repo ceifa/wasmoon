@@ -103,6 +103,7 @@ export default class Global extends Thread {
                 this.lua.luaopen_package(this.address)
                 break
         }
+        this.lua.lua_setglobal(this.address, library)
     }
 
     public get(name: string): any {
