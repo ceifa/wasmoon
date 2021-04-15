@@ -136,7 +136,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                 },
                 resolve: (value: any) => {
                     return Promise.resolve(value)
-                }
+                },
             })
         }
     }

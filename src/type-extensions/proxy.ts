@@ -90,12 +90,12 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
             thread.lua.lua_setfield(thread.address, metatableIndex, '__newindex')
 
             thread.pushValue((self: any) => {
-                return self?.toString?.() ?? typeof self
+                return self.toString?.() ?? typeof self
             })
             thread.lua.lua_setfield(thread.address, metatableIndex, '__tostring')
 
             thread.pushValue((self: any) => {
-                return self?.length || 0
+                return self.length || 0
             })
             thread.lua.lua_setfield(thread.address, metatableIndex, '__len')
 
@@ -103,15 +103,15 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
                 const keys = Object.getOwnPropertyNames(self)
                 let i = 0
                 // Stateful rather than stateless. First call is with nil.
-                return MultiReturn.from([
+                return MultiReturn.of(
                     () => {
-                        const ret = MultiReturn.from([keys[i], self[keys[i]]])
+                        const ret = MultiReturn.of(keys[i], self[keys[i]])
                         i++
                         return ret
                     },
                     self,
                     null,
-                ])
+                )
             })
             thread.lua.lua_setfield(thread.address, metatableIndex, '__pairs')
 

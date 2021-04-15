@@ -86,14 +86,14 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
             }
 
             for (let i = 1; i <= argsQuantity; i++) {
-                if (options?.rawArguments?.includes(i - 1)) {
+                if (options.rawArguments?.includes(i - 1)) {
                     args.push(calledThread.getPointer(i))
                 } else {
                     args.push(calledThread.getValue(i))
                 }
             }
 
-            if (options?.rawResult) {
+            if (options.rawResult) {
                 // Interestingly yieldk does a longjmp and that's handled
                 // by throwing an error. So for anything that yields it needs
                 // to not be in the try/catch.
@@ -109,8 +109,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
 
                 if (result === undefined) {
                     return 0
-                }
-                if (result instanceof MultiReturn) {
+                } else if (result instanceof MultiReturn) {
                     for (const item of result) {
                         calledThread.pushValue(item)
                     }
@@ -121,7 +120,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                 }
             } catch (err) {
                 calledThread.pushValue(err)
-                return thread.lua.lua_error(calledThread.address)
+                return calledThread.lua.lua_error(calledThread.address)
             }
         }, 'ii')
         // Creates a new userdata with metatable pointing to the function pointer.

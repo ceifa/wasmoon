@@ -360,6 +360,10 @@ export default class LuaWasm {
         return this.lua_yieldk(luaState, count, 0, null)
     }
 
+    public lua_upvalueindex(index: number): number {
+        return LUA_REGISTRYINDEX - index
+    }
+
     public ref(data: any): number {
         const existing = this.referenceTracker.get(data)
         if (existing) {

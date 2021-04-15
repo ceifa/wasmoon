@@ -156,7 +156,7 @@ export default class Thread {
     }
 
     public getStackValues(): MultiReturn {
-        const returns = this.lua.lua_gettop(this.address)
+        const returns = this.getTop()
         const returnValues = new MultiReturn(returns)
 
         for (let i = 0; i < returns; i++) {
