@@ -2,13 +2,13 @@ import { BaseDecorationOptions, Decoration } from '../decoration'
 import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from '../types'
 import Global from '../global'
 import MultiReturn from '../multireturn'
+import RawResult from '../raw-result'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
 
 export interface FunctionDecoration extends BaseDecorationOptions {
     rawArguments?: number[]
     receiveThread?: boolean
-    rawResult?: boolean
 }
 
 export type FunctionType = (...args: any[]) => Promise<any> | any
@@ -93,22 +93,13 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                 }
             }
 
-            if (options.rawResult) {
-                // Interestingly yieldk does a longjmp and that's handled
-                // by throwing an error. So for anything that yields it needs
-                // to not be in the try/catch.
-                const result = target(...args)
-                if (typeof result !== 'number') {
-                    throw new Error('result must be a number')
-                }
-                return result
-            }
-
             try {
                 const result = target(...args)
 
                 if (result === undefined) {
                     return 0
+                } else if (result instanceof RawResult) {
+                    return result.count
                 } else if (result instanceof MultiReturn) {
                     for (const item of result) {
                         calledThread.pushValue(item)
@@ -119,6 +110,9 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                     return 1
                 }
             } catch (err) {
+                if (err === 'longjmp') {
+                    throw err
+                }
                 calledThread.pushValue(err)
                 return calledThread.lua.lua_error(calledThread.address)
             }

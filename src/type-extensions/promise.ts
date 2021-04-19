@@ -2,6 +2,8 @@ import { Decoration } from '../decoration'
 import { LuaReturn, LuaState } from '../types'
 import { decorateFunction } from './function'
 import Global from '../global'
+import MultiReturn from '../multireturn'
+import RawResult from '../raw-result'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
 
@@ -98,16 +100,25 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                                 return this.thread.lua.lua_error(continuanceState)
                             }
 
-                            continuanceThread.pushValue(promiseResult.value)
-                            return 1
+                            if (promiseResult.value instanceof RawResult) {
+                                return promiseResult.value.count
+                            } else if (promiseResult.value instanceof MultiReturn) {
+                                for (const arg of promiseResult.value) {
+                                    continuanceThread.pushValue(arg)
+                                }
+                                return promiseResult.value.length
+                            } else {
+                                continuanceThread.pushValue(promiseResult.value)
+                                return 1
+                            }
                         }, 'iiii')
 
                         this.functionRegistry?.register(awaitPromise, continuance)
 
                         functionThread.pushValue(awaitPromise)
-                        return thread.lua.lua_yieldk(functionThread.address, 1, 0, continuance)
+                        return new RawResult(thread.lua.lua_yieldk(functionThread.address, 1, 0, continuance))
                     },
-                    { receiveThread: true, rawResult: true },
+                    { receiveThread: true },
                 ),
             })
             thread.lua.lua_setfield(thread.address, metatableIndex, '__index')
