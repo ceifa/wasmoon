@@ -38,7 +38,11 @@ export default class Thread {
     }
 
     public newThread(): Thread {
-        return new Thread(this.lua, this.typeExtensions, this.lua.lua_newthread(this.address))
+        const address = this.lua.lua_newthread(this.address)
+        if (!address) {
+            throw new Error('lua_newthread returned a null pointer')
+        }
+        return new Thread(this.lua, this.typeExtensions, address)
     }
 
     public resetThread(): void {
