@@ -283,3 +283,21 @@ test('resolve multiple promises with promise.all', async () => {
 
     expect(res).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 })
+
+test('error in promise next catchable', async () => {
+    const engine = await getEngine()
+    engine.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
+    const resPromise = engine
+        .doString(
+            `
+        return sleep(1):next(function ()
+            error("sleep done")
+        end):await()
+    `,
+        )
+        .catch((err) => {
+            expect(err.message).toContain('[string "..."]:3: sleep done')
+        })
+    jest.advanceTimersByTime(50)
+    await resPromise
+})

@@ -352,19 +352,20 @@ export default class Thread {
         }
     }
 
-    private assertOk(result: LuaReturn): void {
+    public assertOk(result: LuaReturn): void {
         if (result !== LuaReturn.Ok && result !== LuaReturn.Yield) {
             const resultString = LuaReturn[result]
+            // This is the default message if there's nothing on the stack.
             let message = `Lua Error(${resultString}/${result})`
             if (this.getTop() > 0) {
                 if (result === LuaReturn.ErrorMem) {
                     // If there's no memory just do a normal to string.
                     const error = this.lua.lua_tolstring(this.address, -1, null)
-                    message += `: ${error}`
+                    message = error
                 } else {
                     // Calls __tostring if it exists and pushes onto the stack.
                     const error = this.indexToString(-1)
-                    message += `: ${error}`
+                    message = error
                 }
             }
             throw new Error(message)

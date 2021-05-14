@@ -41,7 +41,9 @@ class ErrorTypeExtension extends TypeExtension<Error> {
 
             // Add a tostring method that returns the message.
             thread.pushValue((jsRefError: Error) => {
-                return jsRefError.toString()
+                // The message rather than toString to avoid the Error: prefix being
+                // added. This fits better with Lua errors.
+                return jsRefError.message
             })
             thread.lua.lua_setfield(thread.address, metatableIndex, '__tostring')
         }
