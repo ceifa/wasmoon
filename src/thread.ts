@@ -21,13 +21,16 @@ export interface OrderedExtension {
     extension: LuaTypeExtension<unknown>
 }
 
+// When the debug count hook is set, call it every X instructions.
+const INSTRUCTION_HOOK_COUNT = 1000
+
 export default class Thread {
     public readonly address: LuaState = 0
     public readonly lua: LuaWasm
     protected readonly typeExtensions: OrderedExtension[]
     private closed = false
-    private yieldFunctionPointer: number | undefined
-    private forcedYieldCount?: number
+    private hookFunctionPointer: number | undefined
+    private timeout?: number
     private readonly parent?: Thread
 
     public constructor(lua: LuaWasm, typeExtensions: OrderedExtension[], address: number, parent?: Thread) {
@@ -86,23 +89,20 @@ export default class Thread {
     }
 
     public async run(argCount = 0, options?: Partial<LuaThreadRunOptions>): Promise<MultiReturn> {
-        const originalYieldCount = this.getForcedYieldCount()
+        const originalTimeout = this.timeout
         try {
-            if (options?.forcedYieldCount !== undefined) {
-                this.setForcedYieldCount(options.forcedYieldCount)
+            if (options?.timeout !== undefined) {
+                this.setTimeout(Date.now() + options.timeout)
             }
-            const start = Date.now()
             let resumeResult: LuaResumeResult = this.resume(argCount)
             while (resumeResult.result === LuaReturn.Yield) {
                 // If it's yielded check the timeout. If it's completed no need to
                 // needlessly discard the output.
-                if (options?.timeout) {
-                    if (Date.now() - start > options.timeout) {
-                        if (resumeResult.resultCount > 0) {
-                            this.pop(resumeResult.resultCount)
-                        }
-                        throw new LuaTimeoutError(`run exceeded timeout of ${options.timeout}ms`)
+                if (this.timeout && Date.now() > this.timeout) {
+                    if (resumeResult.resultCount > 0) {
+                        this.pop(resumeResult.resultCount)
                     }
+                    throw new LuaTimeoutError(`thread timeout exceeded`)
                 }
                 if (resumeResult.resultCount > 0) {
                     const lastValue = this.getValue(-1)
@@ -126,8 +126,8 @@ export default class Thread {
             this.assertOk(resumeResult.result)
             return this.getStackValues()
         } finally {
-            if (options?.forcedYieldCount !== undefined) {
-                this.setForcedYieldCount(originalYieldCount)
+            if (options?.timeout !== undefined) {
+                this.setTimeout(originalTimeout)
             }
         }
     }
@@ -291,32 +291,36 @@ export default class Thread {
             return
         }
 
-        if (this.yieldFunctionPointer) {
-            this.lua.module.removeFunction(this.yieldFunctionPointer)
+        if (this.hookFunctionPointer) {
+            this.lua.module.removeFunction(this.hookFunctionPointer)
         }
 
         this.closed = true
     }
 
     // Set to > 0 to enable, otherwise disable.
-    public setForcedYieldCount(count: number | undefined): void {
-        if (count && count > 0) {
-            if (!this.yieldFunctionPointer) {
-                this.yieldFunctionPointer = this.lua.module.addFunction((state: LuaState): void => {
-                    this.lua.lua_yield(state, 0)
+    public setTimeout(timeout: number | undefined): void {
+        if (timeout && timeout > 0) {
+            if (!this.hookFunctionPointer) {
+                this.hookFunctionPointer = this.lua.module.addFunction((): void => {
+                    if (Date.now() > timeout) {
+                        this.pushValue(new LuaTimeoutError(`thread timeout exceeded`))
+                        this.lua.lua_error(this.address)
+                    }
                 }, 'vii')
+
+                this.lua.lua_sethook(this.address, this.hookFunctionPointer, LuaEventMasks.Count, INSTRUCTION_HOOK_COUNT)
             }
 
-            this.forcedYieldCount = count
-            this.lua.lua_sethook(this.address, this.yieldFunctionPointer, LuaEventMasks.Count, count)
+            this.timeout = timeout
         } else {
-            this.forcedYieldCount = undefined
+            this.timeout = undefined
             this.lua.lua_sethook(this.address, null, 0, 0)
         }
     }
 
-    public getForcedYieldCount(): number | undefined {
-        return this.forcedYieldCount
+    public getTimeout(): number | undefined {
+        return this.timeout
     }
 
     public getPointer(index: number): Pointer {
