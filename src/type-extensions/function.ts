@@ -145,7 +145,12 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                 thread.pushValue(arg)
             }
 
-            thread.lua.lua_callk(thread.address, args.length, 1, 0, null)
+            const status = thread.lua.lua_pcallk(thread.address, args.length, 1, 0, 0, null)
+            if (status === LuaReturn.Yield) {
+                throw new Error('cannot yield in callbacks from javascript')
+            }
+            thread.assertOk(status)
+
             const result = thread.getValue(-1)
 
             thread.pop()

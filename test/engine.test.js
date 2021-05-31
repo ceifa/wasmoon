@@ -278,7 +278,7 @@ test('limit memory use causes program loading failure succeeds', async () => {
             local b = 20
             return a + b
         `)
-    }).toThrow('Lua Error(ErrorMem/4): not enough memory')
+    }).toThrow('not enough memory')
 
     // Remove the limit and retry
     engine.global.setMemoryMax(undefined)
@@ -299,7 +299,7 @@ test('limit memory use causes program runtime failure succeeds', async () => {
     `)
     engine.global.setMemoryMax(engine.global.getMemoryUsed())
 
-    await expect(engine.global.run()).rejects.toThrow('Lua Error(ErrorMem/4): not enough memory')
+    await expect(engine.global.run()).rejects.toThrow('not enough memory')
 })
 
 test('table supported circular dependencies', async () => {
