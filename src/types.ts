@@ -29,7 +29,6 @@ export interface LuaEngineOptions {
 
 export interface LuaThreadRunOptions {
     timeout?: number
-    forcedYieldCount?: number
 }
 
 export const PointerSize = 4

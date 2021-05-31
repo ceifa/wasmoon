@@ -408,7 +408,7 @@ test('timeout blocking lua program', async () => {
         while true do i = i + 1 end
     `)
 
-    await expect(thread.run(0, { timeout: 5, forcedYieldCount: 1000 })).rejects.toThrow('run exceeded timeout of 5ms')
+    await expect(thread.run(0, { timeout: 5 })).rejects.toThrow('thread timeout exceeded')
 })
 
 test('overwrite lib function', async () => {
