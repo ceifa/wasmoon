@@ -8,7 +8,7 @@ import TypeExtension from '../type-extension'
 
 export interface FunctionDecoration extends BaseDecorationOptions {
     rawArguments?: number[]
-    receiveArgsQuantity: boolean
+    receiveArgsQuantity?: boolean
     receiveThread?: boolean
 }
 
