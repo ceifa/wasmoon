@@ -8,6 +8,7 @@ import TypeExtension from '../type-extension'
 
 export interface FunctionDecoration extends BaseDecorationOptions {
     rawArguments?: number[]
+    receiveArgsQuantity: boolean
     receiveThread?: boolean
 }
 
@@ -85,11 +86,15 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                 args.push(calledThread)
             }
 
-            for (let i = 1; i <= argsQuantity; i++) {
-                if (options.rawArguments?.includes(i - 1)) {
-                    args.push(calledThread.getPointer(i))
-                } else {
-                    args.push(calledThread.getValue(i))
+            if (options.receiveArgsQuantity) {
+                args.push(argsQuantity)
+            } else {
+                for (let i = 1; i <= argsQuantity; i++) {
+                    if (options.rawArguments?.includes(i - 1)) {
+                        args.push(calledThread.getPointer(i))
+                    } else {
+                        args.push(calledThread.getValue(i))
+                    }
                 }
             }
 
