@@ -1,7 +1,3 @@
-declare global {
-    const FinalizationRegistry: any
-}
-
 export type LuaState = number
 
 export type EnvironmentVariables = Record<string, string | undefined>

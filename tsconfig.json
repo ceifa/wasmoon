@@ -9,7 +9,7 @@
         "sourceMap": false,
         "target": "ES6",
         "skipLibCheck": true,
-        "lib": ["ES2016", "DOM"]
+        "lib": ["ESNEXT", "DOM"]
     },
     "include": ["src/**/*", "test/**/*"],
     "exclude": ["node_modules"]
