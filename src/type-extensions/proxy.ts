@@ -6,7 +6,8 @@ import Thread from '../thread'
 import TypeExtension from '../type-extension'
 
 export interface ProxyDecorationOptions extends BaseDecorationOptions {
-    disableProxy?: boolean
+    // if undefined, will try to figure out if should proxy
+    proxy?: boolean
 }
 
 export function decorateProxy(target: any, options?: ProxyDecorationOptions): Decoration<any, ProxyDecorationOptions> {
@@ -57,9 +58,7 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
                 if (typeof value === 'function') {
                     const isClass = value?.prototype?.constructor === value && value.toString().startsWith('class ')
 
-                    if (isClass) {
-                        return value
-                    } else {
+                    if (!isClass) {
                         return (...args: any[]) => {
                             if (args[0] === self) {
                                 args.shift()
@@ -118,6 +117,14 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
                 return self === other
             })
             thread.lua.lua_setfield(thread.address, metatableIndex, '__eq')
+
+            thread.pushValue((self: any, ...args: any[]) => {
+                if (args[0] === self) {
+                    args.shift()
+                }
+                return self(...args)
+            })
+            thread.lua.lua_setfield(thread.address, metatableIndex, '__call')
         }
 
         // Pop the metatable from the stack.
@@ -137,30 +144,31 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
 
     public pushValue(thread: Thread, decoratedValue: Decoration<any, ProxyDecorationOptions>, parent?: any): boolean {
         const { target, options } = decoratedValue
-        if (options?.disableProxy) {
-            return false
-        }
-        if (target === null || target === undefined) {
-            return false
-        }
-
-        if (typeof target !== 'object') {
-            const isClass =
-                typeof target === 'function' && target?.prototype?.constructor === target && target.toString().startsWith('class ')
-
-            if (!isClass) {
+        if (options?.proxy === undefined) {
+            if (target === null || target === undefined) {
                 return false
             }
-        }
 
-        if (Promise.resolve(target) === target) {
+            if (typeof target !== 'object') {
+                const isClass =
+                    typeof target === 'function' && target?.prototype?.constructor === target && target.toString().startsWith('class ')
+
+                if (!isClass) {
+                    return false
+                }
+            }
+
+            if (Promise.resolve(target) === target) {
+                return false
+            }
+        } else if (options?.proxy === false) {
             return false
         }
 
         if (decoratedValue.options.metatable && !(decoratedValue.options.metatable instanceof Decoration)) {
             // Otherwise the metatable will get converted into a JS ref rather than being set as a standard
             // table. This forces it to use the standard table type.
-            decoratedValue.options.metatable = decorateProxy(decoratedValue.options.metatable, { disableProxy: true })
+            decoratedValue.options.metatable = decorateProxy(decoratedValue.options.metatable, { proxy: false })
             return false
         }
 

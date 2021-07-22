@@ -14,7 +14,7 @@ fi
 
 emcc \
     -s WASM=1 $extension -o ./build/glue.js \
-    -s EXTRA_EXPORTED_RUNTIME_METHODS="[
+    -s EXPORTED_RUNTIME_METHODS="[
         'cwrap', \
         'addFunction', \
         'removeFunction', \

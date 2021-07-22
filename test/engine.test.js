@@ -1,6 +1,6 @@
 const { expect, test } = require('@jest/globals')
 const { getEngine, getFactory } = require('./utils')
-const { LuaThread, LuaReturn, decorate, decorateUserData, LuaLibraries } = require('../dist')
+const { LuaThread, LuaReturn, decorate, decorateUserData, LuaLibraries, decorateProxy } = require('../dist')
 
 jest.useFakeTimers('legacy')
 
@@ -483,6 +483,17 @@ test('static methods should be callable on classes', async () => {
     engine.global.set('TestClass', TestClass)
 
     const testHello = await engine.doString(`return TestClass.hello()`)
+
+    expect(testHello).toEqual('world')
+})
+
+test('should be possible to access function properties', async () => {
+    const engine = await getEngine()
+    const testFunction = () => undefined
+    testFunction.hello = 'world'
+    engine.global.set('TestFunction', decorateProxy(testFunction, { proxy: true }))
+
+    const testHello = await engine.doString(`return TestFunction.hello`)
 
     expect(testHello).toEqual('world')
 })

@@ -16,7 +16,7 @@ jobs:
               uses: actions/setup-node@v1
               with:
                   node-version: 14.x
-            - uses: mymindstorm/setup-emsdk@v7
+            - uses: mymindstorm/setup-emsdk@v10
             - run: npm ci
             - run: npm run lint
             - run: npm run build:wasm
