@@ -1,6 +1,5 @@
 import { BaseDecorationOptions, Decoration } from '../decoration'
 import { LuaReturn, LuaState, LuaType } from '../types'
-import { decorateUserData } from './userdata'
 import Global from '../global'
 import MultiReturn from '../multireturn'
 import Thread from '../thread'
@@ -59,7 +58,7 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
                     const isClass = value?.prototype?.constructor === value && value.toString().startsWith('class ')
 
                     if (isClass) {
-                        return decorateUserData(value)
+                        return value
                     } else {
                         return (...args: any[]) => {
                             if (args[0] === self) {
@@ -146,7 +145,13 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
         }
 
         if (typeof target !== 'object') {
-            return false
+            const isClass = typeof target === 'function' &&
+                target?.prototype?.constructor === target &&
+                target.toString().startsWith('class ')
+
+            if (!isClass) {
+                return false
+            }
         }
 
         if (Promise.resolve(target) === target) {

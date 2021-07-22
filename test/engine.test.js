@@ -5,6 +5,10 @@ const { LuaThread, LuaReturn, decorate, decorateUserData, LuaLibraries } = requi
 jest.useFakeTimers()
 
 class TestClass {
+    static hello() {
+        return "world"
+    }
+
     constructor(name) {
         this.name = name
     }
@@ -472,4 +476,13 @@ test('environment variables should be set', async () => {
     const testEnvVar = await engine.doString(`return os.getenv('TEST')`)
 
     expect(testEnvVar).toEqual('true')
+})
+
+test('static methods should be callable on classes', async () => {
+    const engine = await getEngine()
+    engine.global.set('TestClass', TestClass)
+
+    const testHello = await engine.doString(`return TestClass.hello()`)
+
+    expect(testHello).toEqual('world')
 })
