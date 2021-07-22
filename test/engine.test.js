@@ -2,11 +2,11 @@ const { expect, test } = require('@jest/globals')
 const { getEngine, getFactory } = require('./utils')
 const { LuaThread, LuaReturn, decorate, decorateUserData, LuaLibraries } = require('../dist')
 
-jest.useFakeTimers()
+jest.useFakeTimers('legacy')
 
 class TestClass {
     static hello() {
-        return "world"
+        return 'world'
     }
 
     constructor(name) {

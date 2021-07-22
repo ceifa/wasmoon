@@ -14,28 +14,29 @@ export default class Global extends Thread {
 
     public constructor(cmodule: LuaWasm) {
         const memoryStats: LuaMemoryStats = { memoryUsed: 0 }
-        const allocatorFunctionPointer = cmodule.module.addFunction((_userData: number, pointer: number, oldSize: number, newSize: number):
-            | number
-            | null => {
-            if (newSize === 0 && pointer) {
-                cmodule.module._free(pointer)
-                return null
-            }
+        const allocatorFunctionPointer = cmodule.module.addFunction(
+            (_userData: number, pointer: number, oldSize: number, newSize: number): number | null => {
+                if (newSize === 0 && pointer) {
+                    cmodule.module._free(pointer)
+                    return null
+                }
 
-            const increasing = Boolean(pointer) || newSize > oldSize
-            const endMemoryDelta = pointer ? newSize - oldSize : newSize
-            const endMemory = memoryStats.memoryUsed + endMemoryDelta
+                const increasing = Boolean(pointer) || newSize > oldSize
+                const endMemoryDelta = pointer ? newSize - oldSize : newSize
+                const endMemory = memoryStats.memoryUsed + endMemoryDelta
 
-            if (increasing && memoryStats.memoryMax && endMemory > memoryStats.memoryMax) {
-                return null
-            }
+                if (increasing && memoryStats.memoryMax && endMemory > memoryStats.memoryMax) {
+                    return null
+                }
 
-            const reallocated = cmodule.module._realloc(pointer, newSize)
-            if (reallocated) {
-                memoryStats.memoryUsed = endMemory
-            }
-            return reallocated
-        }, 'iiiii')
+                const reallocated = cmodule.module._realloc(pointer, newSize)
+                if (reallocated) {
+                    memoryStats.memoryUsed = endMemory
+                }
+                return reallocated
+            },
+            'iiiii',
+        )
 
         const address = cmodule.lua_newstate(allocatorFunctionPointer, null)
         if (!address) {

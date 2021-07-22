@@ -1,7 +1,7 @@
 const { expect, test } = require('@jest/globals')
 const { getEngine, tick } = require('./utils')
 
-jest.useFakeTimers()
+jest.useFakeTimers('legacy')
 
 test('use promise next should succeed', async () => {
     const engine = await getEngine()

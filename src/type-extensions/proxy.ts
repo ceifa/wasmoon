@@ -145,9 +145,8 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
         }
 
         if (typeof target !== 'object') {
-            const isClass = typeof target === 'function' &&
-                target?.prototype?.constructor === target &&
-                target.toString().startsWith('class ')
+            const isClass =
+                typeof target === 'function' && target?.prototype?.constructor === target && target.toString().startsWith('class ')
 
             if (!isClass) {
                 return false
