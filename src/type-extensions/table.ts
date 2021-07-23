@@ -21,38 +21,19 @@ class TableTypeExtension extends TypeExtension<TableType> {
 
     public getValue(thread: Thread, index: number, userdata?: any): TableType {
         // This is a map of Lua pointers to JS objects.
-        const seenMap = userdata || new Map<number, Record<any, any>>()
+        const seenMap: Map<number, TableType> = userdata || new Map<number, TableType>()
         const pointer = thread.lua.lua_topointer(thread.address, index)
 
-        const table = seenMap.get(pointer) || {}
-        if (!seenMap.has(pointer)) {
+        let table = seenMap.get(pointer)
+        if (!table) {
+            table = this.tableToObject(thread, index, seenMap)
             seenMap.set(pointer, table)
-            this.getTable(thread, index, seenMap, table)
         }
 
-        const tableLength = Object.keys(table).length
-        // Specifically return an object if there's no way of telling whether
-        // it's an array or object.
-        if (tableLength === 0) {
-            return table
-        }
-
-        let isArray = true
-        const array: any[] = []
-        for (let i = 1; i <= tableLength; i++) {
-            const value = table[String(i)]
-            if (value === undefined) {
-                isArray = false
-                break
-            }
-            array.push(value)
-        }
-
-        return isArray ? array : table
+        return table
     }
 
-    public pushValue(thread: Thread, decoratedValue: Decoration<TableType>, userdata?: any): boolean {
-        const { target } = decoratedValue
+    public pushValue(thread: Thread, { target }: Decoration<TableType>, userdata?: any): boolean {
         if (typeof target !== 'object' || target === null) {
             return false
         }
@@ -105,9 +86,12 @@ class TableTypeExtension extends TypeExtension<TableType> {
         return true
     }
 
-    private getTable(thread: Thread, index: number, seenMap: Map<number, Record<any, any>>, table: Record<any, any>): void {
-        thread.lua.lua_pushnil(thread.address)
+    private tableToObject(thread: Thread, index: number, seenMap: Map<number, TableType>): TableType {
+        const table: TableType = {}
+        let isArray = true
+        let currentArrayIdx = 1
 
+        thread.lua.lua_pushnil(thread.address)
         while (thread.lua.lua_next(thread.address, index)) {
             // JS only supports string keys in objects.
             const key = thread.lua.luaL_tolstring(thread.address, -2, null)
@@ -116,8 +100,16 @@ class TableTypeExtension extends TypeExtension<TableType> {
 
             table[key] = value
 
+            // Only sequential tables will be considered as arrays
+            if (isArray && key !== String(currentArrayIdx++)) {
+                isArray = false
+            }
+
             thread.pop()
         }
+
+        // Empty tables should be considered as empty objects
+        return isArray && currentArrayIdx > 1 ? Object.values(table) : table
     }
 }
 

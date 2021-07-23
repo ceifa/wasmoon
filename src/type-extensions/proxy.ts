@@ -1,12 +1,13 @@
 import { BaseDecorationOptions, Decoration } from '../decoration'
 import { LuaReturn, LuaState, LuaType } from '../types'
+import { decorateFunction } from './function'
 import Global from '../global'
 import MultiReturn from '../multireturn'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
 
 export interface ProxyDecorationOptions extends BaseDecorationOptions {
-    // if undefined, will try to figure out if should proxy
+    // If undefined, will try to figure out if should proxy
     proxy?: boolean
 }
 
@@ -56,16 +57,7 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
 
                 const value = self[key as string | number]
                 if (typeof value === 'function') {
-                    const isClass = value?.prototype?.constructor === value && value.toString().startsWith('class ')
-
-                    if (!isClass) {
-                        return (...args: any[]) => {
-                            if (args[0] === self) {
-                                args.shift()
-                            }
-                            return value.apply(self, args)
-                        }
-                    }
+                    return decorateFunction(value, { self })
                 }
 
                 return value

@@ -10,6 +10,7 @@ export interface FunctionDecoration extends BaseDecorationOptions {
     rawArguments?: number[]
     receiveArgsQuantity?: boolean
     receiveThread?: boolean
+    self?: any
 }
 
 export type FunctionType = (...args: any[]) => Promise<any> | any
@@ -70,8 +71,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
         return type === LuaType.Function
     }
 
-    public pushValue(thread: Thread, decoratedValue: Decoration<FunctionType, FunctionDecoration>): boolean {
-        const { target, options } = decoratedValue
+    public pushValue(thread: Thread, { target, options }: Decoration<FunctionType, FunctionDecoration>): boolean {
         if (typeof target !== 'function') {
             return false
         }
@@ -93,13 +93,16 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                     if (options.rawArguments?.includes(i - 1)) {
                         args.push(calledThread.getPointer(i))
                     } else {
-                        args.push(calledThread.getValue(i))
+                        const value = calledThread.getValue(i)
+                        if (i !== 1 || !options?.self || value !== options.self) {
+                            args.push(value)
+                        }
                     }
                 }
             }
 
             try {
-                const result = target(...args)
+                const result = target.apply(options?.self, args)
 
                 if (result === undefined) {
                     return 0

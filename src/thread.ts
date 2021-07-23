@@ -194,6 +194,7 @@ export default class Thread {
                 target = undefined
             }
 
+            // Handle primitive types
             switch (typeof target) {
                 case 'undefined':
                     this.lua.lua_pushnil(this.address)
@@ -359,19 +360,22 @@ export default class Thread {
         if (result !== LuaReturn.Ok && result !== LuaReturn.Yield) {
             const resultString = LuaReturn[result]
             // This is the default message if there's nothing on the stack.
-            let message = `Lua Error(${resultString}/${result})`
+            const error = new Error(`Lua Error(${resultString}/${result})`)
             if (this.getTop() > 0) {
                 if (result === LuaReturn.ErrorMem) {
                     // If there's no memory just do a normal to string.
-                    const error = this.lua.lua_tolstring(this.address, -1, null)
-                    message = error
+                    error.message = this.lua.lua_tolstring(this.address, -1, null)
                 } else {
+                    const luaError = this.getValue(-1)
+                    if (luaError instanceof Error) {
+                        error.stack = luaError.stack
+                    }
+
                     // Calls __tostring if it exists and pushes onto the stack.
-                    const error = this.indexToString(-1)
-                    message = error
+                    error.message = this.indexToString(-1)
                 }
             }
-            throw new Error(message)
+            throw error
         }
     }
 
