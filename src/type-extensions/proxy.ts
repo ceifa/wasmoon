@@ -11,7 +11,7 @@ export interface ProxyDecorationOptions extends BaseDecorationOptions {
     proxy?: boolean
 }
 
-export function decorateProxy(target: any, options?: ProxyDecorationOptions): Decoration<any, ProxyDecorationOptions> {
+export function decorateProxy(target: unknown, options?: ProxyDecorationOptions): Decoration<any, ProxyDecorationOptions> {
     return new Decoration<any, ProxyDecorationOptions>(target, options || {})
 }
 

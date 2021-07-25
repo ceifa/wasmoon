@@ -20,7 +20,7 @@ export default abstract class LuaTypeExtension<T, K extends BaseDecorationOption
     public abstract close(): void
 
     // A base implementation that assumes user data serialisation
-    public getValue(thread: Thread, index: number, _userdata?: any): T {
+    public getValue(thread: Thread, index: number, _userdata?: unknown): T {
         const refUserData = thread.lua.luaL_testudata(thread.address, index, this.name)
         if (!refUserData) {
             throw new Error(`data does not have the expected metatable: ${this.name}`)
@@ -31,7 +31,7 @@ export default abstract class LuaTypeExtension<T, K extends BaseDecorationOption
 
     // Return false if type not matched, otherwise true. This base method does not
     // check the type. That must be done by the class extending this.
-    public pushValue(thread: Thread, decoratedValue: Decoration<T, K>, _userdata?: any): boolean {
+    public pushValue(thread: Thread, decoratedValue: Decoration<T, K>, _userdata?: unknown): boolean {
         const { target } = decoratedValue
 
         const pointer = thread.lua.ref(target)

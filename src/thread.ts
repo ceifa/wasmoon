@@ -86,7 +86,7 @@ export default class Thread {
         return this.lua.lua_remove(this.address, index)
     }
 
-    public setField(index: number, name: string, value: any): void {
+    public setField(index: number, name: string, value: unknown): void {
         index = this.lua.lua_absindex(this.address, index)
         this.pushValue(value)
         this.lua.lua_setfield(this.address, index, name)
@@ -174,7 +174,7 @@ export default class Thread {
         return L === this.parent?.address ? this.parent : new Thread(this.lua, this.typeExtensions, L, this.parent || this)
     }
 
-    public pushValue(rawValue: any, userdata?: any): void {
+    public pushValue(rawValue: unknown, userdata?: unknown): void {
         const decoratedValue = this.getValueDecorations(rawValue)
         const options = decoratedValue.options
         let target = decoratedValue.target
@@ -258,7 +258,7 @@ export default class Thread {
         return name
     }
 
-    public getValue(idx: number, inputType: LuaType | undefined = undefined, userdata?: any): any {
+    public getValue(idx: number, inputType: LuaType | undefined = undefined, userdata?: unknown): any {
         idx = this.lua.lua_absindex(this.address, idx)
 
         // Before the below to allow overriding default behaviour.

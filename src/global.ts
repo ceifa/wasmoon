@@ -115,7 +115,7 @@ export default class Global extends Thread {
         return this.getValue(-1, type)
     }
 
-    public set(name: string, value: any): void {
+    public set(name: string, value: unknown): void {
         this.pushValue(value)
         this.lua.lua_setglobal(this.address, name)
     }

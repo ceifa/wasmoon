@@ -3,3 +3,4 @@
 .rollup.cache/
 tsconfig.tsbuildinfo
 build/
+.eslintcache

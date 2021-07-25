@@ -1,7 +1,5 @@
 {
-    "extends": "@luvies/config/tsconfig.base.json",
     "compilerOptions": {
-        "noImplicitAny": true,
         "incremental": false,
         "moduleResolution": "node",
         "inlineSources": false,
@@ -9,7 +7,15 @@
         "sourceMap": false,
         "target": "ES6",
         "skipLibCheck": true,
-        "lib": ["ESNEXT", "DOM"]
+        "lib": ["ESNEXT", "DOM"],
+        "forceConsistentCasingInFileNames": true,
+        "noImplicitReturns": true,
+        "noImplicitThis": true,
+        "noImplicitAny": true,
+        "noUnusedParameters": true,
+        "noUnusedLocals": true,
+        "importHelpers": true,
+        "strict": true
     },
     "include": ["src/**/*", "test/**/*"],
     "exclude": ["node_modules"]

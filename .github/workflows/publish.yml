@@ -18,7 +18,7 @@ jobs:
                   node-version: 14.x
             - uses: mymindstorm/setup-emsdk@v10
             - run: npm ci
-            - run: npm run lint
+            - run: npm run lint:nofix
             - run: npm run build:wasm
             - run: npm run build
             - run: npm test

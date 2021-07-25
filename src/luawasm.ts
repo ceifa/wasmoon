@@ -364,7 +364,7 @@ export default class LuaWasm {
         return LUA_REGISTRYINDEX - index
     }
 
-    public ref(data: any): number {
+    public ref(data: unknown): number {
         const existing = this.referenceTracker.get(data)
         if (existing) {
             existing.refCount++
