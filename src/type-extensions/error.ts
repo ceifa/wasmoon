@@ -53,7 +53,7 @@ class ErrorTypeExtension extends TypeExtension<Error> {
         if (injectObject) {
             // Lastly create a static Promise constructor.
             thread.set('Error', {
-                create: (message: any) => {
+                create: (message: string | undefined) => {
                     if (message && typeof message !== 'string') {
                         throw new Error('message must be a string')
                     }

@@ -33,7 +33,7 @@ class TableTypeExtension extends TypeExtension<TableType> {
         return table
     }
 
-    public pushValue(thread: Thread, { target }: Decoration<TableType>, userdata?: any): boolean {
+    public pushValue(thread: Thread, { target }: Decoration<TableType>, userdata?: Map<any, number>): boolean {
         if (typeof target !== 'object' || target === null) {
             return false
         }

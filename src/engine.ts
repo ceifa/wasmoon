@@ -63,13 +63,13 @@ export default class LuaEngine {
         return this.callByteCode((thread) => thread.loadFile(filename))
     }
 
-    public doStringSync(script: string): Promise<any> {
+    public doStringSync(script: string): any {
         this.global.loadString(script)
         const result = this.global.runSync()
         return result[0]
     }
 
-    public doFileSync(filename: string): Promise<any> {
+    public doFileSync(filename: string): any {
         this.global.loadFile(filename)
         const result = this.global.runSync()
         return result[0]

@@ -44,19 +44,19 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
             thread.lua.lua_setfield(thread.address, metatableIndex, '__gc')
 
             thread.pushValue({
-                next: (self: Promise<unknown>, ...args: any[]) => {
+                next: (self: Promise<unknown>, ...args: Parameters<typeof self.then>) => {
                     if (Promise.resolve(self) !== self) {
                         throw new Error('promise has no instance data')
                     }
                     return self.then(...args)
                 },
-                catch: (self: Promise<unknown>, ...args: any[]) => {
+                catch: (self: Promise<unknown>, ...args: Parameters<typeof self.catch>) => {
                     if (Promise.resolve(self) !== self) {
                         throw new Error('promise has no instance data')
                     }
                     return self.catch(...args)
                 },
-                finally: (self: Promise<unknown>, ...args: any[]) => {
+                finally: (self: Promise<unknown>, ...args: Parameters<typeof self.finally>) => {
                     if (Promise.resolve(self) !== self) {
                         throw new Error('promise has no instance data')
                     }
@@ -132,7 +132,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
         if (injectObject) {
             // Lastly create a static Promise constructor.
             thread.set('Promise', {
-                create: (callback: any) => {
+                create: (callback: ConstructorParameters<PromiseConstructor>[0]) => {
                     if (callback && typeof callback !== 'function') {
                         throw new Error('callback must be a function')
                     }

@@ -176,7 +176,6 @@ export default class Thread {
 
     public pushValue(rawValue: unknown, userdata?: unknown): void {
         const decoratedValue = this.getValueDecorations(rawValue)
-        const options = decoratedValue.options
         let target = decoratedValue.target
 
         if (target instanceof Thread) {
@@ -217,8 +216,8 @@ export default class Thread {
             }
         }
 
-        if (options?.metatable) {
-            this.setMetatable(options.metatable, -1)
+        if (decoratedValue.options.metatable) {
+            this.setMetatable(decoratedValue.options.metatable, -1)
         }
 
         if (this.getTop() !== startTop + 1) {

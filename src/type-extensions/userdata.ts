@@ -54,8 +54,7 @@ class UserdataTypeExtension extends TypeExtension<any, UserDataDecorationOptions
     }
 
     public pushValue(thread: Thread, decoratedValue: Decoration<any, UserDataDecorationOptions>): boolean {
-        const { options } = decoratedValue
-        if (!options?.reference) {
+        if (!decoratedValue.options.reference) {
             return false
         }
 

@@ -57,7 +57,7 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
 
                 const value = self[key as string | number]
                 if (typeof value === 'function') {
-                    return decorateFunction(value, { self })
+                    return decorateFunction(value as (...args: any[]) => any, { self })
                 }
 
                 return value
@@ -134,16 +134,16 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
         return thread.lua.getRef(referencePointer)
     }
 
-    public pushValue(thread: Thread, decoratedValue: Decoration<any, ProxyDecorationOptions>, parent?: any): boolean {
+    public pushValue(thread: Thread, decoratedValue: Decoration<any, ProxyDecorationOptions>): boolean {
         const { target, options } = decoratedValue
-        if (options?.proxy === undefined) {
+        if (options.proxy === undefined) {
             if (target === null || target === undefined) {
                 return false
             }
 
             if (typeof target !== 'object') {
                 const isClass =
-                    typeof target === 'function' && target?.prototype?.constructor === target && target.toString().startsWith('class ')
+                    typeof target === 'function' && target.prototype?.constructor === target && target.toString().startsWith('class ')
 
                 if (!isClass) {
                     return false
@@ -153,18 +153,18 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
             if (Promise.resolve(target) === target) {
                 return false
             }
-        } else if (options?.proxy === false) {
+        } else if (options.proxy === false) {
             return false
         }
 
-        if (decoratedValue.options.metatable && !(decoratedValue.options.metatable instanceof Decoration)) {
+        if (options.metatable && !(options.metatable instanceof Decoration)) {
             // Otherwise the metatable will get converted into a JS ref rather than being set as a standard
             // table. This forces it to use the standard table type.
-            decoratedValue.options.metatable = decorateProxy(decoratedValue.options.metatable, { proxy: false })
+            decoratedValue.options.metatable = decorateProxy(options.metatable, { proxy: false })
             return false
         }
 
-        return super.pushValue(thread, decoratedValue, parent)
+        return super.pushValue(thread, decoratedValue)
     }
 
     public close(): void {
