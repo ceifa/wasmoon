@@ -11,3 +11,4 @@ rollup.config.js
 .eslintrc.json
 .prettierignore
 .prettierrc.js
+.vscode
