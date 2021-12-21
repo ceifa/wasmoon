@@ -23,7 +23,8 @@
         "dist/*",
         "build/*",
         "rollup.config.js",
-        "utils/*"
+        "utils/*",
+        "bench/*"
     ],
     "rules": {
         "no-console": "off",

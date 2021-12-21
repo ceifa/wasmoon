@@ -1,4 +1,3 @@
-import { LuaEngineOptions } from './types'
 import Global from './global'
 import Thread from './thread'
 import createErrorType from './type-extensions/error'
@@ -9,38 +8,27 @@ import createTableType from './type-extensions/table'
 import createUserdataType from './type-extensions/userdata'
 import type LuaWasm from './luawasm'
 
-const defaultOptions: LuaEngineOptions = {
-    openStandardLibs: true,
-    injectObjects: false,
-    enableProxy: true,
-}
-
 export default class LuaEngine {
     public global: Global
 
-    public constructor(private cmodule: LuaWasm, userOptions?: Partial<LuaEngineOptions>) {
+    public constructor(private cmodule: LuaWasm, { openStandardLibs = true, injectObjects = false, enableProxy = true } = {}) {
         this.global = new Global(this.cmodule)
-
-        const options: LuaEngineOptions = {
-            ...defaultOptions,
-            ...(userOptions || {}),
-        }
 
         // Generic handlers - These may be required to be registered for additional types.
         this.global.registerTypeExtension(0, createTableType(this.global))
         this.global.registerTypeExtension(0, createFunctionType(this.global))
 
         // Contains the :await functionality.
-        this.global.registerTypeExtension(1, createPromiseType(this.global, options.injectObjects))
+        this.global.registerTypeExtension(1, createPromiseType(this.global, injectObjects))
 
-        if (options.enableProxy) {
+        if (enableProxy) {
             // This extension only really overrides tables and arrays.
             // When a function is looked up in one of it's tables it's bound and then
             // handled by the function type extension.
             this.global.registerTypeExtension(3, createProxyType(this.global))
         } else {
             // No need to register this when the proxy is enabled.
-            this.global.registerTypeExtension(1, createErrorType(this.global, options.injectObjects))
+            this.global.registerTypeExtension(1, createErrorType(this.global, injectObjects))
         }
 
         // Higher priority than proxied objects to allow custom user data without exposing methods.
@@ -50,7 +38,7 @@ export default class LuaEngine {
             throw new Error('Lua state could not be created (probably due to lack of memory)')
         }
 
-        if (options.openStandardLibs) {
+        if (openStandardLibs) {
             this.cmodule.luaL_openlibs(this.global.address)
         }
     }

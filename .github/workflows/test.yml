@@ -16,7 +16,7 @@ jobs:
             - uses: actions/checkout@v2
               with:
                   submodules: recursive
-            - uses: mymindstorm/setup-emsdk@v10
+            - uses: mymindstorm/setup-emsdk@v11
             - name: Use Node.js ${{ matrix.node-version }}
               uses: actions/setup-node@v2
               with:

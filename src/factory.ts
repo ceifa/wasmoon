@@ -1,4 +1,4 @@
-import { EnvironmentVariables, LuaEngineOptions } from './types'
+import { EnvironmentVariables } from './types'
 import LuaEngine from './engine'
 import LuaWasm from './luawasm'
 
@@ -26,8 +26,8 @@ export default class LuaFactory {
         }
 
         const fileSep = path.lastIndexOf('/')
-        const file = path.substr(fileSep + 1)
-        const body = path.substr(0, path.length - file.length - 1)
+        const file = path.substring(fileSep + 1)
+        const body = path.substring(0, path.length - file.length - 1)
 
         if (body.length > 0) {
             const parts = body.split('/').reverse()
@@ -53,7 +53,7 @@ export default class LuaFactory {
         this.lua.module.FS.writeFile(path, content)
     }
 
-    public async createEngine(options?: Partial<LuaEngineOptions>): Promise<LuaEngine> {
+    public async createEngine(options: ConstructorParameters<typeof LuaEngine>[1]): Promise<LuaEngine> {
         return new LuaEngine(await this.getLuaModule(), options)
     }
 

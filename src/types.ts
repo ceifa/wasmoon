@@ -17,12 +17,6 @@ export interface LuaResumeResult {
     resultCount: number
 }
 
-export interface LuaEngineOptions {
-    openStandardLibs: boolean
-    injectObjects: boolean
-    enableProxy: boolean
-}
-
 export interface LuaThreadRunOptions {
     timeout?: number
 }
