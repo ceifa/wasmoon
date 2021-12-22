@@ -1,5 +1,6 @@
 lua
 test
+bench
 src
 build
 utils

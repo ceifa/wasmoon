@@ -21,16 +21,21 @@ class TableTypeExtension extends TypeExtension<TableType> {
 
     public getValue(thread: Thread, index: number, userdata?: any): TableType {
         // This is a map of Lua pointers to JS objects.
-        const seenMap: Map<number, TableType> = userdata || new Map<number, TableType>()
+        const seenMap: Map<number, Record<string, string>> = userdata || new Map<number, Record<string, string>>()
         const pointer = thread.lua.lua_topointer(thread.address, index)
 
         let table = seenMap.get(pointer)
         if (!table) {
-            table = this.tableToObject(thread, index, seenMap)
+            table = {}
             seenMap.set(pointer, table)
+            this.tableToObject(thread, index, seenMap, table)
         }
 
-        return table
+        const keys = Object.keys(table)
+
+        // Only sequential tables will be considered as arrays
+        const isSequential = keys.length > 0 && keys.every((key, index) => key === String(index + 1))
+        return isSequential ? Object.values(table) : table
     }
 
     public pushValue(thread: Thread, { target }: Decoration<TableType>, userdata?: Map<any, number>): boolean {
@@ -86,11 +91,7 @@ class TableTypeExtension extends TypeExtension<TableType> {
         return true
     }
 
-    private tableToObject(thread: Thread, index: number, seenMap: Map<number, TableType>): TableType {
-        const table: TableType = {}
-        let isArray = true
-        let currentArrayIdx = 1
-
+    private tableToObject(thread: Thread, index: number, seenMap: Map<number, TableType>, table: Record<string, string>): void {
         thread.lua.lua_pushnil(thread.address)
         while (thread.lua.lua_next(thread.address, index)) {
             // JS only supports string keys in objects.
@@ -100,16 +101,8 @@ class TableTypeExtension extends TypeExtension<TableType> {
 
             table[key] = value
 
-            // Only sequential tables will be considered as arrays
-            if (isArray && key !== String(currentArrayIdx++)) {
-                isArray = false
-            }
-
             thread.pop()
         }
-
-        // Empty tables should be considered as empty objects
-        return isArray && currentArrayIdx > 1 ? Object.values(table) : table
     }
 }
 

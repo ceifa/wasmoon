@@ -71,6 +71,52 @@ test('receive JS object with circular references on lua should succeed', async (
     expect(value).toBe('world')
 })
 
+test('receive Lua object with circular references on JS should succeed', async () => {
+    const engine = await getEngine()
+    const value = await engine.doString(`
+        local obj1 = {
+            hello = 'world',
+        }
+        obj1.self = obj1
+        local obj2 = {
+            5,
+            hello = 'everybody',
+            array = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
+            fn = function()
+                return 'hello'
+            end
+        }
+        obj2.self = obj2
+        return { obj1 = obj1, obj2 }
+    `)
+
+    expect(value).toMatchObject({
+        obj1: {
+            hello: 'world',
+        },
+        1: {
+            1: 5,
+            hello: 'everybody',
+            array: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            fn: expect.any(Function),
+        },
+    })
+})
+
+test('receive Lua array with circular references on JS should succeed', async () => {
+    const engine = await getEngine()
+    const value = await engine.doString(`
+        obj = {
+            "hello",
+            "world"
+        }
+        table.insert(obj, obj)
+        return obj
+    `)
+
+    expect(value).toMatchObject(['hello', 'world', ['hello', 'world']])
+})
+
 test('receive JS object with multiple circular references on lua should succeed', async () => {
     const engine = await getEngine()
     const obj1 = {
