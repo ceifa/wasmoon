@@ -14,18 +14,18 @@ export default abstract class LuaTypeExtension<T, K extends BaseDecorationOption
     }
 
     public isType(_thread: Thread, _index: number, type: LuaType, name?: string): boolean {
-        return type === LuaType.UserData && name === this.name
+        return type === LuaType.Userdata && name === this.name
     }
 
     public abstract close(): void
 
     // A base implementation that assumes user data serialisation
     public getValue(thread: Thread, index: number, _userdata?: unknown): T {
-        const refUserData = thread.lua.luaL_testudata(thread.address, index, this.name)
-        if (!refUserData) {
+        const refUserdata = thread.lua.luaL_testudata(thread.address, index, this.name)
+        if (!refUserdata) {
             throw new Error(`data does not have the expected metatable: ${this.name}`)
         }
-        const referencePointer = thread.lua.module.getValue(refUserData, '*')
+        const referencePointer = thread.lua.module.getValue(refUserdata, '*')
         return thread.lua.getRef(referencePointer)
     }
 

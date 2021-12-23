@@ -125,12 +125,12 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
 
     public isType(_thread: Thread, _index: number, type: LuaType, name?: string): boolean {
         // Capture proxied types and functions returned by lua.
-        return type === LuaType.UserData && name === this.name
+        return type === LuaType.Userdata && name === this.name
     }
 
     public getValue(thread: Thread, index: number): any {
-        const refUserData = thread.lua.lua_touserdata(thread.address, index)
-        const referencePointer = thread.lua.module.getValue(refUserData, '*')
+        const refUserdata = thread.lua.lua_touserdata(thread.address, index)
+        const referencePointer = thread.lua.module.getValue(refUserdata, '*')
         return thread.lua.getRef(referencePointer)
     }
 

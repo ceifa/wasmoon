@@ -38,11 +38,10 @@ export default class Global extends Thread {
             'iiiii',
         )
 
-        const address = cmodule.lua_newstate(allocatorFunctionPointer, null)
-        if (!address) {
-            throw new Error('lua_newstate returned a null pointer')
+        super(cmodule, [], cmodule.lua_newstate(allocatorFunctionPointer, null))
+        if (this.isClosed()) {
+            throw new Error('Global state could not be created (probably due to lack of memory)')
         }
-        super(cmodule, [], address)
 
         this.memoryStats = memoryStats
         this.allocatorFunctionPointer = allocatorFunctionPointer
@@ -112,7 +111,9 @@ export default class Global extends Thread {
 
     public get(name: string): any {
         const type = this.lua.lua_getglobal(this.address, name)
-        return this.getValue(-1, type)
+        const value = this.getValue(-1, type)
+        this.pop()
+        return value
     }
 
     public set(name: string, value: unknown): void {

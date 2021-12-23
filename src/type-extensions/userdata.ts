@@ -4,15 +4,15 @@ import Global from '../global'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
 
-export interface UserDataDecorationOptions extends BaseDecorationOptions {
+export interface UserdataDecorationOptions extends BaseDecorationOptions {
     reference?: boolean
 }
 
-export function decorateUserData(target: unknown): Decoration<any, UserDataDecorationOptions> {
-    return new Decoration<any, UserDataDecorationOptions>(target, { reference: true })
+export function decorateUserdata(target: unknown): Decoration<any, UserdataDecorationOptions> {
+    return new Decoration<any, UserdataDecorationOptions>(target, { reference: true })
 }
 
-class UserdataTypeExtension extends TypeExtension<any, UserDataDecorationOptions> {
+class UserdataTypeExtension extends TypeExtension<any, UserdataDecorationOptions> {
     private readonly gcPointer: number
 
     public constructor(thread: Global) {
@@ -44,16 +44,16 @@ class UserdataTypeExtension extends TypeExtension<any, UserDataDecorationOptions
     }
 
     public isType(_thread: Thread, _index: number, type: LuaType, name?: string): boolean {
-        return type === LuaType.UserData && name === this.name
+        return type === LuaType.Userdata && name === this.name
     }
 
     public getValue(thread: Thread, index: number): any {
-        const refUserData = thread.lua.lua_touserdata(thread.address, index)
-        const referencePointer = thread.lua.module.getValue(refUserData, '*')
+        const refUserdata = thread.lua.lua_touserdata(thread.address, index)
+        const referencePointer = thread.lua.module.getValue(refUserdata, '*')
         return thread.lua.getRef(referencePointer)
     }
 
-    public pushValue(thread: Thread, decoratedValue: Decoration<any, UserDataDecorationOptions>): boolean {
+    public pushValue(thread: Thread, decoratedValue: Decoration<any, UserdataDecorationOptions>): boolean {
         if (!decoratedValue.options.reference) {
             return false
         }

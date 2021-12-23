@@ -1,6 +1,6 @@
 const { expect, test } = require('@jest/globals')
 const { getEngine, getFactory } = require('./utils')
-const { LuaThread, LuaReturn, decorate, decorateUserData, LuaLibraries, decorateProxy } = require('../dist')
+const { LuaThread, LuaReturn, decorate, decorateUserdata, LuaLibraries, decorateProxy } = require('../dist')
 
 jest.useFakeTimers('legacy')
 
@@ -103,7 +103,7 @@ test('receive Lua object with circular references on JS should succeed', async (
     })
 })
 
-test('receive Lua array with circular references on JS should succeed', async () => {
+test('receive lua array with circular references on JS should succeed', async () => {
     const engine = await getEngine()
     const value = await engine.doString(`
         obj = {
@@ -373,7 +373,7 @@ test('wrap a js object (with metatable)', async () => {
         create: (name) => {
             return decorate(
                 {
-                    instance: decorateUserData(new TestClass(name)),
+                    instance: decorateUserdata(new TestClass(name)),
                 },
                 {
                     metatable: {

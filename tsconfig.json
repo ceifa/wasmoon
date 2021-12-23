@@ -5,9 +5,12 @@
         "inlineSources": false,
         "removeComments": true,
         "sourceMap": false,
-        "target": "ES6",
+        "target": "ES2017",
         "skipLibCheck": true,
-        "lib": ["ESNEXT", "DOM"],
+        "lib": [
+            "ESNEXT",
+            "DOM"
+        ],
         "forceConsistentCasingInFileNames": true,
         "noImplicitReturns": true,
         "noImplicitThis": true,
@@ -17,6 +20,12 @@
         "importHelpers": true,
         "strict": true
     },
-    "include": ["src/**/*", "test/**/*"],
-    "exclude": ["node_modules"]
+    "include": [
+        "src/**/*",
+        "test/**/*",
+        "bench/**/*"
+    ],
+    "exclude": [
+        "node_modules"
+    ]
 }

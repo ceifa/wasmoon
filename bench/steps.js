@@ -1,13 +1,13 @@
 const { readFileSync } = require("fs")
-const { resolve } = require("path")
+const path = require("path")
 
 const wasmoon = require("../dist/index")
 
-const heapsort = readFileSync(resolve(__dirname, 'heapsort.lua'), 'utf-8')
+const heapsort = readFileSync(path.resolve(__dirname, 'heapsort.lua'), 'utf-8')
 
 const createFactory = () => {
     console.time("Create factory")
-    new wasmoon.LuaFactory()
+    _ = new wasmoon.LuaFactory()
     console.timeEnd("Create factory")
 }
 
@@ -18,14 +18,18 @@ const loadWasm = async () => {
 }
 
 const createEngine = async () => {
+    const factory = new wasmoon.LuaFactory()
+
     console.time("Create engine")
-    await new wasmoon.LuaFactory().createEngine()
+    await factory.createEngine()
     console.timeEnd("Create engine")
 }
 
 const createEngineWithoutSuperpowers = async () => {
+    const factory = new wasmoon.LuaFactory()
+
     console.time("Create engine without superpowers")
-    await new wasmoon.LuaFactory().createEngine({
+    await factory.createEngine({
         injectObjects: false,
         enableProxy: false,
         openStandardLibs: false
@@ -60,7 +64,7 @@ const insertComplexObjects = async () => {
     const obj2 = {
         hello: 'everybody',
         array: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        fn: async () => {
+        fn: () => {
             return 'hello'
         }
     }
@@ -82,7 +86,7 @@ const insertComplexObjectsWithoutProxy = async () => {
     const obj2 = {
         hello: 'everybody',
         array: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        fn: async () => {
+        fn: () => {
             return 'hello'
         }
     }
@@ -113,7 +117,7 @@ const getComplexObjects = async () => {
     `)
 
     console.time("Get complex objects")
-    const obj = state.global.get('obj')
+    state.global.get('obj')
     console.timeEnd("Get complex objects")
 }
 
@@ -127,3 +131,4 @@ Promise.resolve()
     .then(insertComplexObjects)
     .then(insertComplexObjectsWithoutProxy)
     .then(getComplexObjects)
+    .catch(console.error)

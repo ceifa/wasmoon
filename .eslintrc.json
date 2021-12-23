@@ -23,8 +23,7 @@
         "dist/*",
         "build/*",
         "rollup.config.js",
-        "utils/*",
-        "bench/*"
+        "utils/*"
     ],
     "rules": {
         "no-console": "off",
@@ -138,7 +137,8 @@
     "overrides": [
         {
             "files": [
-                "test/**/*.js"
+                "test/**/*.js",
+                "bench/**/*.js"
             ],
             "rules": {
                 "@typescript-eslint/no-var-requires": "off",

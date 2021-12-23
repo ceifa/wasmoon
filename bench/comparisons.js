@@ -1,12 +1,12 @@
 const { readFileSync } = require("fs")
-const { resolve } = require("path")
+const path = require("path")
 
 const fengari = require("fengari")
 const wasmoon = require("../dist/index")
 
-const heapsort = readFileSync(resolve(__dirname, 'heapsort.lua'), 'utf-8')
+const heapsort = readFileSync(path.resolve(__dirname, 'heapsort.lua'), 'utf-8')
 
-const startFengari = async () => {
+const startFengari = () => {
     const state = fengari.lauxlib.luaL_newstate()
 
     console.time('Fengari');
@@ -27,3 +27,4 @@ const startWasmoon = async () => {
 Promise.resolve()
     .then(startFengari)
     .then(startWasmoon)
+    .catch(console.error)
