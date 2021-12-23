@@ -5,7 +5,7 @@
         "inlineSources": false,
         "removeComments": true,
         "sourceMap": false,
-        "target": "ES6",
+        "target": "ES2017",
         "skipLibCheck": true,
         "lib": [
             "ESNEXT",
