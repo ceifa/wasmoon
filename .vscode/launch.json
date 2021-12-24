@@ -12,7 +12,11 @@
             "skipFiles": [
                 "<node_internals>/**"
             ],
-            "program": "${workspaceFolder}/test/debug.js"
+            "program": "${workspaceFolder}/test/debug.js",
+            "runtimeArgs": [
+                "--inspect",
+                "--expose-gc"
+            ]
         }
     ]
 }
