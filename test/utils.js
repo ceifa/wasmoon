@@ -1,7 +1,5 @@
 const { LuaFactory } = require('../dist')
 
-process.setMaxListeners(0)
-
 module.exports = {
     getFactory: (env) => {
         return new LuaFactory(undefined, env)

@@ -29,6 +29,8 @@ emcc \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s STRICT=1 \
     -s EXPORT_ES6=1 \
+    -s NODEJS_CATCH_EXIT=0 \
+	-s NODEJS_CATCH_REJECTION=0 \
     -s MALLOC=emmalloc \
     -s EXPORTED_FUNCTIONS="[
         '_malloc', \
