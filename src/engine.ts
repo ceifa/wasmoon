@@ -11,8 +11,11 @@ import type LuaWasm from './luawasm'
 export default class LuaEngine {
     public global: Global
 
-    public constructor(private cmodule: LuaWasm, { openStandardLibs = true, injectObjects = false, enableProxy = true } = {}) {
-        this.global = new Global(this.cmodule)
+    public constructor(
+        private cmodule: LuaWasm,
+        { openStandardLibs = true, injectObjects = false, enableProxy = true, traceAllocations = false } = {},
+    ) {
+        this.global = new Global(this.cmodule, traceAllocations)
 
         // Generic handlers - These may be required to be registered for additional types.
         this.global.registerTypeExtension(0, createTableType(this.global))

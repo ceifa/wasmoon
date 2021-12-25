@@ -314,13 +314,32 @@ test('lua_resume with yield succeeds', async () => {
     expect(finalValue).toEqual(20)
 })
 
-test('get memory use succeeds', async () => {
-    const engine = await getEngine()
+test('get memory with allocation tracing should succeeds', async () => {
+    const engine = await getEngine({ traceAllocations: true })
     expect(engine.global.getMemoryUsed()).toBeGreaterThan(0)
 })
 
+test('get memory should return correct', async () => {
+    const engine = await getEngine({ traceAllocations: true })
+
+    const totalMemory = await engine.doString(`
+        collectgarbage()
+        local x = 10
+        local batata = { dawdwa = 1 }
+        return collectgarbage('count') * 1024
+    `)
+
+    expect(engine.global.getMemoryUsed()).toBe(totalMemory)
+})
+
+test('get memory without tracing should throw', async () => {
+    const engine = await getEngine({ traceAllocations: false })
+
+    expect(() => engine.global.getMemoryUsed()).toThrow()
+})
+
 test('limit memory use causes program loading failure succeeds', async () => {
-    const engine = await getEngine()
+    const engine = await getEngine({ traceAllocations: true })
     engine.global.setMemoryMax(engine.global.getMemoryUsed())
     expect(() => {
         engine.global.loadString(`
@@ -340,7 +359,7 @@ test('limit memory use causes program loading failure succeeds', async () => {
 })
 
 test('limit memory use causes program runtime failure succeeds', async () => {
-    const engine = await getEngine()
+    const engine = await getEngine({ traceAllocations: true })
     engine.global.loadString(`
         local tab = {}
         for i = 1, 10, 1 do
