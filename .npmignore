@@ -7,8 +7,10 @@ utils
 tsconfig.json
 build.sh
 rollup.config.js
+package-lock.json
 .github
 .gitmodules
 .eslintrc.json
 .prettierrc.js
+.prettierignore
 .vscode
