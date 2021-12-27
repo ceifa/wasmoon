@@ -8,24 +8,7 @@ This package aims to provide a way to:
 
 -   Embed Lua to any Node.js, Deno or Web Application.
 -   Run lua code in any operational system
-
-## Installation
-
-#### Globally via `npm`
-
-```sh
-$: npm install -g wasmoon
-```
-
-This will install `wasmoon` globally so that it may be run from the command line anywhere.
-
-#### Running on-demand:
-
-Using `npx` you can run the CLI without installing it first, its very simple to open the interactive wasmoon:
-
-```sh
-$: npx wasmoon
-```
+-   Interop Lua and JS without memory leaks (including the DOM)
 
 ## API Usage
 
@@ -88,6 +71,29 @@ return arg[1] + arg[2]
 ```sh
 $: ./sum.lua 10 30
 ```
+
+## When to use wasmoon and fengari
+
+Wasmoon compiles the [official Lua code](https://github.com/lua/lua) to webassembly and creates an abstraction layer to interop between Lua and JS, instead of [fengari](https://github.com/fengari-lua/fengari), that is an entire Lua VM rewritten in JS.
+
+### Performance
+
+Because of wasm, wasmoon will run Lua code much faster than fengari, but if you are going to interop a lot between JS and Lua, this may be not be true anymore, you probably should test on you specific use case to take the prove.
+
+This is the results running a [heap sort code](https://github.com/ceifa/wasmoon/blob/main/bench/heapsort.lua) in a list of 20k numbers 10x:
+
+| wasmoon | fengari |
+| ------- | ------- |
+| 0.177ms | 2.107ms |
+
+### Size
+
+Fengari is lighter than wasmoon, which can improve the user experience if in web environments:
+
+|             | wasmoon | fengari |
+| ----------- | ------- | ------- |
+| **plain**   | 393kB   | 214kB   |
+| **gzipped** | 130kB   | 69kB    |
 
 ## Fixing common errors on web environment
 

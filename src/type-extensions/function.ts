@@ -7,7 +7,6 @@ import Thread from '../thread'
 import TypeExtension from '../type-extension'
 
 export interface FunctionDecoration extends BaseDecorationOptions {
-    rawArguments?: number[]
     receiveArgsQuantity?: boolean
     receiveThread?: boolean
     self?: any
@@ -90,13 +89,9 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                 args.push(argsQuantity)
             } else {
                 for (let i = 1; i <= argsQuantity; i++) {
-                    if (options.rawArguments?.includes(i - 1)) {
-                        args.push(calledThread.getPointer(i))
-                    } else {
-                        const value = calledThread.getValue(i)
-                        if (i !== 1 || !options?.self || value !== options.self) {
-                            args.push(value)
-                        }
+                    const value = calledThread.getValue(i)
+                    if (i !== 1 || !options?.self || value !== options.self) {
+                        args.push(value)
                     }
                 }
             }

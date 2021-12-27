@@ -25,7 +25,7 @@ export interface OrderedExtension {
 const INSTRUCTION_HOOK_COUNT = 1000
 
 export default class Thread {
-    public readonly address: LuaState = 0
+    public readonly address: LuaState
     public readonly lua: LuaWasm
     protected readonly typeExtensions: OrderedExtension[]
     private closed = false
@@ -176,7 +176,7 @@ export default class Thread {
 
     public pushValue(rawValue: unknown, userdata?: unknown): void {
         const decoratedValue = this.getValueDecorations(rawValue)
-        let target = decoratedValue.target
+        const target = decoratedValue.target ?? undefined
 
         if (target instanceof Thread) {
             const isMain = this.lua.lua_pushthread(target.address) === 1
@@ -187,33 +187,29 @@ export default class Thread {
         }
 
         const startTop = this.getTop()
-        // First to allow overriding default behaviour, except for threads
-        if (!this.typeExtensions.find((wrapper) => wrapper.extension.pushValue(this, decoratedValue, userdata))) {
-            if (target === null) {
-                target = undefined
-            }
 
-            // Handle primitive types
-            switch (typeof target) {
-                case 'undefined':
-                    this.lua.lua_pushnil(this.address)
-                    break
-                case 'number':
-                    if (Number.isInteger(target)) {
-                        this.lua.lua_pushinteger(this.address, target)
-                    } else {
-                        this.lua.lua_pushnumber(this.address, target)
-                    }
-                    break
-                case 'string':
-                    this.lua.lua_pushstring(this.address, target)
-                    break
-                case 'boolean':
-                    this.lua.lua_pushboolean(this.address, target ? 1 : 0)
-                    break
-                default:
+        // Handle primitive types
+        switch (typeof target) {
+            case 'undefined':
+                this.lua.lua_pushnil(this.address)
+                break
+            case 'number':
+                if (Number.isInteger(target)) {
+                    this.lua.lua_pushinteger(this.address, target)
+                } else {
+                    this.lua.lua_pushnumber(this.address, target)
+                }
+                break
+            case 'string':
+                this.lua.lua_pushstring(this.address, target)
+                break
+            case 'boolean':
+                this.lua.lua_pushboolean(this.address, target ? 1 : 0)
+                break
+            default:
+                if (!this.typeExtensions.find((wrapper) => wrapper.extension.pushValue(this, decoratedValue, userdata))) {
                     throw new Error(`The type '${typeof target}' is not supported by Lua`)
-            }
+                }
         }
 
         if (decoratedValue.options.metatable) {
@@ -257,17 +253,10 @@ export default class Thread {
         return name
     }
 
-    public getValue(idx: number, inputType: LuaType | undefined = undefined, userdata?: unknown): any {
+    public getValue(idx: number, inputType?: LuaType, userdata?: unknown): any {
         idx = this.lua.lua_absindex(this.address, idx)
 
-        // Before the below to allow overriding default behaviour.
-        const metatableName = this.getMetatableName(idx)
-        const type: LuaType = inputType || this.lua.lua_type(this.address, idx)
-
-        const typeExtensionWrapper = this.typeExtensions.find((wrapper) => wrapper.extension.isType(this, idx, type, metatableName))
-        if (typeExtensionWrapper) {
-            return typeExtensionWrapper.extension.getValue(this, idx, userdata)
-        }
+        const type: LuaType = inputType ?? this.lua.lua_type(this.address, idx)
 
         switch (type) {
             case LuaType.None:
@@ -280,13 +269,23 @@ export default class Thread {
                 return this.lua.lua_tolstring(this.address, idx, null)
             case LuaType.Boolean:
                 return Boolean(this.lua.lua_toboolean(this.address, idx))
-            case LuaType.Thread: {
+            case LuaType.Thread:
                 return this.stateToThread(this.lua.lua_tothread(this.address, idx))
-            }
-            // Fallthrough if unrecognised user data
-            default:
+            default: {
+                let metatableName: string | undefined
+                if (type === LuaType.Table || type === LuaType.Userdata) {
+                    metatableName = this.getMetatableName(idx)
+                }
+
+                const typeExtensionWrapper = this.typeExtensions.find((wrapper) => wrapper.extension.isType(this, idx, type, metatableName))
+                if (typeExtensionWrapper) {
+                    return typeExtensionWrapper.extension.getValue(this, idx, userdata)
+                }
+
+                // Fallthrough if unrecognised user data
                 console.warn(`The type '${this.lua.lua_typename(this.address, type)}' returned is not supported on JS`)
                 return new Pointer(this.lua.lua_topointer(this.address, idx))
+            }
         }
     }
 

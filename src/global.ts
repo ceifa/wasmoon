@@ -9,43 +9,48 @@ interface LuaMemoryStats {
 }
 
 export default class Global extends Thread {
-    private memoryStats: LuaMemoryStats
-    private allocatorFunctionPointer: number
+    private memoryStats: LuaMemoryStats | undefined
+    private allocatorFunctionPointer: number | undefined
 
-    public constructor(cmodule: LuaWasm) {
-        const memoryStats: LuaMemoryStats = { memoryUsed: 0 }
-        const allocatorFunctionPointer = cmodule.module.addFunction(
-            (_userData: number, pointer: number, oldSize: number, newSize: number): number | null => {
-                if (newSize === 0 && pointer) {
-                    cmodule.module._free(pointer)
-                    return null
-                }
+    public constructor(cmodule: LuaWasm, shouldTraceAllocations: boolean) {
+        if (shouldTraceAllocations) {
+            const memoryStats: LuaMemoryStats = { memoryUsed: 0 }
+            const allocatorFunctionPointer = cmodule.module.addFunction(
+                (_userData: number, pointer: number, oldSize: number, newSize: number): number | null => {
+                    if (newSize === 0 && pointer) {
+                        memoryStats.memoryUsed -= oldSize
 
-                const increasing = Boolean(pointer) || newSize > oldSize
-                const endMemoryDelta = pointer ? newSize - oldSize : newSize
-                const endMemory = memoryStats.memoryUsed + endMemoryDelta
+                        cmodule.module._free(pointer)
+                        return null
+                    }
 
-                if (increasing && memoryStats.memoryMax && endMemory > memoryStats.memoryMax) {
-                    return null
-                }
+                    const endMemoryDelta = pointer ? newSize - oldSize : newSize
+                    const endMemory = memoryStats.memoryUsed + endMemoryDelta
 
-                const reallocated = cmodule.module._realloc(pointer, newSize)
-                if (reallocated) {
-                    memoryStats.memoryUsed = endMemory
-                }
-                return reallocated
-            },
-            'iiiii',
-        )
+                    if (newSize > oldSize && memoryStats.memoryMax && endMemory > memoryStats.memoryMax) {
+                        return null
+                    }
 
-        const address = cmodule.lua_newstate(allocatorFunctionPointer, null)
-        if (!address) {
-            throw new Error('lua_newstate returned a null pointer')
+                    const reallocated = cmodule.module._realloc(pointer, newSize)
+                    if (reallocated) {
+                        memoryStats.memoryUsed = endMemory
+                    }
+                    return reallocated
+                },
+                'iiiii',
+            )
+
+            super(cmodule, [], cmodule.lua_newstate(allocatorFunctionPointer, null))
+
+            this.memoryStats = memoryStats
+            this.allocatorFunctionPointer = allocatorFunctionPointer
+        } else {
+            super(cmodule, [], cmodule.luaL_newstate())
         }
-        super(cmodule, [], address)
 
-        this.memoryStats = memoryStats
-        this.allocatorFunctionPointer = allocatorFunctionPointer
+        if (this.isClosed()) {
+            throw new Error('Global state could not be created (probably due to lack of memory)')
+        }
     }
 
     public close(): void {
@@ -61,7 +66,10 @@ export default class Global extends Thread {
         // lua state needs closing.
         this.lua.lua_close(this.address)
 
-        this.lua.module.removeFunction(this.allocatorFunctionPointer)
+        if (this.allocatorFunctionPointer) {
+            this.lua.module.removeFunction(this.allocatorFunctionPointer)
+        }
+
         for (const wrapper of this.typeExtensions) {
             wrapper.extension.close()
         }
@@ -112,7 +120,9 @@ export default class Global extends Thread {
 
     public get(name: string): any {
         const type = this.lua.lua_getglobal(this.address, name)
-        return this.getValue(-1, type)
+        const value = this.getValue(-1, type)
+        this.pop()
+        return value
     }
 
     public set(name: string, value: unknown): void {
@@ -138,14 +148,22 @@ export default class Global extends Thread {
     }
 
     public getMemoryUsed(): number {
-        return this.memoryStats.memoryUsed
+        return this.getMemoryStatsRef().memoryUsed
     }
 
     public getMemoryMax(): number | undefined {
-        return this.memoryStats.memoryMax
+        return this.getMemoryStatsRef().memoryMax
     }
 
     public setMemoryMax(max: number | undefined): void {
-        this.memoryStats.memoryMax = max
+        this.getMemoryStatsRef().memoryMax = max
+    }
+
+    private getMemoryStatsRef(): LuaMemoryStats {
+        if (!this.memoryStats) {
+            throw new Error('Memory allocations is not being traced, please build engine with { traceAllocations: true }')
+        }
+
+        return this.memoryStats
     }
 }

@@ -8,7 +8,7 @@ export { default as LuaRawResult } from './raw-result'
 // use the bindings rather than the wrappers.
 export { default as LuaWasm } from './luawasm'
 export { decorateFunction } from './type-extensions/function'
-export { decorateUserData } from './type-extensions/userdata'
+export { decorateUserdata } from './type-extensions/userdata'
 export { decorateProxy } from './type-extensions/proxy'
 export { decorate, Decoration } from './decoration'
 export { default as LuaTypeExtension } from './type-extension'

@@ -14,7 +14,7 @@
         "plugin:@typescript-eslint/eslint-recommended",
         "plugin:@typescript-eslint/recommended",
         "plugin:@typescript-eslint/recommended-requiring-type-checking",
-        "prettier"
+        "plugin:prettier/recommended"
     ],
     "env": {
         "es6": true
@@ -23,8 +23,7 @@
         "dist/*",
         "build/*",
         "rollup.config.js",
-        "utils/*",
-        "bench/*"
+        "utils/*"
     ],
     "rules": {
         "no-console": "off",
@@ -133,12 +132,14 @@
         "@typescript-eslint/no-parameter-properties": "off",
         "@typescript-eslint/no-require-imports": "error",
         "@typescript-eslint/no-useless-constructor": "error",
-        "@typescript-eslint/prefer-for-of": "error"
+        "@typescript-eslint/prefer-for-of": "error",
+        "prettier/prettier": "error"
     },
     "overrides": [
         {
             "files": [
-                "test/**/*.js"
+                "test/**/*.js",
+                "bench/**/*.js"
             ],
             "rules": {
                 "@typescript-eslint/no-var-requires": "off",

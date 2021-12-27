@@ -1,6 +1,6 @@
 const { expect, test } = require('@jest/globals')
 const { getEngine, getFactory } = require('./utils')
-const { LuaThread, LuaReturn, decorate, decorateUserData, LuaLibraries, decorateProxy } = require('../dist')
+const { LuaThread, LuaReturn, decorate, decorateUserdata, LuaLibraries, decorateProxy } = require('../dist')
 
 jest.useFakeTimers('legacy')
 
@@ -103,7 +103,7 @@ test('receive Lua object with circular references on JS should succeed', async (
     })
 })
 
-test('receive Lua array with circular references on JS should succeed', async () => {
+test('receive lua array with circular references on JS should succeed', async () => {
     const engine = await getEngine()
     const value = await engine.doString(`
         obj = {
@@ -314,13 +314,32 @@ test('lua_resume with yield succeeds', async () => {
     expect(finalValue).toEqual(20)
 })
 
-test('get memory use succeeds', async () => {
-    const engine = await getEngine()
+test('get memory with allocation tracing should succeeds', async () => {
+    const engine = await getEngine({ traceAllocations: true })
     expect(engine.global.getMemoryUsed()).toBeGreaterThan(0)
 })
 
+test('get memory should return correct', async () => {
+    const engine = await getEngine({ traceAllocations: true })
+
+    const totalMemory = await engine.doString(`
+        collectgarbage()
+        local x = 10
+        local batata = { dawdwa = 1 }
+        return collectgarbage('count') * 1024
+    `)
+
+    expect(engine.global.getMemoryUsed()).toBe(totalMemory)
+})
+
+test('get memory without tracing should throw', async () => {
+    const engine = await getEngine({ traceAllocations: false })
+
+    expect(() => engine.global.getMemoryUsed()).toThrow()
+})
+
 test('limit memory use causes program loading failure succeeds', async () => {
-    const engine = await getEngine()
+    const engine = await getEngine({ traceAllocations: true })
     engine.global.setMemoryMax(engine.global.getMemoryUsed())
     expect(() => {
         engine.global.loadString(`
@@ -340,7 +359,7 @@ test('limit memory use causes program loading failure succeeds', async () => {
 })
 
 test('limit memory use causes program runtime failure succeeds', async () => {
-    const engine = await getEngine()
+    const engine = await getEngine({ traceAllocations: true })
     engine.global.loadString(`
         local tab = {}
         for i = 1, 10, 1 do
@@ -373,7 +392,7 @@ test('wrap a js object (with metatable)', async () => {
         create: (name) => {
             return decorate(
                 {
-                    instance: decorateUserData(new TestClass(name)),
+                    instance: decorateUserdata(new TestClass(name)),
                 },
                 {
                     metatable: {

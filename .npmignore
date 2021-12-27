@@ -10,6 +10,5 @@ rollup.config.js
 .github
 .gitmodules
 .eslintrc.json
-.prettierignore
 .prettierrc.js
 .vscode

@@ -11,8 +11,11 @@ import type LuaWasm from './luawasm'
 export default class LuaEngine {
     public global: Global
 
-    public constructor(private cmodule: LuaWasm, { openStandardLibs = true, injectObjects = false, enableProxy = true } = {}) {
-        this.global = new Global(this.cmodule)
+    public constructor(
+        private cmodule: LuaWasm,
+        { openStandardLibs = true, injectObjects = false, enableProxy = true, traceAllocations = false } = {},
+    ) {
+        this.global = new Global(this.cmodule, traceAllocations)
 
         // Generic handlers - These may be required to be registered for additional types.
         this.global.registerTypeExtension(0, createTableType(this.global))
@@ -33,10 +36,6 @@ export default class LuaEngine {
 
         // Higher priority than proxied objects to allow custom user data without exposing methods.
         this.global.registerTypeExtension(4, createUserdataType(this.global))
-
-        if (this.global.isClosed()) {
-            throw new Error('Lua state could not be created (probably due to lack of memory)')
-        }
 
         if (openStandardLibs) {
             this.cmodule.luaL_openlibs(this.global.address)
