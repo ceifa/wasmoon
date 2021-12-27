@@ -9,14 +9,9 @@
             "type": "pwa-node",
             "request": "launch",
             "name": "Launch Program",
-            "skipFiles": [
-                "<node_internals>/**"
-            ],
+            "skipFiles": ["<node_internals>/**"],
             "program": "${workspaceFolder}/test/debug.js",
-            "runtimeArgs": [
-                "--inspect",
-                "--expose-gc"
-            ]
+            "runtimeArgs": ["--inspect", "--expose-gc"]
         }
     ]
 }

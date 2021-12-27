@@ -43,30 +43,21 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
             thread.lua.lua_pushcclosure(thread.address, this.gcPointer, 0)
             thread.lua.lua_setfield(thread.address, metatableIndex, '__gc')
 
+            const checkSelf = (self: Promise<any>): true => {
+                if (Promise.resolve(self) !== self) {
+                    throw new Error('promise method called without self instance')
+                }
+                return true
+            }
+
             thread.pushValue({
-                next: (self: Promise<unknown>, ...args: Parameters<typeof self.then>) => {
-                    if (Promise.resolve(self) !== self) {
-                        throw new Error('promise has no instance data')
-                    }
-                    return self.then(...args)
-                },
-                catch: (self: Promise<unknown>, ...args: Parameters<typeof self.catch>) => {
-                    if (Promise.resolve(self) !== self) {
-                        throw new Error('promise has no instance data')
-                    }
-                    return self.catch(...args)
-                },
-                finally: (self: Promise<unknown>, ...args: Parameters<typeof self.finally>) => {
-                    if (Promise.resolve(self) !== self) {
-                        throw new Error('promise has no instance data')
-                    }
-                    return self.finally(...args)
-                },
+                next: (self: Promise<unknown>, ...args: Parameters<typeof self.then>) => checkSelf(self) && self.then(...args),
+                catch: (self: Promise<unknown>, ...args: Parameters<typeof self.catch>) => checkSelf(self) && self.catch(...args),
+                finally: (self: Promise<unknown>, ...args: Parameters<typeof self.finally>) => checkSelf(self) && self.finally(...args),
                 await: decorateFunction(
                     (functionThread: Thread, self: Promise<any>) => {
-                        if (Promise.resolve(self) !== self) {
-                            throw new Error('promise has no instance data')
-                        }
+                        checkSelf(self)
+
                         let promiseResult: { status: 'fulfilled' | 'rejected'; value: any } | undefined = undefined
 
                         const awaitPromise = self
@@ -90,10 +81,6 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                             }
 
                             const continuanceThread = thread.stateToThread(continuanceState)
-
-                            if (!promiseResult) {
-                                promiseResult = { status: 'rejected', value: new Error('continuance called with no result') }
-                            }
 
                             if (promiseResult.status === 'rejected') {
                                 continuanceThread.pushValue(promiseResult.value || new Error('promise rejected with no error'))
@@ -132,22 +119,15 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
         if (injectObject) {
             // Lastly create a static Promise constructor.
             thread.set('Promise', {
-                create: (callback: ConstructorParameters<PromiseConstructor>[0]) => {
-                    if (callback && typeof callback !== 'function') {
-                        throw new Error('callback must be a function')
-                    }
-
-                    return new Promise(callback)
-                },
+                create: (callback: ConstructorParameters<PromiseConstructor>[0]) => new Promise(callback),
                 all: (promiseArray: any) => {
                     if (!Array.isArray(promiseArray)) {
                         throw new Error('argument must be an array of promises')
                     }
+
                     return Promise.all(promiseArray.map((potentialPromise) => Promise.resolve(potentialPromise)))
                 },
-                resolve: (value: any) => {
-                    return Promise.resolve(value)
-                },
+                resolve: (value: any) => Promise.resolve(value),
             })
         }
     }

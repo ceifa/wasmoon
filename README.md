@@ -6,9 +6,9 @@
 
 This package aims to provide a way to:
 
-- Embed Lua to any Node.js, Deno or Web Application.
-- Run lua code in any operational system
-- Interop Lua and JS without memory leaks (including the DOM)
+-   Embed Lua to any Node.js, Deno or Web Application.
+-   Run lua code in any operational system
+-   Interop Lua and JS without memory leaks (including the DOM)
 
 ## API Usage
 
@@ -83,16 +83,15 @@ Because of wasm, wasmoon will run Lua code much faster than fengari, but if you 
 This is the results running a [heap sort code](https://github.com/ceifa/wasmoon/blob/main/bench/heapsort.lua) in a list of 20k numbers 10x:
 
 | wasmoon | fengari |
-|---------|---------|
+| ------- | ------- |
 | 0.177ms | 2.107ms |
-
 
 ### Size
 
 Fengari is lighter than wasmoon, which can improve the user experience if in web environments:
 
 |             | wasmoon | fengari |
-|-------------|---------|---------|
+| ----------- | ------- | ------- |
 | **plain**   | 393kB   | 214kB   |
 | **gzipped** | 130kB   | 69kB    |
 

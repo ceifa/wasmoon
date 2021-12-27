@@ -10,7 +10,7 @@
         "test": "jest --env=node ./test/",
         "build": "rollup -c && tsc -d --emitDeclarationOnly --declarationDir dist",
         "clean": "rm -rf dist build",
-        "lint": "eslint . --fix --cache",
+        "lint": "prettier --write . && eslint . --fix --cache",
         "lint:nofix": "eslint ."
     },
     "bin": {
