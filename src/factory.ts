@@ -7,7 +7,9 @@ export default class LuaFactory {
 
     public constructor(private readonly customWasmUri?: string, private readonly environmentVariables?: EnvironmentVariables) {
         if (this.customWasmUri === undefined) {
-            const isBrowser = typeof window !== 'undefined' && typeof window.document !== 'undefined'
+            const isBrowser =
+                (typeof window === 'object' && typeof window.document !== 'undefined') ||
+                (typeof self === 'object' && self?.constructor?.name === 'DedicatedWorkerGlobalScope')
 
             if (isBrowser) {
                 this.customWasmUri = 'http://unpkg.com/wasmoon/dist/glue.wasm'
@@ -53,7 +55,7 @@ export default class LuaFactory {
         this.lua.module.FS.writeFile(path, content)
     }
 
-    public async createEngine(options: ConstructorParameters<typeof LuaEngine>[1]): Promise<LuaEngine> {
+    public async createEngine(options: ConstructorParameters<typeof LuaEngine>[1] = {}): Promise<LuaEngine> {
         return new LuaEngine(await this.getLuaModule(), options)
     }
 

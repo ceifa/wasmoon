@@ -1,4 +1,3 @@
-import '../build/glue.wasm'
 import { EnvironmentVariables, LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType } from './types'
 import initWasmModule from '../build/glue.js'
 

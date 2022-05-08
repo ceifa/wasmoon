@@ -1,5 +1,5 @@
 import typescript from '@rollup/plugin-typescript'
-import url from '@rollup/plugin-url'
+import copy from 'rollup-plugin-copy'
 
 const production = !process.env.ROLLUP_WATCH
 
@@ -12,12 +12,11 @@ export default {
         sourcemap: !production,
     },
     plugins: [
-        url({
-            include: '**/*.wasm',
-            fileName: '[name][extname]',
-        }),
         typescript({
             sourceMap: !production,
         }),
+        copy({
+            targets: [{ src: 'build/glue.wasm', dest: 'dist' }]
+        })
     ],
 }
