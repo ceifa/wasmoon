@@ -1,6 +1,6 @@
 {
     "name": "wasmoon",
-    "version": "1.12.1",
+    "version": "1.13.0",
     "description": "A real lua VM with JS bindings made with webassembly",
     "main": "dist/index.js",
     "scripts": {
@@ -45,7 +45,7 @@
         "fengari": "0.1.4",
         "jest": "28.1.0",
         "prettier": "2.6.2",
-        "rollup": "2.72.0",
+        "rollup": "2.72.1",
         "tslib": "2.4.0",
         "typescript": "4.6.4"
     },
