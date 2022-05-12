@@ -52,8 +52,8 @@ export default class Thread {
         this.assertOk(this.lua.lua_resetthread(this.address))
     }
 
-    public loadString(luaCode: string): void {
-        this.assertOk(this.lua.luaL_loadstring(this.address, luaCode))
+    public loadString(luaCode: string, name?: string): void {
+        this.assertOk(this.lua.luaL_loadbufferx(this.address, luaCode, luaCode.length, name || luaCode, null))
     }
 
     public loadFile(filename: string): void {
