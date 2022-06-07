@@ -113,7 +113,8 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                     return 1
                 }
             } catch (err) {
-                if (err === 'longjmp') {
+                // Performs a longjmp
+                if (err === Infinity) {
                     throw err
                 }
                 calledThread.pushValue(err)
