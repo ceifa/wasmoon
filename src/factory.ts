@@ -1,4 +1,5 @@
 import { EnvironmentVariables } from './types'
+import { version } from '../package.json'
 import LuaEngine from './engine'
 import LuaWasm from './luawasm'
 
@@ -12,7 +13,8 @@ export default class LuaFactory {
                 (typeof self === 'object' && self?.constructor?.name === 'DedicatedWorkerGlobalScope')
 
             if (isBrowser) {
-                this.customWasmUri = 'http://unpkg.com/wasmoon/dist/glue.wasm'
+                const majorminor = version.slice(0, version.lastIndexOf('.'))
+                this.customWasmUri = `http://unpkg.com/wasmoon@${majorminor}/dist/glue.wasm`
             }
         }
     }

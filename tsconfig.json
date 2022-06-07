@@ -7,7 +7,10 @@
         "sourceMap": false,
         "target": "ES2018",
         "skipLibCheck": true,
-        "lib": ["ESNEXT", "DOM"],
+        "lib": [
+            "ESNEXT",
+            "DOM"
+        ],
         "forceConsistentCasingInFileNames": true,
         "noImplicitReturns": true,
         "noImplicitThis": true,
@@ -15,8 +18,15 @@
         "noUnusedParameters": true,
         "noUnusedLocals": true,
         "importHelpers": true,
-        "strict": true
+        "strict": true,
+        "resolveJsonModule": true
     },
-    "include": ["src/**/*", "test/**/*", "bench/**/*"],
-    "exclude": ["node_modules"]
+    "include": [
+        "src/**/*",
+        "test/**/*",
+        "bench/**/*"
+    ],
+    "exclude": [
+        "node_modules"
+    ]
 }

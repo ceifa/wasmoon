@@ -18,16 +18,16 @@ interface ReferenceMetadata {
 }
 
 export default class LuaWasm {
-    public static async initialize(customName?: string, env?: EnvironmentVariables): Promise<LuaWasm> {
+    public static async initialize(customWasmFileLocation?: string, environmentVariables?: EnvironmentVariables): Promise<LuaWasm> {
         const module: LuaEmscriptenModule = await initWasmModule({
             print: console.log,
             printErr: console.error,
             locateFile: (path: string, scriptDirectory: string) => {
-                return customName || scriptDirectory + path
+                return customWasmFileLocation || scriptDirectory + path
             },
             preRun: (initializedModule: LuaEmscriptenModule) => {
-                if (typeof env === 'object') {
-                    Object.entries(env).forEach(([k, v]) => (initializedModule.ENV[k] = v))
+                if (typeof environmentVariables === 'object') {
+                    Object.entries(environmentVariables).forEach(([k, v]) => (initializedModule.ENV[k] = v))
                 }
             },
         })
