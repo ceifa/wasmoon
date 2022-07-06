@@ -29,6 +29,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
             : undefined
 
     private gcPointer: number
+    private functionWrapper: number
 
     public constructor(thread: Global) {
         super(thread, 'js_function')
@@ -39,11 +40,11 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
 
         this.gcPointer = thread.lua.module.addFunction((calledL: LuaState) => {
             // Throws a lua error which does a jump if it does not match.
+            thread.lua.luaL_checkudata(calledL, 1, this.name)
+
             const userDataPointer = thread.lua.luaL_checkudata(calledL, 1, this.name)
-            const functionPointer = thread.lua.module.getValue(userDataPointer, '*')
-            // Safe to do without a reference count because each time a function is pushed it creates a new and unique
-            // anonymous function.
-            thread.lua.module.removeFunction(functionPointer)
+            const referencePointer = thread.lua.module.getValue(userDataPointer, '*')
+            thread.lua.unref(referencePointer)
 
             return LuaReturn.Ok
         }, 'ii')
@@ -60,23 +61,13 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
         }
         // Pop the metatable from the stack.
         thread.lua.lua_pop(thread.address, 1)
-    }
 
-    public close(): void {
-        this.thread.lua.module.removeFunction(this.gcPointer)
-    }
-
-    public isType(_thread: Thread, _index: number, type: LuaType): boolean {
-        return type === LuaType.Function
-    }
-
-    public pushValue(thread: Thread, { target, options }: Decoration<FunctionType, FunctionDecoration>): boolean {
-        if (typeof target !== 'function') {
-            return false
-        }
-
-        const pointer = thread.lua.module.addFunction((calledL: LuaState) => {
+        this.functionWrapper = thread.lua.module.addFunction((calledL: LuaState) => {
             const calledThread = thread.stateToThread(calledL)
+
+            const refUserdata = thread.lua.luaL_checkudata(calledL, thread.lua.lua_upvalueindex(1), this.name)
+            const refPointer = thread.lua.module.getValue(refUserdata, '*')
+            const { target, options } = thread.lua.getRef(refPointer) as Decoration<FunctionType, FunctionDecoration>
 
             const argsQuantity = calledThread.getTop()
             const args = []
@@ -121,11 +112,44 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                 return calledThread.lua.lua_error(calledThread.address)
             }
         }, 'ii')
-        // Creates a new userdata with metatable pointing to the function pointer.
-        // Pushes the new userdata onto the stack.
-        this.createAndPushFunctionReference(thread, pointer)
-        // Pass 1 to associate the closure with the userdata.
-        thread.lua.lua_pushcclosure(thread.address, pointer, 1)
+    }
+
+    public close(): void {
+        this.thread.lua.module.removeFunction(this.gcPointer)
+        this.thread.lua.module.removeFunction(this.functionWrapper)
+    }
+
+    public isType(_thread: Thread, _index: number, type: LuaType): boolean {
+        return type === LuaType.Function
+    }
+
+    public pushValue(thread: Thread, decoration: Decoration<FunctionType, FunctionDecoration>): boolean {
+        if (typeof decoration.target !== 'function') {
+            return false
+        }
+
+        // It's surprisingly inefficient to map JS functions to C functions so this creates a reference to the
+        // function which stays solely in JS. The cfunction called from Lua is created at the top of the class
+        // and it accesses the JS data through an upvalue.
+
+        const pointer = thread.lua.ref(decoration)
+        // 4 = size of pointer in wasm.
+        const userDataPointer = thread.lua.lua_newuserdatauv(thread.address, PointerSize, 0)
+        thread.lua.module.setValue(userDataPointer, pointer, '*')
+
+        if (LuaType.Nil === thread.lua.luaL_getmetatable(thread.address, this.name)) {
+            // Pop the pushed userdata.
+            thread.pop(1)
+            thread.lua.unref(pointer)
+            throw new Error(`metatable not found: ${this.name}`)
+        }
+
+        // Set as the metatable for the function.
+        // -1 is the metatable, -2 is the userdata
+        thread.lua.lua_setmetatable(thread.address, -2)
+
+        // Pass 1 to associate the closure with the userdata, pops the userdata.
+        thread.lua.lua_pushcclosure(thread.address, this.functionWrapper, 1)
 
         return true
     }
@@ -164,22 +188,6 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
         this.functionRegistry?.register(jsFunc, func)
 
         return jsFunc
-    }
-
-    private createAndPushFunctionReference(thread: Thread, pointer: number): void {
-        // 4 = size of pointer in wasm.
-        const userDataPointer = thread.lua.lua_newuserdatauv(thread.address, PointerSize, 0)
-        thread.lua.module.setValue(userDataPointer, pointer, '*')
-
-        if (LuaType.Nil === thread.lua.luaL_getmetatable(thread.address, this.name)) {
-            // Pop the pushed nil value and user data
-            thread.pop(2)
-            throw new Error(`metatable not found: ${this.name}`)
-        }
-
-        // Set as the metatable for the userdata.
-        // -1 is the metatable, -2 is the user data.
-        thread.lua.lua_setmetatable(thread.address, -2)
     }
 }
 

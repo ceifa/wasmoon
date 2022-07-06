@@ -188,6 +188,7 @@ export default class LuaWasm {
     private referenceTracker = new WeakMap<any, ReferenceMetadata>()
     private referenceMap = new Map<number, any>()
     private availableReferences: number[] = []
+    private lastRefIndex?: number
 
     public constructor(module: LuaEmscriptenModule) {
         this.module = module
@@ -379,6 +380,8 @@ export default class LuaWasm {
             index,
         })
 
+        this.lastRefIndex = index
+
         return index
     }
 
@@ -404,5 +407,16 @@ export default class LuaWasm {
 
     public getRef(index: number): any | undefined {
         return this.referenceMap.get(index)
+    }
+
+    // This is needed for some tests
+    public getLastRefIndex(): number | undefined {
+        return this.lastRefIndex
+    }
+
+    public printRefs(): void {
+        for (const [key, value] of this.referenceMap.entries()) {
+            console.log(key, value)
+        }
     }
 }
