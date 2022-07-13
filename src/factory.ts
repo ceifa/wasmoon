@@ -4,7 +4,10 @@ import LuaEngine from './engine'
 import LuaWasm from './luawasm'
 
 export default class LuaFactory {
-    private lua?: LuaWasm
+    // Promises always resolve to the same thing.
+    // Need to do it like this because otherwise if the caller calls createEngine multiple times before yielding
+    // they'll end up with multiple wasm initialisations.
+    private luaWasmPromise = LuaWasm.initialize(this.customWasmUri, this.environmentVariables)
 
     public constructor(private readonly customWasmUri?: string, private readonly environmentVariables?: EnvironmentVariables) {
         if (this.customWasmUri === undefined) {
@@ -20,15 +23,10 @@ export default class LuaFactory {
     }
 
     public async mountFile(path: string, content: string | ArrayBufferView): Promise<void> {
-        await this.getLuaModule()
-        this.mountFileSync(path, content)
+        this.mountFileSync(await this.getLuaModule(), path, content)
     }
 
-    public mountFileSync(path: string, content: string | ArrayBufferView): void {
-        if (!this.lua) {
-            throw new Error("Module is not initialized, instead call 'mountFile' to ensure initialization")
-        }
-
+    public mountFileSync(luaWasm: LuaWasm, path: string, content: string | ArrayBufferView): void {
         const fileSep = path.lastIndexOf('/')
         const file = path.substring(fileSep + 1)
         const body = path.substring(0, path.length - file.length - 1)
@@ -45,7 +43,7 @@ export default class LuaFactory {
 
                 const current = `${parent}/${part}`
                 try {
-                    this.lua.module.FS.mkdir(current)
+                    luaWasm.module.FS.mkdir(current)
                 } catch (err) {
                     // ignore EEXIST
                 }
@@ -54,7 +52,7 @@ export default class LuaFactory {
             }
         }
 
-        this.lua.module.FS.writeFile(path, content)
+        luaWasm.module.FS.writeFile(path, content)
     }
 
     public async createEngine(options: ConstructorParameters<typeof LuaEngine>[1] = {}): Promise<LuaEngine> {
@@ -62,10 +60,6 @@ export default class LuaFactory {
     }
 
     public async getLuaModule(): Promise<LuaWasm> {
-        if (!this.lua) {
-            this.lua = await LuaWasm.initialize(this.customWasmUri, this.environmentVariables)
-        }
-
-        return this.lua
+        return this.luaWasmPromise
     }
 }

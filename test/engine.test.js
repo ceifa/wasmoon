@@ -518,7 +518,8 @@ test('a userdata should be collected', async () => {
     const engine = await getEngine()
     const obj = {}
     engine.global.set('obj', obj)
-    const oldRef = engine.global.lua.getRef(1)
+    const refIndex = engine.global.lua.getLastRefIndex()
+    const oldRef = engine.global.lua.getRef(refIndex)
 
     await engine.doString(`
         local weaktable = {}
@@ -530,7 +531,7 @@ test('a userdata should be collected', async () => {
     `)
 
     expect(oldRef).toEqual(obj)
-    const newRef = engine.global.lua.getRef(1)
+    const newRef = engine.global.lua.getRef(refIndex)
     expect(newRef).toEqual(undefined)
 })
 
@@ -561,4 +562,26 @@ test('should be possible to access function properties', async () => {
     const testHello = await engine.doString(`return TestFunction.hello`)
 
     expect(testHello).toEqual('world')
+})
+
+test('throw error includes stack trace', async () => {
+    const engine = await getEngine()
+    try {
+        await engine.doString(`
+            local function a()
+                error("function a threw error")
+            end
+            local function b() a() end
+            local function c() b() end
+            c()
+        `)
+        throw new Error('should not be reached')
+    } catch (err) {
+        expect(err.message.includes('[string "..."]:3: function a threw error')).toEqual(true)
+        expect(err.message.includes('stack traceback:')).toEqual(true)
+        expect(err.message.includes(`[string "..."]:3: in upvalue 'a'`)).toEqual(true)
+        expect(err.message.includes(`[string "..."]:5: in upvalue 'b'`)).toEqual(true)
+        expect(err.message.includes(`[string "..."]:6: in local 'c'`)).toEqual(true)
+        expect(err.message.includes(`[string "..."]:7: in main chunk`)).toEqual(true)
+    }
 })

@@ -52,8 +52,8 @@ export default class Thread {
         this.assertOk(this.lua.lua_resetthread(this.address))
     }
 
-    public loadString(luaCode: string): void {
-        this.assertOk(this.lua.luaL_loadstring(this.address, luaCode))
+    public loadString(luaCode: string, name?: string): void {
+        this.assertOk(this.lua.luaL_loadbufferx(this.address, luaCode, luaCode.length, name || luaCode, null))
     }
 
     public loadFile(filename: string): void {
@@ -373,6 +373,21 @@ export default class Thread {
                     error.message = this.indexToString(-1)
                 }
             }
+
+            // Also attempt to get a traceback
+            if (result !== LuaReturn.ErrorMem) {
+                try {
+                    this.lua.luaL_traceback(this.address, this.address, null, 1)
+                    const traceback = this.lua.lua_tolstring(this.address, -1, null)
+                    if (traceback.trim() !== 'stack traceback:') {
+                        error.message = `${error.message}\n${traceback}`
+                    }
+                    this.pop(1) // pop stack trace.
+                } catch (err) {
+                    console.warn('Failed to generate stack trace', err)
+                }
+            }
+
             throw error
         }
     }

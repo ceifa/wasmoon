@@ -16,19 +16,20 @@ export default class Global extends Thread {
         if (shouldTraceAllocations) {
             const memoryStats: LuaMemoryStats = { memoryUsed: 0 }
             const allocatorFunctionPointer = cmodule.module.addFunction(
-                (_userData: number, pointer: number, oldSize: number, newSize: number): number | null => {
-                    if (newSize === 0 && pointer) {
-                        memoryStats.memoryUsed -= oldSize
-
-                        cmodule.module._free(pointer)
-                        return null
+                (_userData: number, pointer: number, oldSize: number, newSize: number): number => {
+                    if (newSize === 0) {
+                        if (pointer) {
+                            memoryStats.memoryUsed -= oldSize
+                            cmodule.module._free(pointer)
+                        }
+                        return 0
                     }
 
                     const endMemoryDelta = pointer ? newSize - oldSize : newSize
                     const endMemory = memoryStats.memoryUsed + endMemoryDelta
 
                     if (newSize > oldSize && memoryStats.memoryMax && endMemory > memoryStats.memoryMax) {
-                        return null
+                        return 0
                     }
 
                     const reallocated = cmodule.module._realloc(pointer, newSize)
