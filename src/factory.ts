@@ -1,7 +1,8 @@
 import { EnvironmentVariables } from './types'
-import { version } from '../package.json'
 import LuaEngine from './engine'
 import LuaWasm from './luawasm'
+// A rollup plugin will resolve this to the current version on package.json
+import version from 'package-version'
 
 export default class LuaFactory {
     // Promises always resolve to the same thing.

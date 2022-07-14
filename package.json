@@ -8,7 +8,7 @@
         "build:wasm": "./build.sh",
         "start": "rollup -c -w",
         "test": "jest --env=node ./test/",
-        "build": "rollup -c && tsc -d --emitDeclarationOnly --declarationDir dist",
+        "build": "rollup -c && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",
         "clean": "rm -rf dist build",
         "lint": "prettier --write . && eslint . --fix --cache",
         "lint:nofix": "eslint ."
@@ -33,7 +33,6 @@
         "webassembly"
     ],
     "devDependencies": {
-        "@rollup/plugin-json": "4.1.0",
         "@rollup/plugin-typescript": "8.3.2",
         "@types/node": "17.0.36",
         "@typescript-eslint/eslint-plugin": "5.26.0",

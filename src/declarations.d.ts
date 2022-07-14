@@ -4,3 +4,8 @@ declare module '*.wasm' {
 }
 
 declare module '*.js'
+
+declare module 'package-version' {
+    const value: string
+    export default value
+}

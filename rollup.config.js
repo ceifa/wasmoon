@@ -1,6 +1,6 @@
 import typescript from '@rollup/plugin-typescript'
 import copy from 'rollup-plugin-copy'
-import json from '@rollup/plugin-json'
+import { version } from './package.json'
 
 const production = !process.env.ROLLUP_WATCH
 
@@ -13,12 +13,25 @@ export default {
         sourcemap: !production,
     },
     plugins: [
-        json(),
+        {
+            name: 'package-version',
+            resolveId(source) {
+                if (source === 'package-version') {
+                    return 'package-version'
+                }
+            },
+            load(id) {
+                if (id === 'package-version') {
+                    return `export default '${version}'`
+                }
+            },
+        },
         typescript({
             sourceMap: !production,
+            outputToFilesystem: true,
         }),
         copy({
-            targets: [{ src: 'build/glue.wasm', dest: 'dist' }]
-        })
+            targets: [{ src: 'build/glue.wasm', dest: 'dist' }],
+        }),
     ],
 }
