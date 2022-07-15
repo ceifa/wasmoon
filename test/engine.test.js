@@ -362,7 +362,7 @@ test('limit memory use causes program runtime failure succeeds', async () => {
     const engine = await getEngine({ traceAllocations: true })
     engine.global.loadString(`
         local tab = {}
-        for i = 1, 10, 1 do
+        for i = 1, 50, 1 do
             tab[i] = i
         end
     `)

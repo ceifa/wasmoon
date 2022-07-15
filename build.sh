@@ -12,6 +12,8 @@ else
     extension="$extension -O3 --closure 1"
 fi
 
+sed -i "s/^#define LUA_32BITS\t0$/#define LUA_32BITS\t1/" ./lua/luaconf.h
+
 emcc \
     -s WASM=1 $extension -o ./build/glue.js \
     -s EXPORTED_RUNTIME_METHODS="[
@@ -186,3 +188,5 @@ emcc \
         '_luaL_openlibs' \
     ]" \
     ${LUA_SRC}
+
+sed -i "s/^#define LUA_32BITS\t1$/#define LUA_32BITS\t0/" ./lua/luaconf.h
