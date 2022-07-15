@@ -504,7 +504,7 @@ test('inject a userdata with a metatable should succeed', async () => {
     const obj = decorate(
         {},
         {
-            metatable: { __index: (t, k) => `Hello ${k}!` },
+            metatable: { __index: (_, k) => `Hello ${k}!` },
         },
     )
     engine.global.set('obj', obj)
