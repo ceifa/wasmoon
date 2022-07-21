@@ -288,6 +288,49 @@ test('call a JS function in a different thread should succeed', async () => {
     expect(sum).toBeCalledWith(10, 20)
 })
 
+test('call a metatable callable from JS should succeed', async () => {
+    const engine = await getEngine()
+    const sum = await engine.doString(`
+        return setmetatable({}, {
+            __call = function(self, x, y)
+                return x + y
+            end
+        })
+    `)
+
+    expect(sum(10, 20)).toBe(30)
+})
+
+test('get a table property of a callable from JS should succeed', async () => {
+    const engine = await getEngine()
+    const sum = await engine.doString(`
+        return setmetatable({
+            x = 10
+        }, {
+            __call = function(self, x, y)
+                return x + y
+            end
+        })
+    `)
+
+    expect(sum.x).toBe(10)
+})
+
+test('get a metatable property from JS should succeed', async () => {
+    const engine = await getEngine()
+    const sum = await engine.doString(`
+        local metatable = { y = 20 }
+        metatable.__index = metatable
+        return setmetatable({
+            x = 10
+        }, metatable)
+    `)
+
+    console.log(sum)
+    expect(sum.x).toBe(10)
+    expect(sum.y).toBe(20)
+})
+
 test('lua_resume with yield succeeds', async () => {
     const engine = await getEngine()
     const thread = engine.global.newThread()

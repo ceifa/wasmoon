@@ -4,7 +4,11 @@ import Global from '../global'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
 
-export type TableType = Record<any, any> | any[]
+export interface CallableTable {
+    [key: string]: any
+    (...args: any[]): any
+}
+export type TableType = Record<any, any> | any[] | CallableTable
 
 class TableTypeExtension extends TypeExtension<TableType> {
     public constructor(thread: Global) {
@@ -21,12 +25,23 @@ class TableTypeExtension extends TypeExtension<TableType> {
 
     public getValue(thread: Thread, index: number, userdata?: any): TableType {
         // This is a map of Lua pointers to JS objects.
-        const seenMap: Map<number, Record<string, string>> = userdata || new Map<number, Record<string, string>>()
+        const seenMap: Map<number, Record<string, string> | CallableTable> =
+            userdata || new Map<number, Record<string, string> | CallableTable>()
         const pointer = thread.lua.lua_topointer(thread.address, index)
 
         let table = seenMap.get(pointer)
         if (!table) {
-            table = {}
+            const __call = thread.lua.luaL_getmetafield(thread.address, index, '__call')
+            if (__call === LuaType.Function) {
+            } else {
+                const __index = thread.lua.luaL_getmetafield(thread.address, index, '__index')
+                const __newindex = thread.lua.luaL_getmetafield(thread.address, index, '__newindex')
+                if (__index === LuaType.Function || __newindex === LuaType.Function) {
+                } else {
+                    table = {}
+                }
+            }
+
             seenMap.set(pointer, table)
             this.tableToObject(thread, index, seenMap, table)
         }
@@ -91,7 +106,12 @@ class TableTypeExtension extends TypeExtension<TableType> {
         return true
     }
 
-    private tableToObject(thread: Thread, index: number, seenMap: Map<number, TableType>, table: Record<string, string>): void {
+    private tableToObject(
+        thread: Thread,
+        index: number,
+        seenMap: Map<number, TableType>,
+        table: Record<string, string> | CallableTable,
+    ): void {
         thread.lua.lua_pushnil(thread.address)
         while (thread.lua.lua_next(thread.address, index)) {
             // JS only supports string keys in objects.
