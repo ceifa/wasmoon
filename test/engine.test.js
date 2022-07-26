@@ -1,6 +1,6 @@
 const { expect, test } = require('@jest/globals')
 const { getEngine, getFactory } = require('./utils')
-const { LuaThread, LuaReturn, decorate, decorateUserdata, LuaLibraries, decorateProxy } = require('../dist')
+const { LuaThread, LuaReturn, decorate, decorateUserdata, LuaLibraries, decorateProxy, LuaType } = require('../dist')
 
 jest.useFakeTimers({ legacyFakeTimers: true })
 
@@ -286,6 +286,22 @@ test('call a JS function in a different thread should succeed', async () => {
     `)
 
     expect(sum).toBeCalledWith(10, 20)
+})
+
+test('get callable table as function should succeed', async () => {
+    const engine = await getEngine()
+    await engine.doString(`
+        _G['sum'] = setmetatable({}, {
+            __call = function(self, x, y)
+                return x + y
+            end
+        })
+    `)
+
+    engine.global.lua.lua_getglobal(engine.global.address, 'sum')
+    const sum = engine.global.getValue(-1, LuaType.Function)
+
+    expect(sum(10, 30)).toBe(40)
 })
 
 test('lua_resume with yield succeeds', async () => {

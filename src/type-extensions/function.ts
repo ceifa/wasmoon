@@ -166,7 +166,11 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
 
             const internalType = thread.lua.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, func)
             if (internalType !== LuaType.Function) {
-                throw new Error(`A function of type '${internalType}' was pushed, expected is ${LuaType.Function}`)
+                const callMetafieldType = thread.lua.luaL_getmetafield(thread.address, -1, '__call')
+                thread.pop()
+                if (callMetafieldType !== LuaType.Function) {
+                    throw new Error(`A value of type '${internalType}' was pushed but it is not callable`)
+                }
             }
 
             for (const arg of args) {
