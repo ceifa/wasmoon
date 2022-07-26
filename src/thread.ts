@@ -213,7 +213,7 @@ export default class Thread {
         }
 
         if (decoratedValue.options.metatable) {
-            this.setMetatable(decoratedValue.options.metatable, -1)
+            this.setMetatable(-1, decoratedValue.options.metatable)
         }
 
         if (this.getTop() !== startTop + 1) {
@@ -221,7 +221,7 @@ export default class Thread {
         }
     }
 
-    public setMetatable(metatable: Record<any, any>, index: number): void {
+    public setMetatable(index: number, metatable: Record<any, any>): void {
         index = this.lua.lua_absindex(this.address, index)
 
         if (this.lua.lua_getmetatable(this.address, index)) {
@@ -253,10 +253,10 @@ export default class Thread {
         return name
     }
 
-    public getValue(idx: number, inputType?: LuaType, userdata?: unknown): any {
-        idx = this.lua.lua_absindex(this.address, idx)
+    public getValue(index: number, inputType?: LuaType, userdata?: unknown): any {
+        index = this.lua.lua_absindex(this.address, index)
 
-        const type: LuaType = inputType ?? this.lua.lua_type(this.address, idx)
+        const type: LuaType = inputType ?? this.lua.lua_type(this.address, index)
 
         switch (type) {
             case LuaType.None:
@@ -264,27 +264,29 @@ export default class Thread {
             case LuaType.Nil:
                 return null
             case LuaType.Number:
-                return this.lua.lua_tonumberx(this.address, idx, null)
+                return this.lua.lua_tonumberx(this.address, index, null)
             case LuaType.String:
-                return this.lua.lua_tolstring(this.address, idx, null)
+                return this.lua.lua_tolstring(this.address, index, null)
             case LuaType.Boolean:
-                return Boolean(this.lua.lua_toboolean(this.address, idx))
+                return Boolean(this.lua.lua_toboolean(this.address, index))
             case LuaType.Thread:
-                return this.stateToThread(this.lua.lua_tothread(this.address, idx))
+                return this.stateToThread(this.lua.lua_tothread(this.address, index))
             default: {
                 let metatableName: string | undefined
                 if (type === LuaType.Table || type === LuaType.Userdata) {
-                    metatableName = this.getMetatableName(idx)
+                    metatableName = this.getMetatableName(index)
                 }
 
-                const typeExtensionWrapper = this.typeExtensions.find((wrapper) => wrapper.extension.isType(this, idx, type, metatableName))
+                const typeExtensionWrapper = this.typeExtensions.find((wrapper) =>
+                    wrapper.extension.isType(this, index, type, metatableName),
+                )
                 if (typeExtensionWrapper) {
-                    return typeExtensionWrapper.extension.getValue(this, idx, userdata)
+                    return typeExtensionWrapper.extension.getValue(this, index, userdata)
                 }
 
                 // Fallthrough if unrecognised user data
                 console.warn(`The type '${this.lua.lua_typename(this.address, type)}' returned is not supported on JS`)
-                return new Pointer(this.lua.lua_topointer(this.address, idx))
+                return new Pointer(this.lua.lua_topointer(this.address, index))
             }
         }
     }
