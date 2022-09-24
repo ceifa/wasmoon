@@ -4,6 +4,11 @@
     "description": "A real lua VM with JS bindings made with webassembly",
     "main": "dist/index.js",
     "scripts": {
+        "build:clean": "rm -rf build",
+        "build:wasm:cmake": "mkdir -p build && emcmake cmake -S . -B build/ -DCMAKE_BUILD_TYPE=Release && cd build/ && emmake make",
+        "build:wasm:cmake:dev": "mkdir -p build && emcmake cmake -S . -B build/ && cd build/ && emmake make",
+        "build:wasm:docker": "mkdir -p build && docker run --rm -v $(pwd):/src -u $(id -u):$(id -g) emscripten/emsdk bash -c 'emcmake cmake -S . -B build/ -DCMAKE_BUILD_TYPE=Release && cd build/ && emmake make'",
+        "build:wasm:docker:dev": "mkdir -p build && docker run --rm -v $(pwd):/src -u $(id -u):$(id -g) emscripten/emsdk bash -c 'emcmake cmake -S . -B build/ -DCMAKE_BUILD_TYPE=Release && cd build/ && emmake make'",
         "build:wasm:dev": "./build.sh dev",
         "build:wasm": "./build.sh",
         "start": "rollup -c -w",
