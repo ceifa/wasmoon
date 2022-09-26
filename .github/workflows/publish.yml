@@ -20,6 +20,7 @@ jobs:
             - run: npm ci
             - run: npm run lint:nofix
             - run: npm run build:wasm
+            - run: npm run build:wasm:cmake
             - run: npm run build
             - run: npm test
             - uses: JS-DevTools/npm-publish@v1
