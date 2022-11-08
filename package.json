@@ -6,6 +6,8 @@
     "scripts": {
         "build:wasm:dev": "./build.sh dev",
         "build:wasm": "./build.sh",
+        "build:wasm:docker:dev": "docker run --rm -v $(pwd):/wasmoon emscripten/emsdk /wasmoon/build.sh dev",
+        "build:wasm:docker": "docker run --rm -v $(pwd):/wasmoon emscripten/emsdk /wasmoon/build.sh",
         "start": "rollup -c -w",
         "test": "jest --env=node ./test/",
         "build": "rollup -c && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",

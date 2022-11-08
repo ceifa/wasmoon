@@ -146,3 +146,38 @@ Add the section browser on `package.json`:
     }
 }
 ```
+
+
+## How to build
+
+Firstly download the lua submodule and install the other Node.JS dependencies:
+
+```sh
+git submodule update --init # download lua submodule
+npm i # install dependencies
+```
+
+### Windows / Linux (Docker way)
+
+You need to install [docker](https://www.docker.com/) and ensure it is on your `PATH`.
+
+After cloned the repo, to build you just have to run these:
+
+```sh
+npm run build:wasm:docker:dev # build lua
+npm run build # build the js code/bridge
+npm test # ensure everything it's working fine
+```
+
+
+### Ubuntu / Debian
+
+You need to install [emscripten](https://emscripten.org/) and ensure it is on your `PATH`.
+
+After cloned the repo, to build you just have to run these:
+
+```sh
+npm run build:wasm:dev # build lua
+npm run build # build the js code/bridge
+npm test # ensure everything it's working fine
+```
