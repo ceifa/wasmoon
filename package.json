@@ -13,6 +13,10 @@
         "lint": "prettier --write . && eslint . --fix --cache",
         "lint:nofix": "eslint ."
     },
+    "files": [
+        "bin/*",
+        "dist/*"
+    ],
     "bin": {
         "wasmoon": "bin/wasmoon"
     },
