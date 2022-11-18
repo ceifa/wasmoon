@@ -42,6 +42,7 @@ const runHeapsort = async () => {
 
     console.time('Run plain heapsort')
     state.global.lua.luaL_loadstring(state.global.address, heapsort)
+    state.global.lua.lua_pcallk(state.global.address, 0, 1, 0, 0, null)
     state.global.lua.lua_pcallk(state.global.address, 0, 0, 0, 0, null)
     console.timeEnd('Run plain heapsort')
 }

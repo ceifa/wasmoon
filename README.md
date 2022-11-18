@@ -80,11 +80,11 @@ Wasmoon compiles the [official Lua code](https://github.com/lua/lua) to webassem
 
 Because of wasm, wasmoon will run Lua code much faster than fengari, but if you are going to interop a lot between JS and Lua, this may be not be true anymore, you probably should test on you specific use case to take the prove.
 
-This is the results running a [heap sort code](https://github.com/ceifa/wasmoon/blob/main/bench/heapsort.lua) in a list of 20k numbers 10x(less is better):
+This is the results running a [heap sort code](https://github.com/ceifa/wasmoon/blob/main/bench/heapsort.lua) in a list of 2k numbers 10x(less is better):
 
-| wasmoon | fengari |
-| ------- | ------- |
-| 0.177ms | 2.107ms |
+| wasmoon  | fengari   |
+| -------- | --------  |
+| 15.267ms | 389.923ms |
 
 ### Size
 
