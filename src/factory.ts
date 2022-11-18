@@ -5,22 +5,21 @@ import LuaWasm from './luawasm'
 import version from 'package-version'
 
 export default class LuaFactory {
-    // Promises always resolve to the same thing.
-    // Need to do it like this because otherwise if the caller calls createEngine multiple times before yielding
-    // they'll end up with multiple wasm initialisations.
-    private luaWasmPromise = LuaWasm.initialize(this.customWasmUri, this.environmentVariables)
+    private luaWasmPromise: Promise<LuaWasm>
 
-    public constructor(private readonly customWasmUri?: string, private readonly environmentVariables?: EnvironmentVariables) {
-        if (this.customWasmUri === undefined) {
+    public constructor(customWasmUri?: string, environmentVariables?: EnvironmentVariables) {
+        if (customWasmUri === undefined) {
             const isBrowser =
                 (typeof window === 'object' && typeof window.document !== 'undefined') ||
                 (typeof self === 'object' && self?.constructor?.name === 'DedicatedWorkerGlobalScope')
 
             if (isBrowser) {
                 const majorminor = version.slice(0, version.lastIndexOf('.'))
-                this.customWasmUri = `http://unpkg.com/wasmoon@${majorminor}/dist/glue.wasm`
+                customWasmUri = `http://unpkg.com/wasmoon@${majorminor}/dist/glue.wasm`
             }
         }
+
+        this.luaWasmPromise = LuaWasm.initialize(customWasmUri, environmentVariables)
     }
 
     public async mountFile(path: string, content: string | ArrayBufferView): Promise<void> {

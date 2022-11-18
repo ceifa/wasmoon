@@ -83,7 +83,7 @@ Because of wasm, wasmoon will run Lua code much faster than fengari, but if you 
 This is the results running a [heap sort code](https://github.com/ceifa/wasmoon/blob/main/bench/heapsort.lua) in a list of 2k numbers 10x(less is better):
 
 | wasmoon  | fengari   |
-| -------- | --------  |
+| -------- | --------- |
 | 15.267ms | 389.923ms |
 
 ### Size
@@ -147,7 +147,6 @@ Add the section browser on `package.json`:
 }
 ```
 
-
 ## How to build
 
 Firstly download the lua submodule and install the other Node.JS dependencies:
@@ -168,7 +167,6 @@ npm run build:wasm:docker:dev # build lua
 npm run build # build the js code/bridge
 npm test # ensure everything it's working fine
 ```
-
 
 ### Ubuntu / Debian
 
