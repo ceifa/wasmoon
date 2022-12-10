@@ -137,8 +137,9 @@ export default class Thread {
     }
 
     public runSync(argCount = 0): MultiReturn {
+        const base = this.getTop() - argCount - 1 // The 1 is for the function to run
         this.assertOk(this.lua.lua_pcallk(this.address, argCount, LUA_MULTRET, 0, 0, null) as LuaReturn)
-        return this.getStackValues()
+        return this.getStackValues(base)
     }
 
     public pop(count = 1): void {
@@ -159,12 +160,12 @@ export default class Thread {
         return this.getStackValues()
     }
 
-    public getStackValues(): MultiReturn {
-        const returns = this.getTop()
+    public getStackValues(start = 0): MultiReturn {
+        const returns = this.getTop() - start
         const returnValues = new MultiReturn(returns)
 
         for (let i = 0; i < returns; i++) {
-            returnValues[i] = this.getValue(i + 1)
+            returnValues[i] = this.getValue(start + i + 1)
         }
 
         return returnValues

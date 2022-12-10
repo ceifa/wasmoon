@@ -601,3 +601,15 @@ test('throw error includes stack trace', async () => {
         expect(err.message.includes(`[string "..."]:7: in main chunk`)).toEqual(true)
     }
 })
+
+test('should get only the last result on run', async () => {
+    const engine = await getEngine()
+
+    const a = await engine.doString(`return 1`)
+    const b = await engine.doString(`return 3`)
+    const c = engine.doStringSync(`return 2`)
+
+    expect(a).toEqual(1)
+    expect(b).toEqual(3)
+    expect(c).toEqual(2)
+})
