@@ -25,4 +25,13 @@ jobs:
             - run: npm run lint:nofix
             - run: npm run build:wasm
             - run: npm run build
-            - run: npm test -- --no-cache
+            - run: |
+                  ulimit -c unlimited
+                  npm test
+                  sudo chmod -R +rwx /cores/*
+            - uses: actions/upload-artifact@v2
+                if: failure()
+                with:
+                    name: core-dumps
+                    path: /cores
+                    retention-days: 1
