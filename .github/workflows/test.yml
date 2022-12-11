@@ -29,6 +29,8 @@ jobs:
                   ulimit -c unlimited
                   sudo npm test
                   sudo chmod -R +rwx /cores/*
+                  ulimit -c
+                  sudo ls -la
             - uses: actions/upload-artifact@v3
               if: failure()
               with:
