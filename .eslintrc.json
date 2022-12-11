@@ -22,7 +22,7 @@
     "ignorePatterns": [
         "dist/*",
         "build/*",
-        "rollup.config.js",
+        "rollup.config.mjs",
         "utils/*"
     ],
     "rules": {

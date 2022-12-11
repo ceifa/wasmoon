@@ -1,10 +1,10 @@
-import { LuaFactory } from '../dist'
+const { LuaFactory } = require('..')
 
-export const getFactory = (env) => {
+module.exports.getFactory = (env) => {
     return new LuaFactory(undefined, env)
 }
 
-export const getEngine = (config = {}) => {
+module.exports.getEngine = (config = {}) => {
     return new LuaFactory().createEngine({
         injectObjects: true,
         ...config,
@@ -12,6 +12,6 @@ export const getEngine = (config = {}) => {
 }
 
 // Used to make the event loop cycle
-export const tick = () => {
+module.exports.tick = () => {
     return new Promise((resolve) => setImmediate(resolve))
 }
