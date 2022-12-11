@@ -25,12 +25,13 @@ jobs:
             - run: npm run lint:nofix
             - run: npm run build:wasm
             - run: npm run build
-            - run: |
-                  ulimit -c unlimited
-                  sudo npm test
-                  sudo chmod -R +rwx /cores/*
-                  ulimit -c
-                  sudo ls -la
+            - run: ulimit -c unlimited && sudo npm test
+            - run: sudo chmod -R +rwx /cores/*
+              if: failure()
+            - run: ulimit -c
+              if: failure()
+            - run: sudo ls -la
+              if: failure()
             - uses: actions/upload-artifact@v3
               if: failure()
               with:
