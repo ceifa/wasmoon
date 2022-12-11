@@ -1,5 +1,5 @@
-const { expect, test } = require('@jest/globals')
-const { getFactory, getEngine } = require('./utils')
+import { expect, test } from '@jest/globals'
+import { getEngine, getFactory } from './utils'
 
 test('mount a file and require inside lua should succeed', async () => {
     const factory = getFactory()

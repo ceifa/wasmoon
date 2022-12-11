@@ -1,5 +1,5 @@
-const { expect, test } = require('@jest/globals')
-const { getEngine, tick } = require('./utils')
+import { expect, jest, test } from '@jest/globals'
+import { getEngine, tick } from './utils'
 
 jest.useFakeTimers({ legacyFakeTimers: true })
 

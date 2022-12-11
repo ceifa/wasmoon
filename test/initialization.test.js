@@ -1,5 +1,5 @@
-const { test } = require('@jest/globals')
-const { LuaFactory } = require('../dist')
+import { LuaFactory } from '../dist'
+import { test } from '@jest/globals'
 
 test('create engine should succeed', async () => {
     await new LuaFactory().createEngine()

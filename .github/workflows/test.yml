@@ -26,5 +26,3 @@ jobs:
             - run: npm run build:wasm
             - run: npm run build
             - run: npm test
-              env:
-                  NODE_OPTIONS: --experimental-vm-modules
