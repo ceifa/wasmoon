@@ -25,4 +25,4 @@ jobs:
             - run: npm run lint:nofix
             - run: npm run build:wasm
             - run: npm run build
-            - run: npm test
+            - run: npm test -- --no-cache
