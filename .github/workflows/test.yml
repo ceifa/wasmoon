@@ -27,7 +27,7 @@ jobs:
             - run: npm run build
             - run: |
                   ulimit -c unlimited
-                  npm test
+                  sudo npm test
                   sudo chmod -R +rwx /cores/*
             - uses: actions/upload-artifact@v3
               if: failure()
