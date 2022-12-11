@@ -58,6 +58,10 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                     (functionThread: Thread, self: Promise<any>) => {
                         checkSelf(self)
 
+                        if (functionThread.address === thread.address) {
+                            throw new Error('cannot await in the main thread')
+                        }
+
                         let promiseResult: { status: 'fulfilled' | 'rejected'; value: any } | undefined = undefined
 
                         const awaitPromise = self
