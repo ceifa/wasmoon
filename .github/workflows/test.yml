@@ -10,7 +10,7 @@ jobs:
 
         strategy:
             matrix:
-                node-version: [14, 16, 18]
+                node-version: [16, 18]
 
         steps:
             - uses: actions/checkout@v3
@@ -26,3 +26,5 @@ jobs:
             - run: npm run build:wasm
             - run: npm run build
             - run: npm test
+              env:
+                  NODE_OPTIONS: --experimental-vm-modules
