@@ -29,9 +29,9 @@ jobs:
                   ulimit -c unlimited
                   npm test
                   sudo chmod -R +rwx /cores/*
-            - uses: actions/upload-artifact@v2
-                if: failure()
-                with:
-                    name: core-dumps
-                    path: /cores
-                    retention-days: 1
+            - uses: actions/upload-artifact@v3
+              if: failure()
+              with:
+                  name: core-dumps
+                  path: /cores
+                  retention-days: 1
