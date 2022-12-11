@@ -22,6 +22,8 @@ jobs:
             - run: npm run build:wasm
             - run: npm run build
             - run: npm test
+              env:
+                  NODE_OPTIONS: --experimental-vm-modules
             - uses: JS-DevTools/npm-publish@v1
               with:
                   token: ${{ secrets.NPM_TOKEN }}
