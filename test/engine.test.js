@@ -1,6 +1,6 @@
+const { LuaLibraries, LuaReturn, LuaThread, LuaType, decorate, decorateProxy, decorateUserdata } = require('..')
 const { expect, test } = require('@jest/globals')
 const { getEngine, getFactory } = require('./utils')
-const { LuaThread, LuaReturn, decorate, decorateUserdata, LuaLibraries, decorateProxy, LuaType } = require('../dist')
 
 jest.useFakeTimers({ legacyFakeTimers: true })
 

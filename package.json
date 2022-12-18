@@ -6,8 +6,8 @@
     "scripts": {
         "build:wasm:dev": "./build.sh dev",
         "build:wasm": "./build.sh",
-        "build:wasm:docker:dev": "docker run --rm -v $(pwd):/wasmoon emscripten/emsdk /wasmoon/build.sh dev",
-        "build:wasm:docker": "docker run --rm -v $(pwd):/wasmoon emscripten/emsdk /wasmoon/build.sh",
+        "build:wasm:docker:dev": "docker run --rm -v $(pwd):/wasmoon emscripten/emsdk:3.1.26 /wasmoon/build.sh dev",
+        "build:wasm:docker": "docker run --rm -v $(pwd):/wasmoon emscripten/emsdk:3.1.26 /wasmoon/build.sh",
         "start": "rollup -c -w",
         "test": "jest --env=node ./test/",
         "build": "rollup -c && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",
@@ -39,21 +39,21 @@
         "webassembly"
     ],
     "devDependencies": {
-        "@rollup/plugin-typescript": "8.3.2",
-        "@types/node": "17.0.36",
-        "@typescript-eslint/eslint-plugin": "5.26.0",
-        "@typescript-eslint/parser": "5.26.0",
-        "eslint": "8.16.0",
+        "@rollup/plugin-typescript": "10.0.1",
+        "@types/node": "18.11.12",
+        "@typescript-eslint/eslint-plugin": "5.46.0",
+        "@typescript-eslint/parser": "5.46.0",
+        "eslint": "8.29.0",
         "eslint-config-prettier": "8.5.0",
-        "eslint-plugin-prettier": "4.0.0",
+        "eslint-plugin-prettier": "4.2.1",
         "eslint-plugin-sort-imports-es6-autofix": "0.6.0",
         "fengari": "0.1.4",
-        "jest": "28.1.0",
-        "prettier": "2.6.2",
-        "rollup": "2.77.0",
+        "jest": "29.3.1",
+        "prettier": "2.8.1",
+        "rollup": "3.7.5",
         "rollup-plugin-copy": "3.4.0",
-        "tslib": "2.4.0",
-        "typescript": "4.7.4"
+        "tslib": "2.4.1",
+        "typescript": "4.9.4"
     },
     "dependencies": {
         "@types/emscripten": "1.39.5"

@@ -1,6 +1,6 @@
 import typescript from '@rollup/plugin-typescript'
 import copy from 'rollup-plugin-copy'
-import { version } from './package.json'
+import pkg from './package.json' assert { type: 'json' }
 
 const production = !process.env.ROLLUP_WATCH
 
@@ -22,7 +22,7 @@ export default {
             },
             load(id) {
                 if (id === 'package-version') {
-                    return `export default '${version}'`
+                    return `export default '${pkg.version}'`
                 }
             },
         },
