@@ -175,6 +175,7 @@ You need to install [emscripten](https://emscripten.org/) and ensure it is on yo
 After cloned the repo, to build you just have to run these:
 
 ```sh
+emsdk install 3.1.26 && emsdk activate 3.1.26 # activates emsdk version needed to run
 npm run build:wasm:dev # build lua
 npm run build # build the js code/bridge
 npm test # ensure everything it's working fine

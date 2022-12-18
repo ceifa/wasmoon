@@ -6,8 +6,8 @@
     "scripts": {
         "build:wasm:dev": "./build.sh dev",
         "build:wasm": "./build.sh",
-        "build:wasm:docker:dev": "docker run --rm -v $(pwd):/wasmoon emscripten/emsdk /wasmoon/build.sh dev",
-        "build:wasm:docker": "docker run --rm -v $(pwd):/wasmoon emscripten/emsdk /wasmoon/build.sh",
+        "build:wasm:docker:dev": "docker run --rm -v $(pwd):/wasmoon emscripten/emsdk:3.1.26 /wasmoon/build.sh dev",
+        "build:wasm:docker": "docker run --rm -v $(pwd):/wasmoon emscripten/emsdk:3.1.26 /wasmoon/build.sh",
         "start": "rollup -c -w",
         "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --detectOpenHandles --env=node --maxWorkers=2 ./test/",
         "build": "rollup -c && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",
