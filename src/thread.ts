@@ -156,8 +156,9 @@ export default class Thread {
             this.pushValue(arg)
         }
 
+        const base = this.getTop() - args.length - 1 // The 1 is for the function to run
         this.lua.lua_callk(this.address, args.length, LUA_MULTRET, 0, null)
-        return this.getStackValues()
+        return this.getStackValues(base)
     }
 
     public getStackValues(start = 0): MultiReturn {

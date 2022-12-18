@@ -608,8 +608,24 @@ test('should get only the last result on run', async () => {
     const a = await engine.doString(`return 1`)
     const b = await engine.doString(`return 3`)
     const c = engine.doStringSync(`return 2`)
+    const d = engine.doStringSync(`return 5`)
 
     expect(a).toEqual(1)
     expect(b).toEqual(3)
     expect(c).toEqual(2)
+    expect(d).toEqual(5)
+})
+
+test('should get only the return values on call function', async () => {
+    const engine = await getEngine()
+    engine.global.set('hello', (name) => `Hello ${name}!`)
+
+    const a = await engine.doString(`return 1`)
+    const b = engine.doStringSync(`return 5`)
+    const values = engine.global.call('hello', 'joao')
+
+    expect(a).toEqual(1)
+    expect(b).toEqual(5)
+    expect(values).toHaveLength(1)
+    expect(values[0]).toEqual('Hello joao!')
 })
