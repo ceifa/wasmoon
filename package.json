@@ -9,7 +9,7 @@
         "build:wasm:docker:dev": "docker run --rm -v $(pwd):/wasmoon emscripten/emsdk /wasmoon/build.sh dev",
         "build:wasm:docker": "docker run --rm -v $(pwd):/wasmoon emscripten/emsdk /wasmoon/build.sh",
         "start": "rollup -c -w",
-        "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --detectOpenHandles --env=node --runInBand ./test/",
+        "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --detectOpenHandles --env=node --maxWorkers=2 ./test/",
         "build": "rollup -c && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",
         "clean": "rm -rf dist build",
         "lint": "prettier --write . && eslint . --fix --cache",
