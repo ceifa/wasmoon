@@ -301,3 +301,14 @@ test('error in promise next catchable', async () => {
     jest.advanceTimersByTime(50)
     await resPromise
 })
+
+test('should not be possible to await in synchronous run', async () => {
+    const engine = await getEngine()
+    engine.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
+
+    expect(() => {
+        engine.doStringSync(`
+            sleep(1000):await()
+        `)
+    }).toThrow('cannot await in the main thread')
+})
