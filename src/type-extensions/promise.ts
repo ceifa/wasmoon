@@ -9,19 +9,9 @@ import TypeExtension from '../type-extension'
 
 class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     private gcPointer: number
-    private readonly functionRegistry =
-        typeof FinalizationRegistry !== 'undefined'
-            ? new FinalizationRegistry((func: number) => {
-                  this.thread.lua.module.removeFunction(func)
-              })
-            : undefined
 
     public constructor(thread: Global, injectObject: boolean) {
         super(thread, 'js_promise')
-
-        if (!this.functionRegistry) {
-            console.warn('PromiseTypeExtension: FinalizationRegistry not found. Memory leaks likely.')
-        }
 
         this.gcPointer = thread.lua.module.addFunction((functionStateAddress: LuaState) => {
             // Throws a lua error which does a jump if it does not match.
@@ -84,6 +74,8 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                                 return thread.lua.lua_yieldk(functionThread.address, 0, 0, continuance)
                             }
 
+                            this.thread.lua.module.removeFunction(continuance)
+
                             const continuanceThread = thread.stateToThread(continuanceState)
 
                             if (promiseResult.status === 'rejected') {
@@ -103,8 +95,6 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                                 return 1
                             }
                         }, 'iiii')
-
-                        this.functionRegistry?.register(awaitPromise, continuance)
 
                         functionThread.pushValue(awaitPromise)
                         return new RawResult(thread.lua.lua_yieldk(functionThread.address, 1, 0, continuance))
