@@ -31,7 +31,7 @@ class UserdataTypeExtension extends TypeExtension<any, UserdataDecorationOptions
             const metatableIndex = thread.lua.lua_gettop(thread.address)
 
             // Mark it as uneditable
-            thread.lua.lua_pushstring(thread.address, 'protected metatable')
+            thread.lua.lua_pushliteral(thread.address, 'protected metatable')
             thread.lua.lua_setfield(thread.address, metatableIndex, '__metatable')
 
             // Add the gc function

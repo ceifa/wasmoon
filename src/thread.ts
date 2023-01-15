@@ -52,8 +52,15 @@ export default class Thread {
         this.assertOk(this.lua.lua_resetthread(this.address))
     }
 
-    public loadString(luaCode: string, name?: string): void {
-        this.assertOk(this.lua.luaL_loadbufferx(this.address, luaCode, luaCode.length, name || luaCode, null))
+    public loadString(luaCode: string, name: string | null = null): void {
+        const bufferSize = this.lua.module.lengthBytesUTF8(luaCode)
+        const bufferPointer = this.lua.module._malloc(bufferSize + 1)
+        try {
+            this.lua.module.stringToUTF8(luaCode, bufferPointer, bufferSize + 1)
+            this.assertOk(this.lua.luaL_loadbufferx(this.address, bufferPointer, bufferSize, name, null))
+        } finally {
+            this.lua.module._free(bufferPointer)
+        }
     }
 
     public loadFile(filename: string): void {
@@ -203,7 +210,7 @@ export default class Thread {
                 }
                 break
             case 'string':
-                this.lua.lua_pushstring(this.address, target)
+                this.lua.lua_pushliteral(this.address, target)
                 break
             case 'boolean':
                 this.lua.lua_pushboolean(this.address, target ? 1 : 0)

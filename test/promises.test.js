@@ -285,7 +285,7 @@ describe('Promises', () => {
                 error("sleep done")
             end):await()
         `)
-        await expect(resPromise).eventually.to.be.rejectedWith('[string "..."]:3: sleep done')
+        await expect(resPromise).eventually.to.be.rejectedWith('[string "?"]:3: sleep done')
     })
 
     it('should not be possible to await in synchronous run', async () => {

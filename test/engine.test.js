@@ -604,12 +604,12 @@ describe('Engine', () => {
         `)
             throw new Error('should not be reached')
         } catch (err) {
-            expect(err.message).to.includes('[string "..."]:3: function a threw error')
+            expect(err.message).to.includes('[string "?"]:3: function a threw error')
             expect(err.message).to.includes('stack traceback:')
-            expect(err.message).to.includes(`[string "..."]:3: in upvalue 'a'`)
-            expect(err.message).to.includes(`[string "..."]:5: in upvalue 'b'`)
-            expect(err.message).to.includes(`[string "..."]:6: in local 'c'`)
-            expect(err.message).to.includes(`[string "..."]:7: in main chunk`)
+            expect(err.message).to.includes(`[string "?"]:3: in upvalue 'a'`)
+            expect(err.message).to.includes(`[string "?"]:5: in upvalue 'b'`)
+            expect(err.message).to.includes(`[string "?"]:6: in local 'c'`)
+            expect(err.message).to.includes(`[string "?"]:7: in main chunk`)
         }
     })
 
@@ -639,5 +639,16 @@ describe('Engine', () => {
         expect(b).to.be.equal(5)
         expect(values).to.have.length(1)
         expect(values[0]).to.be.equal('Hello joao!')
+    })
+
+    it('create a large string variable should succeed', async () => {
+        const engine = await getEngine()
+        const str = 'a'.repeat(1000000)
+
+        engine.global.set('str', str)
+
+        const res = await engine.doString('return str')
+
+        expect(res).to.be.equal(str)
     })
 })

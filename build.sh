@@ -23,7 +23,9 @@ emcc \
         'FS', \
         'ENV', \
         'getValue', \
-        'setValue'
+        'setValue', \
+        'lengthBytesUTF8', \
+        'stringToUTF8'
     ]" \
     -s MODULARIZE=1 \
     -s ALLOW_TABLE_GROWTH=1 \

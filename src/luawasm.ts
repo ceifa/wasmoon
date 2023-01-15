@@ -10,6 +10,8 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     FS: typeof FS
     ENV: EnvironmentVariables
     _realloc: (pointer: number, size: number) => number
+    lengthBytesUTF8: (str: string) => number
+    stringToUTF8: (str: string, outPtr: number, maxBytesToWrite: number) => void
 }
 
 interface ReferenceMetadata {
@@ -61,7 +63,7 @@ export default class LuaWasm {
     public luaL_ref: (L: LuaState, t: number) => number
     public luaL_unref: (L: LuaState, t: number, ref: number) => void
     public luaL_loadfilex: (L: LuaState, filename: string | null, mode: string | null) => LuaReturn
-    public luaL_loadbufferx: (L: LuaState, buff: string | null, sz: number, name: string | null, mode: string | null) => LuaReturn
+    public luaL_loadbufferx: (L: LuaState, buff: number | null, sz: number, name: string | null, mode: string | null) => LuaReturn
     public luaL_loadstring: (L: LuaState, s: string | null) => LuaReturn
     public luaL_newstate: () => LuaState
     public luaL_len: (L: LuaState, idx: number) => number
@@ -115,8 +117,8 @@ export default class LuaWasm {
     public lua_pushnil: (L: LuaState) => void
     public lua_pushnumber: (L: LuaState, n: number) => void
     public lua_pushinteger: (L: LuaState, n: number) => void
-    public lua_pushlstring: (L: LuaState, s: string | null, len: number) => string
-    public lua_pushstring: (L: LuaState, s: string | null) => string
+    public lua_pushlstring: (L: LuaState, s: number | null, len: number) => string
+    public lua_pushstring: (L: LuaState, s: number | null) => string
     public lua_pushcclosure: (L: LuaState, fn: number, n: number) => void
     public lua_pushboolean: (L: LuaState, b: number) => void
     public lua_pushlightuserdata: (L: LuaState, p: number | null) => void
@@ -218,7 +220,7 @@ export default class LuaWasm {
         this.luaL_ref = this.module.cwrap('luaL_ref', 'number', ['number', 'number'])
         this.luaL_unref = this.module.cwrap('luaL_unref', null, ['number', 'number', 'number'])
         this.luaL_loadfilex = this.module.cwrap('luaL_loadfilex', 'number', ['number', 'string', 'string'])
-        this.luaL_loadbufferx = this.module.cwrap('luaL_loadbufferx', 'number', ['number', 'string', 'number', 'string', 'string'])
+        this.luaL_loadbufferx = this.module.cwrap('luaL_loadbufferx', 'number', ['number', 'number', 'number', 'string', 'string'])
         this.luaL_loadstring = this.module.cwrap('luaL_loadstring', 'number', ['number', 'string'])
         this.luaL_newstate = this.module.cwrap('luaL_newstate', 'number', [])
         this.luaL_len = this.module.cwrap('luaL_len', 'number', ['number', 'number'])
@@ -272,8 +274,8 @@ export default class LuaWasm {
         this.lua_pushnil = this.module.cwrap('lua_pushnil', null, ['number'])
         this.lua_pushnumber = this.module.cwrap('lua_pushnumber', null, ['number', 'number'])
         this.lua_pushinteger = this.module.cwrap('lua_pushinteger', null, ['number', 'number'])
-        this.lua_pushlstring = this.module.cwrap('lua_pushlstring', 'string', ['number', 'string', 'number'])
-        this.lua_pushstring = this.module.cwrap('lua_pushstring', 'string', ['number', 'string'])
+        this.lua_pushlstring = this.module.cwrap('lua_pushlstring', 'string', ['number', 'number', 'number'])
+        this.lua_pushstring = this.module.cwrap('lua_pushstring', 'string', ['number', 'number'])
         this.lua_pushcclosure = this.module.cwrap('lua_pushcclosure', null, ['number', 'number', 'number'])
         this.lua_pushboolean = this.module.cwrap('lua_pushboolean', null, ['number', 'number'])
         this.lua_pushlightuserdata = this.module.cwrap('lua_pushlightuserdata', null, ['number', 'number'])
@@ -362,6 +364,17 @@ export default class LuaWasm {
 
     public lua_upvalueindex(index: number): number {
         return LUA_REGISTRYINDEX - index
+    }
+
+    public lua_pushliteral(luaState: LuaState, value: string): string {
+        const bufferSize = this.module.lengthBytesUTF8(value)
+        const bufferPointer = this.module._malloc(bufferSize + 1)
+        try {
+            this.module.stringToUTF8(value, bufferPointer, bufferSize + 1)
+            return this.lua_pushstring(luaState, bufferPointer)
+        } finally {
+            this.module._free(bufferPointer)
+        }
     }
 
     public ref(data: unknown): number {
