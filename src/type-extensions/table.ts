@@ -21,21 +21,21 @@ class TableTypeExtension extends TypeExtension<TableType> {
 
     public getValue(thread: Thread, index: number, userdata?: any): TableType {
         // This is a map of Lua pointers to JS objects.
-        const seenMap: Map<number, Record<string, string>> = userdata || new Map<number, Record<string, string>>()
+        const seenMap: Map<number, TableType> = userdata || new Map()
         const pointer = thread.lua.lua_topointer(thread.address, index)
 
         let table = seenMap.get(pointer)
         if (!table) {
-            table = {}
+            const keys = this.readTableKeys(thread, index)
+
+            const isSequential = keys.length > 0 && keys.every((key, index) => key === String(index + 1))
+            table = isSequential ? [] : {}
+
             seenMap.set(pointer, table)
-            this.tableToObject(thread, index, seenMap, table)
+            this.readTableValues(thread, index, seenMap, table)
         }
 
-        const keys = Object.keys(table)
-
-        // Only sequential tables will be considered as arrays
-        const isSequential = keys.length > 0 && keys.every((key, index) => key === String(index + 1))
-        return isSequential ? Object.values(table) : table
+        return table
     }
 
     public pushValue(thread: Thread, { target }: Decoration<TableType>, userdata?: Map<any, number>): boolean {
@@ -91,15 +91,34 @@ class TableTypeExtension extends TypeExtension<TableType> {
         return true
     }
 
-    private tableToObject(thread: Thread, index: number, seenMap: Map<number, TableType>, table: Record<string, string>): void {
+    private readTableKeys(thread: Thread, index: number): string[] {
+        const keys = []
+
         thread.lua.lua_pushnil(thread.address)
         while (thread.lua.lua_next(thread.address, index)) {
             // JS only supports string keys in objects.
-            const key = thread.lua.luaL_tolstring(thread.address, -2, null)
+            const key = thread.indexToString(-2)
+            keys.push(key)
+            // Pop the value.
             thread.pop()
+        }
+
+        return keys
+    }
+
+    private readTableValues(thread: Thread, index: number, seenMap: Map<number, TableType>, table: TableType): void {
+        const isArray = Array.isArray(table)
+
+        thread.lua.lua_pushnil(thread.address)
+        while (thread.lua.lua_next(thread.address, index)) {
+            const key = thread.indexToString(-2)
             const value = thread.getValue(-1, undefined, seenMap)
 
-            table[key] = value
+            if (isArray) {
+                table.push(value)
+            } else {
+                table[key] = value
+            }
 
             thread.pop()
         }
