@@ -439,6 +439,7 @@ export default class LuaWasm {
 
         return (...args: any[]) => {
             const resolvedArgTypes: Emscripten.JSType[] = argTypes.map((argType, i) => {
+                // because it will be freed later, this can only be used on functions that lua internally copies the string
                 if (argType === 'string|number') {
                     if (args[i]?.length > 1024) {
                         const bufferPointer = this.module.allocateUTF8(args[i] as string)
