@@ -651,4 +651,13 @@ describe('Engine', () => {
 
         expect(res).to.be.equal(str)
     })
+
+    it('execute a large string should succeed', async () => {
+        const engine = await getEngine()
+        const str = 'a'.repeat(1000000)
+
+        const res = await engine.doString(`return [[${str}]]`)
+
+        expect(res).to.be.equal(str)
+    })
 })
