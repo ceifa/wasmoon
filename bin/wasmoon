@@ -34,15 +34,16 @@ async function main() {
 
     const includes = consumeOption('-l')
     const forceInteractive = consumeOption('-i', true).length > 0
-    let runFile = process.stdin.isTTY && consumeOption(snippets[0], true)[0]
+    const runFile = process.stdin.isTTY && consumeOption(snippets[0], true)[0]
     const args = snippets
 
     for (const include of includes) {
-        const stat = await fs.promises.lstat(include)
+        const relativeInclude = path.resolve(process.cwd(), include)
+        const stat = await fs.promises.lstat(relativeInclude)
         if (stat.isFile()) {
-            await factory.mountFile(include, await fs.promises.readFile(include))
+            await factory.mountFile(relativeInclude, await fs.promises.readFile(relativeInclude))
         } else {
-            for await (const file of walk(include)) {
+            for await (const file of walk(relativeInclude)) {
                 await factory.mountFile(file, await fs.promises.readFile(file))
             }
         }
@@ -50,16 +51,14 @@ async function main() {
 
     lua.global.set('arg', decorate(args, { disableProxy: true }))
 
-    let interactive = process.stdin.isTTY && (forceInteractive || !runFile)
+    const interactive = process.stdin.isTTY && (forceInteractive || !runFile)
 
     if (runFile) {
-        runFile = path.resolve(process.cwd(), runFile)
-        await factory.mountFile(runFile, await fs.promises.readFile(runFile))
+        const relativeRunFile = path.resolve(process.cwd(), runFile)
+        await factory.mountFile(relativeRunFile, await fs.promises.readFile(relativeRunFile))
 
-        const result = await lua.doFile(runFile)
-        if (result) {
-            console.log(result)
-        }
+        await lua.doFile(relativeRunFile)
+        console.log(lua.global.indexToString(-1))
     }
 
     if (!interactive && runFile) {
@@ -93,7 +92,7 @@ async function main() {
             const result = luamodule.lua_pcallk(lua.global.address, 0, LUA_MULTRET, 0, 0, null)
             if (result === LuaReturn.Ok) {
                 const returnValues = Array.from({ length: lua.global.getTop() })
-                    .map((_, i) => luamodule.luaL_tolstring(lua.global.address, i + 1, null))
+                    .map((_, i) => lua.global.indexToString(i + 1))
 
                 if (returnValues.length) {
                     console.log(...returnValues)
@@ -105,10 +104,8 @@ async function main() {
             rl.prompt()
         }
     } else {
-        const result = await lua.doString(fs.readFileSync(0, 'utf-8'))
-        if (result) {
-            console.log(result)
-        }
+        await lua.doString(fs.readFileSync(0, 'utf-8'))
+        console.log(lua.global.indexToString(-1))
     }
 }
 
