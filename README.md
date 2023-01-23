@@ -114,6 +114,7 @@ module.exports = {
             child_process: false,
             crypto: false,
             url: false,
+            module: false
         },
     },
 }
@@ -126,7 +127,7 @@ With the package [rollup-plugin-ignore](https://www.npmjs.com/package/rollup-plu
 ```js
 export default {
     input: 'src/index.js', // Here is your entry file,
-    plugins: [ignore(['path', 'fs', 'child_process', 'crypto', 'url'])],
+    plugins: [ignore(['path', 'fs', 'child_process', 'crypto', 'url', 'module'])],
 }
 ```
 
@@ -142,7 +143,8 @@ Add the section browser on `package.json`:
         "fs": false,
         "path": false,
         "crypto": false,
-        "url": false
+        "url": false,
+        "module": false
     }
 }
 ```
