@@ -15,7 +15,7 @@ export default class LuaFactory {
 
             if (isBrowser) {
                 const majorminor = version.slice(0, version.lastIndexOf('.'))
-                customWasmUri = `http://unpkg.com/wasmoon@${majorminor}/dist/glue.wasm`
+                customWasmUri = `https://unpkg.com/wasmoon@${majorminor}/dist/glue.wasm`
             }
         }
 
