@@ -37,6 +37,7 @@ emcc \
     -s NODEJS_CATCH_EXIT=0 \
 	-s NODEJS_CATCH_REJECTION=0 \
     -s MALLOC=emmalloc \
+    -s STACK_SIZE=1MB \
     -s EXPORTED_FUNCTIONS="[
         '_malloc', \
         '_free', \
