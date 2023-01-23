@@ -640,4 +640,24 @@ describe('Engine', () => {
         expect(values).to.have.length(1)
         expect(values[0]).to.be.equal('Hello joao!')
     })
+
+    it('create a large string variable should succeed', async () => {
+        const engine = await getEngine()
+        const str = 'a'.repeat(1000000)
+
+        engine.global.set('str', str)
+
+        const res = await engine.doString('return str')
+
+        expect(res).to.be.equal(str)
+    })
+
+    it('execute a large string should succeed', async () => {
+        const engine = await getEngine()
+        const str = 'a'.repeat(1000000)
+
+        const res = await engine.doString(`return [[${str}]]`)
+
+        expect(res).to.be.equal(str)
+    })
 })

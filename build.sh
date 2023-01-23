@@ -17,13 +17,16 @@ sed -i "s/^#define LUA_32BITS\t0$/#define LUA_32BITS\t1/" ./lua/luaconf.h
 emcc \
     -s WASM=1 $extension -o ./build/glue.js \
     -s EXPORTED_RUNTIME_METHODS="[
-        'cwrap', \
+        'ccall', \
         'addFunction', \
         'removeFunction', \
         'FS', \
         'ENV', \
         'getValue', \
-        'setValue'
+        'setValue', \
+        'lengthBytesUTF8', \
+        'stringToUTF8', \
+        'allocateUTF8'
     ]" \
     -s MODULARIZE=1 \
     -s ALLOW_TABLE_GROWTH=1 \

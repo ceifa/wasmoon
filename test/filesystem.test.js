@@ -53,4 +53,15 @@ describe('Filesystem', () => {
 
         await expect(engine.doFile('init.lua')).to.eventually.be.rejected
     })
+
+    it('mount a file with a large content should succeed', async () => {
+        const factory = getFactory()
+        const engine = await factory.createEngine()
+
+        const content = 'a'.repeat(1000000)
+        await factory.mountFile('init.lua', `local a = "${content}" return a`)
+        const value = await engine.doFile('init.lua')
+
+        expect(value).to.be.equal(content)
+    })
 })
