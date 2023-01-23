@@ -51,12 +51,12 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
 
         // Creates metatable if it doesn't exist, always pushes it onto the stack.
         if (thread.lua.luaL_newmetatable(thread.address, this.name)) {
-            thread.lua.lua_pushliteral(thread.address, '__gc')
+            thread.lua.lua_pushstring(thread.address, '__gc')
             thread.lua.lua_pushcclosure(thread.address, this.gcPointer, 0)
             thread.lua.lua_settable(thread.address, -3)
 
-            thread.lua.lua_pushliteral(thread.address, '__metatable')
-            thread.lua.lua_pushliteral(thread.address, 'protected metatable')
+            thread.lua.lua_pushstring(thread.address, '__metatable')
+            thread.lua.lua_pushstring(thread.address, 'protected metatable')
             thread.lua.lua_settable(thread.address, -3)
         }
         // Pop the metatable from the stack.

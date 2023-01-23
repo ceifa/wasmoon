@@ -203,7 +203,7 @@ export default class Thread {
                 }
                 break
             case 'string':
-                this.lua.lua_pushliteral(this.address, target)
+                this.lua.lua_pushstring(this.address, target)
                 break
             case 'boolean':
                 this.lua.lua_pushboolean(this.address, target ? 1 : 0)
