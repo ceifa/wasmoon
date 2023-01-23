@@ -2,12 +2,15 @@ import { EnvironmentVariables, LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType }
 import initWasmModule from '../build/glue.js'
 
 interface LuaEmscriptenModule extends EmscriptenModule {
-    cwrap: typeof cwrap
+    ccall: typeof ccall
     addFunction: typeof addFunction
     removeFunction: typeof removeFunction
     setValue: typeof setValue
     getValue: typeof getValue
     FS: typeof FS
+    allocateUTF8: typeof allocateUTF8
+    lengthBytesUTF8: typeof lengthBytesUTF8
+    stringToUTF8: typeof stringToUTF8
     ENV: EnvironmentVariables
     _realloc: (pointer: number, size: number) => number
 }
@@ -61,7 +64,13 @@ export default class LuaWasm {
     public luaL_ref: (L: LuaState, t: number) => number
     public luaL_unref: (L: LuaState, t: number, ref: number) => void
     public luaL_loadfilex: (L: LuaState, filename: string | null, mode: string | null) => LuaReturn
-    public luaL_loadbufferx: (L: LuaState, buff: string | null, sz: number, name: string | null, mode: string | null) => LuaReturn
+    public luaL_loadbufferx: (
+        L: LuaState,
+        buff: string | number | null,
+        sz: number,
+        name: string | number | null,
+        mode: string | null,
+    ) => LuaReturn
     public luaL_loadstring: (L: LuaState, s: string | null) => LuaReturn
     public luaL_newstate: () => LuaState
     public luaL_len: (L: LuaState, idx: number) => number
@@ -115,8 +124,8 @@ export default class LuaWasm {
     public lua_pushnil: (L: LuaState) => void
     public lua_pushnumber: (L: LuaState, n: number) => void
     public lua_pushinteger: (L: LuaState, n: number) => void
-    public lua_pushlstring: (L: LuaState, s: string | null, len: number) => string
-    public lua_pushstring: (L: LuaState, s: string | null) => string
+    public lua_pushlstring: (L: LuaState, s: string | number | null, len: number) => string
+    public lua_pushstring: (L: LuaState, s: string | number | null) => string
     public lua_pushcclosure: (L: LuaState, fn: number, n: number) => void
     public lua_pushboolean: (L: LuaState, b: number) => void
     public lua_pushlightuserdata: (L: LuaState, p: number | null) => void
@@ -193,154 +202,154 @@ export default class LuaWasm {
     public constructor(module: LuaEmscriptenModule) {
         this.module = module
 
-        this.luaL_checkversion_ = this.module.cwrap('luaL_checkversion_', null, ['number', 'number', 'number'])
-        this.luaL_getmetafield = this.module.cwrap('luaL_getmetafield', 'number', ['number', 'number', 'string'])
-        this.luaL_callmeta = this.module.cwrap('luaL_callmeta', 'number', ['number', 'number', 'string'])
-        this.luaL_tolstring = this.module.cwrap('luaL_tolstring', 'string', ['number', 'number', 'number'])
-        this.luaL_argerror = this.module.cwrap('luaL_argerror', 'number', ['number', 'number', 'string'])
-        this.luaL_typeerror = this.module.cwrap('luaL_typeerror', 'number', ['number', 'number', 'string'])
-        this.luaL_checklstring = this.module.cwrap('luaL_checklstring', 'string', ['number', 'number', 'number'])
-        this.luaL_optlstring = this.module.cwrap('luaL_optlstring', 'string', ['number', 'number', 'string', 'number'])
-        this.luaL_checknumber = this.module.cwrap('luaL_checknumber', 'number', ['number', 'number'])
-        this.luaL_optnumber = this.module.cwrap('luaL_optnumber', 'number', ['number', 'number', 'number'])
-        this.luaL_checkinteger = this.module.cwrap('luaL_checkinteger', 'number', ['number', 'number'])
-        this.luaL_optinteger = this.module.cwrap('luaL_optinteger', 'number', ['number', 'number', 'number'])
-        this.luaL_checkstack = this.module.cwrap('luaL_checkstack', null, ['number', 'number', 'string'])
-        this.luaL_checktype = this.module.cwrap('luaL_checktype', null, ['number', 'number', 'number'])
-        this.luaL_checkany = this.module.cwrap('luaL_checkany', null, ['number', 'number'])
-        this.luaL_newmetatable = this.module.cwrap('luaL_newmetatable', 'number', ['number', 'string'])
-        this.luaL_setmetatable = this.module.cwrap('luaL_setmetatable', null, ['number', 'string'])
-        this.luaL_testudata = this.module.cwrap('luaL_testudata', 'number', ['number', 'number', 'string'])
-        this.luaL_checkudata = this.module.cwrap('luaL_checkudata', 'number', ['number', 'number', 'string'])
-        this.luaL_where = this.module.cwrap('luaL_where', null, ['number', 'number'])
-        this.luaL_fileresult = this.module.cwrap('luaL_fileresult', 'number', ['number', 'number', 'string'])
-        this.luaL_execresult = this.module.cwrap('luaL_execresult', 'number', ['number', 'number'])
-        this.luaL_ref = this.module.cwrap('luaL_ref', 'number', ['number', 'number'])
-        this.luaL_unref = this.module.cwrap('luaL_unref', null, ['number', 'number', 'number'])
-        this.luaL_loadfilex = this.module.cwrap('luaL_loadfilex', 'number', ['number', 'string', 'string'])
-        this.luaL_loadbufferx = this.module.cwrap('luaL_loadbufferx', 'number', ['number', 'string', 'number', 'string', 'string'])
-        this.luaL_loadstring = this.module.cwrap('luaL_loadstring', 'number', ['number', 'string'])
-        this.luaL_newstate = this.module.cwrap('luaL_newstate', 'number', [])
-        this.luaL_len = this.module.cwrap('luaL_len', 'number', ['number', 'number'])
-        this.luaL_addgsub = this.module.cwrap('luaL_addgsub', null, ['number', 'string', 'string', 'string'])
-        this.luaL_gsub = this.module.cwrap('luaL_gsub', 'string', ['number', 'string', 'string', 'string'])
-        this.luaL_setfuncs = this.module.cwrap('luaL_setfuncs', null, ['number', 'number', 'number'])
-        this.luaL_getsubtable = this.module.cwrap('luaL_getsubtable', 'number', ['number', 'number', 'string'])
-        this.luaL_traceback = this.module.cwrap('luaL_traceback', null, ['number', 'number', 'string', 'number'])
-        this.luaL_requiref = this.module.cwrap('luaL_requiref', null, ['number', 'string', 'number', 'number'])
-        this.luaL_buffinit = this.module.cwrap('luaL_buffinit', null, ['number', 'number'])
-        this.luaL_prepbuffsize = this.module.cwrap('luaL_prepbuffsize', 'string', ['number', 'number'])
-        this.luaL_addlstring = this.module.cwrap('luaL_addlstring', null, ['number', 'string', 'number'])
-        this.luaL_addstring = this.module.cwrap('luaL_addstring', null, ['number', 'string'])
-        this.luaL_addvalue = this.module.cwrap('luaL_addvalue', null, ['number'])
-        this.luaL_pushresult = this.module.cwrap('luaL_pushresult', null, ['number'])
-        this.luaL_pushresultsize = this.module.cwrap('luaL_pushresultsize', null, ['number', 'number'])
-        this.luaL_buffinitsize = this.module.cwrap('luaL_buffinitsize', 'string', ['number', 'number', 'number'])
-        this.lua_newstate = this.module.cwrap('lua_newstate', 'number', ['number', 'number'])
-        this.lua_close = this.module.cwrap('lua_close', null, ['number'])
-        this.lua_newthread = this.module.cwrap('lua_newthread', 'number', ['number'])
-        this.lua_resetthread = this.module.cwrap('lua_resetthread', 'number', ['number'])
-        this.lua_atpanic = this.module.cwrap('lua_atpanic', 'number', ['number', 'number'])
-        this.lua_version = this.module.cwrap('lua_version', 'number', ['number'])
-        this.lua_absindex = this.module.cwrap('lua_absindex', 'number', ['number', 'number'])
-        this.lua_gettop = this.module.cwrap('lua_gettop', 'number', ['number'])
-        this.lua_settop = this.module.cwrap('lua_settop', null, ['number', 'number'])
-        this.lua_pushvalue = this.module.cwrap('lua_pushvalue', null, ['number', 'number'])
-        this.lua_rotate = this.module.cwrap('lua_rotate', null, ['number', 'number', 'number'])
-        this.lua_copy = this.module.cwrap('lua_copy', null, ['number', 'number', 'number'])
-        this.lua_checkstack = this.module.cwrap('lua_checkstack', 'number', ['number', 'number'])
-        this.lua_xmove = this.module.cwrap('lua_xmove', null, ['number', 'number', 'number'])
-        this.lua_isnumber = this.module.cwrap('lua_isnumber', 'number', ['number', 'number'])
-        this.lua_isstring = this.module.cwrap('lua_isstring', 'number', ['number', 'number'])
-        this.lua_iscfunction = this.module.cwrap('lua_iscfunction', 'number', ['number', 'number'])
-        this.lua_isinteger = this.module.cwrap('lua_isinteger', 'number', ['number', 'number'])
-        this.lua_isuserdata = this.module.cwrap('lua_isuserdata', 'number', ['number', 'number'])
-        this.lua_type = this.module.cwrap('lua_type', 'number', ['number', 'number'])
-        this.lua_typename = this.module.cwrap('lua_typename', 'string', ['number', 'number'])
-        this.lua_tonumberx = this.module.cwrap('lua_tonumberx', 'number', ['number', 'number', 'number'])
-        this.lua_tointegerx = this.module.cwrap('lua_tointegerx', 'number', ['number', 'number', 'number'])
-        this.lua_toboolean = this.module.cwrap('lua_toboolean', 'number', ['number', 'number'])
-        this.lua_tolstring = this.module.cwrap('lua_tolstring', 'string', ['number', 'number', 'number'])
-        this.lua_rawlen = this.module.cwrap('lua_rawlen', 'number', ['number', 'number'])
-        this.lua_tocfunction = this.module.cwrap('lua_tocfunction', 'number', ['number', 'number'])
-        this.lua_touserdata = this.module.cwrap('lua_touserdata', 'number', ['number', 'number'])
-        this.lua_tothread = this.module.cwrap('lua_tothread', 'number', ['number', 'number'])
-        this.lua_topointer = this.module.cwrap('lua_topointer', 'number', ['number', 'number'])
-        this.lua_arith = this.module.cwrap('lua_arith', null, ['number', 'number'])
-        this.lua_rawequal = this.module.cwrap('lua_rawequal', 'number', ['number', 'number', 'number'])
-        this.lua_compare = this.module.cwrap('lua_compare', 'number', ['number', 'number', 'number', 'number'])
-        this.lua_pushnil = this.module.cwrap('lua_pushnil', null, ['number'])
-        this.lua_pushnumber = this.module.cwrap('lua_pushnumber', null, ['number', 'number'])
-        this.lua_pushinteger = this.module.cwrap('lua_pushinteger', null, ['number', 'number'])
-        this.lua_pushlstring = this.module.cwrap('lua_pushlstring', 'string', ['number', 'string', 'number'])
-        this.lua_pushstring = this.module.cwrap('lua_pushstring', 'string', ['number', 'string'])
-        this.lua_pushcclosure = this.module.cwrap('lua_pushcclosure', null, ['number', 'number', 'number'])
-        this.lua_pushboolean = this.module.cwrap('lua_pushboolean', null, ['number', 'number'])
-        this.lua_pushlightuserdata = this.module.cwrap('lua_pushlightuserdata', null, ['number', 'number'])
-        this.lua_pushthread = this.module.cwrap('lua_pushthread', 'number', ['number'])
-        this.lua_getglobal = this.module.cwrap('lua_getglobal', 'number', ['number', 'string'])
-        this.lua_gettable = this.module.cwrap('lua_gettable', 'number', ['number', 'number'])
-        this.lua_getfield = this.module.cwrap('lua_getfield', 'number', ['number', 'number', 'string'])
-        this.lua_geti = this.module.cwrap('lua_geti', 'number', ['number', 'number', 'number'])
-        this.lua_rawget = this.module.cwrap('lua_rawget', 'number', ['number', 'number'])
-        this.lua_rawgeti = this.module.cwrap('lua_rawgeti', 'number', ['number', 'number', 'number'])
-        this.lua_rawgetp = this.module.cwrap('lua_rawgetp', 'number', ['number', 'number', 'number'])
-        this.lua_createtable = this.module.cwrap('lua_createtable', null, ['number', 'number', 'number'])
-        this.lua_newuserdatauv = this.module.cwrap('lua_newuserdatauv', 'number', ['number', 'number', 'number'])
-        this.lua_getmetatable = this.module.cwrap('lua_getmetatable', 'number', ['number', 'number'])
-        this.lua_getiuservalue = this.module.cwrap('lua_getiuservalue', 'number', ['number', 'number', 'number'])
-        this.lua_setglobal = this.module.cwrap('lua_setglobal', null, ['number', 'string'])
-        this.lua_settable = this.module.cwrap('lua_settable', null, ['number', 'number'])
-        this.lua_setfield = this.module.cwrap('lua_setfield', null, ['number', 'number', 'string'])
-        this.lua_seti = this.module.cwrap('lua_seti', null, ['number', 'number', 'number'])
-        this.lua_rawset = this.module.cwrap('lua_rawset', null, ['number', 'number'])
-        this.lua_rawseti = this.module.cwrap('lua_rawseti', null, ['number', 'number', 'number'])
-        this.lua_rawsetp = this.module.cwrap('lua_rawsetp', null, ['number', 'number', 'number'])
-        this.lua_setmetatable = this.module.cwrap('lua_setmetatable', 'number', ['number', 'number'])
-        this.lua_setiuservalue = this.module.cwrap('lua_setiuservalue', 'number', ['number', 'number', 'number'])
-        this.lua_callk = this.module.cwrap('lua_callk', null, ['number', 'number', 'number', 'number', 'number'])
-        this.lua_pcallk = this.module.cwrap('lua_pcallk', 'number', ['number', 'number', 'number', 'number', 'number', 'number'])
-        this.lua_load = this.module.cwrap('lua_load', 'number', ['number', 'number', 'number', 'string', 'string'])
-        this.lua_dump = this.module.cwrap('lua_dump', 'number', ['number', 'number', 'number', 'number'])
-        this.lua_yieldk = this.module.cwrap('lua_yieldk', 'number', ['number', 'number', 'number', 'number'])
-        this.lua_resume = this.module.cwrap('lua_resume', 'number', ['number', 'number', 'number', 'number'])
-        this.lua_status = this.module.cwrap('lua_status', 'number', ['number'])
-        this.lua_isyieldable = this.module.cwrap('lua_isyieldable', 'number', ['number'])
-        this.lua_setwarnf = this.module.cwrap('lua_setwarnf', null, ['number', 'number', 'number'])
-        this.lua_warning = this.module.cwrap('lua_warning', null, ['number', 'string', 'number'])
-        this.lua_error = this.module.cwrap('lua_error', 'number', ['number'])
-        this.lua_next = this.module.cwrap('lua_next', 'number', ['number', 'number'])
-        this.lua_concat = this.module.cwrap('lua_concat', null, ['number', 'number'])
-        this.lua_len = this.module.cwrap('lua_len', null, ['number', 'number'])
-        this.lua_stringtonumber = this.module.cwrap('lua_stringtonumber', 'number', ['number', 'string'])
-        this.lua_getallocf = this.module.cwrap('lua_getallocf', 'number', ['number', 'number'])
-        this.lua_setallocf = this.module.cwrap('lua_setallocf', null, ['number', 'number', 'number'])
-        this.lua_toclose = this.module.cwrap('lua_toclose', null, ['number', 'number'])
-        this.lua_closeslot = this.module.cwrap('lua_closeslot', null, ['number', 'number'])
-        this.lua_getstack = this.module.cwrap('lua_getstack', 'number', ['number', 'number', 'number'])
-        this.lua_getinfo = this.module.cwrap('lua_getinfo', 'number', ['number', 'string', 'number'])
-        this.lua_getlocal = this.module.cwrap('lua_getlocal', 'string', ['number', 'number', 'number'])
-        this.lua_setlocal = this.module.cwrap('lua_setlocal', 'string', ['number', 'number', 'number'])
-        this.lua_getupvalue = this.module.cwrap('lua_getupvalue', 'string', ['number', 'number', 'number'])
-        this.lua_setupvalue = this.module.cwrap('lua_setupvalue', 'string', ['number', 'number', 'number'])
-        this.lua_upvalueid = this.module.cwrap('lua_upvalueid', 'number', ['number', 'number', 'number'])
-        this.lua_upvaluejoin = this.module.cwrap('lua_upvaluejoin', null, ['number', 'number', 'number', 'number', 'number'])
-        this.lua_sethook = this.module.cwrap('lua_sethook', null, ['number', 'number', 'number', 'number'])
-        this.lua_gethook = this.module.cwrap('lua_gethook', 'number', ['number'])
-        this.lua_gethookmask = this.module.cwrap('lua_gethookmask', 'number', ['number'])
-        this.lua_gethookcount = this.module.cwrap('lua_gethookcount', 'number', ['number'])
-        this.lua_setcstacklimit = this.module.cwrap('lua_setcstacklimit', 'number', ['number', 'number'])
-        this.luaopen_base = this.module.cwrap('luaopen_base', 'number', ['number'])
-        this.luaopen_coroutine = this.module.cwrap('luaopen_coroutine', 'number', ['number'])
-        this.luaopen_table = this.module.cwrap('luaopen_table', 'number', ['number'])
-        this.luaopen_io = this.module.cwrap('luaopen_io', 'number', ['number'])
-        this.luaopen_os = this.module.cwrap('luaopen_os', 'number', ['number'])
-        this.luaopen_string = this.module.cwrap('luaopen_string', 'number', ['number'])
-        this.luaopen_utf8 = this.module.cwrap('luaopen_utf8', 'number', ['number'])
-        this.luaopen_math = this.module.cwrap('luaopen_math', 'number', ['number'])
-        this.luaopen_debug = this.module.cwrap('luaopen_debug', 'number', ['number'])
-        this.luaopen_package = this.module.cwrap('luaopen_package', 'number', ['number'])
-        this.luaL_openlibs = this.module.cwrap('luaL_openlibs', null, ['number'])
+        this.luaL_checkversion_ = this.cwrap('luaL_checkversion_', null, ['number', 'number', 'number'])
+        this.luaL_getmetafield = this.cwrap('luaL_getmetafield', 'number', ['number', 'number', 'string'])
+        this.luaL_callmeta = this.cwrap('luaL_callmeta', 'number', ['number', 'number', 'string'])
+        this.luaL_tolstring = this.cwrap('luaL_tolstring', 'string', ['number', 'number', 'number'])
+        this.luaL_argerror = this.cwrap('luaL_argerror', 'number', ['number', 'number', 'string'])
+        this.luaL_typeerror = this.cwrap('luaL_typeerror', 'number', ['number', 'number', 'string'])
+        this.luaL_checklstring = this.cwrap('luaL_checklstring', 'string', ['number', 'number', 'number'])
+        this.luaL_optlstring = this.cwrap('luaL_optlstring', 'string', ['number', 'number', 'string', 'number'])
+        this.luaL_checknumber = this.cwrap('luaL_checknumber', 'number', ['number', 'number'])
+        this.luaL_optnumber = this.cwrap('luaL_optnumber', 'number', ['number', 'number', 'number'])
+        this.luaL_checkinteger = this.cwrap('luaL_checkinteger', 'number', ['number', 'number'])
+        this.luaL_optinteger = this.cwrap('luaL_optinteger', 'number', ['number', 'number', 'number'])
+        this.luaL_checkstack = this.cwrap('luaL_checkstack', null, ['number', 'number', 'string'])
+        this.luaL_checktype = this.cwrap('luaL_checktype', null, ['number', 'number', 'number'])
+        this.luaL_checkany = this.cwrap('luaL_checkany', null, ['number', 'number'])
+        this.luaL_newmetatable = this.cwrap('luaL_newmetatable', 'number', ['number', 'string'])
+        this.luaL_setmetatable = this.cwrap('luaL_setmetatable', null, ['number', 'string'])
+        this.luaL_testudata = this.cwrap('luaL_testudata', 'number', ['number', 'number', 'string'])
+        this.luaL_checkudata = this.cwrap('luaL_checkudata', 'number', ['number', 'number', 'string'])
+        this.luaL_where = this.cwrap('luaL_where', null, ['number', 'number'])
+        this.luaL_fileresult = this.cwrap('luaL_fileresult', 'number', ['number', 'number', 'string'])
+        this.luaL_execresult = this.cwrap('luaL_execresult', 'number', ['number', 'number'])
+        this.luaL_ref = this.cwrap('luaL_ref', 'number', ['number', 'number'])
+        this.luaL_unref = this.cwrap('luaL_unref', null, ['number', 'number', 'number'])
+        this.luaL_loadfilex = this.cwrap('luaL_loadfilex', 'number', ['number', 'string', 'string'])
+        this.luaL_loadbufferx = this.cwrap('luaL_loadbufferx', 'number', ['number', 'string|number', 'number', 'string|number', 'string'])
+        this.luaL_loadstring = this.cwrap('luaL_loadstring', 'number', ['number', 'string'])
+        this.luaL_newstate = this.cwrap('luaL_newstate', 'number', [])
+        this.luaL_len = this.cwrap('luaL_len', 'number', ['number', 'number'])
+        this.luaL_addgsub = this.cwrap('luaL_addgsub', null, ['number', 'string', 'string', 'string'])
+        this.luaL_gsub = this.cwrap('luaL_gsub', 'string', ['number', 'string', 'string', 'string'])
+        this.luaL_setfuncs = this.cwrap('luaL_setfuncs', null, ['number', 'number', 'number'])
+        this.luaL_getsubtable = this.cwrap('luaL_getsubtable', 'number', ['number', 'number', 'string'])
+        this.luaL_traceback = this.cwrap('luaL_traceback', null, ['number', 'number', 'string', 'number'])
+        this.luaL_requiref = this.cwrap('luaL_requiref', null, ['number', 'string', 'number', 'number'])
+        this.luaL_buffinit = this.cwrap('luaL_buffinit', null, ['number', 'number'])
+        this.luaL_prepbuffsize = this.cwrap('luaL_prepbuffsize', 'string', ['number', 'number'])
+        this.luaL_addlstring = this.cwrap('luaL_addlstring', null, ['number', 'string', 'number'])
+        this.luaL_addstring = this.cwrap('luaL_addstring', null, ['number', 'string'])
+        this.luaL_addvalue = this.cwrap('luaL_addvalue', null, ['number'])
+        this.luaL_pushresult = this.cwrap('luaL_pushresult', null, ['number'])
+        this.luaL_pushresultsize = this.cwrap('luaL_pushresultsize', null, ['number', 'number'])
+        this.luaL_buffinitsize = this.cwrap('luaL_buffinitsize', 'string', ['number', 'number', 'number'])
+        this.lua_newstate = this.cwrap('lua_newstate', 'number', ['number', 'number'])
+        this.lua_close = this.cwrap('lua_close', null, ['number'])
+        this.lua_newthread = this.cwrap('lua_newthread', 'number', ['number'])
+        this.lua_resetthread = this.cwrap('lua_resetthread', 'number', ['number'])
+        this.lua_atpanic = this.cwrap('lua_atpanic', 'number', ['number', 'number'])
+        this.lua_version = this.cwrap('lua_version', 'number', ['number'])
+        this.lua_absindex = this.cwrap('lua_absindex', 'number', ['number', 'number'])
+        this.lua_gettop = this.cwrap('lua_gettop', 'number', ['number'])
+        this.lua_settop = this.cwrap('lua_settop', null, ['number', 'number'])
+        this.lua_pushvalue = this.cwrap('lua_pushvalue', null, ['number', 'number'])
+        this.lua_rotate = this.cwrap('lua_rotate', null, ['number', 'number', 'number'])
+        this.lua_copy = this.cwrap('lua_copy', null, ['number', 'number', 'number'])
+        this.lua_checkstack = this.cwrap('lua_checkstack', 'number', ['number', 'number'])
+        this.lua_xmove = this.cwrap('lua_xmove', null, ['number', 'number', 'number'])
+        this.lua_isnumber = this.cwrap('lua_isnumber', 'number', ['number', 'number'])
+        this.lua_isstring = this.cwrap('lua_isstring', 'number', ['number', 'number'])
+        this.lua_iscfunction = this.cwrap('lua_iscfunction', 'number', ['number', 'number'])
+        this.lua_isinteger = this.cwrap('lua_isinteger', 'number', ['number', 'number'])
+        this.lua_isuserdata = this.cwrap('lua_isuserdata', 'number', ['number', 'number'])
+        this.lua_type = this.cwrap('lua_type', 'number', ['number', 'number'])
+        this.lua_typename = this.cwrap('lua_typename', 'string', ['number', 'number'])
+        this.lua_tonumberx = this.cwrap('lua_tonumberx', 'number', ['number', 'number', 'number'])
+        this.lua_tointegerx = this.cwrap('lua_tointegerx', 'number', ['number', 'number', 'number'])
+        this.lua_toboolean = this.cwrap('lua_toboolean', 'number', ['number', 'number'])
+        this.lua_tolstring = this.cwrap('lua_tolstring', 'string', ['number', 'number', 'number'])
+        this.lua_rawlen = this.cwrap('lua_rawlen', 'number', ['number', 'number'])
+        this.lua_tocfunction = this.cwrap('lua_tocfunction', 'number', ['number', 'number'])
+        this.lua_touserdata = this.cwrap('lua_touserdata', 'number', ['number', 'number'])
+        this.lua_tothread = this.cwrap('lua_tothread', 'number', ['number', 'number'])
+        this.lua_topointer = this.cwrap('lua_topointer', 'number', ['number', 'number'])
+        this.lua_arith = this.cwrap('lua_arith', null, ['number', 'number'])
+        this.lua_rawequal = this.cwrap('lua_rawequal', 'number', ['number', 'number', 'number'])
+        this.lua_compare = this.cwrap('lua_compare', 'number', ['number', 'number', 'number', 'number'])
+        this.lua_pushnil = this.cwrap('lua_pushnil', null, ['number'])
+        this.lua_pushnumber = this.cwrap('lua_pushnumber', null, ['number', 'number'])
+        this.lua_pushinteger = this.cwrap('lua_pushinteger', null, ['number', 'number'])
+        this.lua_pushlstring = this.cwrap('lua_pushlstring', 'string', ['number', 'string|number', 'number'])
+        this.lua_pushstring = this.cwrap('lua_pushstring', 'string', ['number', 'string|number'])
+        this.lua_pushcclosure = this.cwrap('lua_pushcclosure', null, ['number', 'number', 'number'])
+        this.lua_pushboolean = this.cwrap('lua_pushboolean', null, ['number', 'number'])
+        this.lua_pushlightuserdata = this.cwrap('lua_pushlightuserdata', null, ['number', 'number'])
+        this.lua_pushthread = this.cwrap('lua_pushthread', 'number', ['number'])
+        this.lua_getglobal = this.cwrap('lua_getglobal', 'number', ['number', 'string'])
+        this.lua_gettable = this.cwrap('lua_gettable', 'number', ['number', 'number'])
+        this.lua_getfield = this.cwrap('lua_getfield', 'number', ['number', 'number', 'string'])
+        this.lua_geti = this.cwrap('lua_geti', 'number', ['number', 'number', 'number'])
+        this.lua_rawget = this.cwrap('lua_rawget', 'number', ['number', 'number'])
+        this.lua_rawgeti = this.cwrap('lua_rawgeti', 'number', ['number', 'number', 'number'])
+        this.lua_rawgetp = this.cwrap('lua_rawgetp', 'number', ['number', 'number', 'number'])
+        this.lua_createtable = this.cwrap('lua_createtable', null, ['number', 'number', 'number'])
+        this.lua_newuserdatauv = this.cwrap('lua_newuserdatauv', 'number', ['number', 'number', 'number'])
+        this.lua_getmetatable = this.cwrap('lua_getmetatable', 'number', ['number', 'number'])
+        this.lua_getiuservalue = this.cwrap('lua_getiuservalue', 'number', ['number', 'number', 'number'])
+        this.lua_setglobal = this.cwrap('lua_setglobal', null, ['number', 'string'])
+        this.lua_settable = this.cwrap('lua_settable', null, ['number', 'number'])
+        this.lua_setfield = this.cwrap('lua_setfield', null, ['number', 'number', 'string'])
+        this.lua_seti = this.cwrap('lua_seti', null, ['number', 'number', 'number'])
+        this.lua_rawset = this.cwrap('lua_rawset', null, ['number', 'number'])
+        this.lua_rawseti = this.cwrap('lua_rawseti', null, ['number', 'number', 'number'])
+        this.lua_rawsetp = this.cwrap('lua_rawsetp', null, ['number', 'number', 'number'])
+        this.lua_setmetatable = this.cwrap('lua_setmetatable', 'number', ['number', 'number'])
+        this.lua_setiuservalue = this.cwrap('lua_setiuservalue', 'number', ['number', 'number', 'number'])
+        this.lua_callk = this.cwrap('lua_callk', null, ['number', 'number', 'number', 'number', 'number'])
+        this.lua_pcallk = this.cwrap('lua_pcallk', 'number', ['number', 'number', 'number', 'number', 'number', 'number'])
+        this.lua_load = this.cwrap('lua_load', 'number', ['number', 'number', 'number', 'string', 'string'])
+        this.lua_dump = this.cwrap('lua_dump', 'number', ['number', 'number', 'number', 'number'])
+        this.lua_yieldk = this.cwrap('lua_yieldk', 'number', ['number', 'number', 'number', 'number'])
+        this.lua_resume = this.cwrap('lua_resume', 'number', ['number', 'number', 'number', 'number'])
+        this.lua_status = this.cwrap('lua_status', 'number', ['number'])
+        this.lua_isyieldable = this.cwrap('lua_isyieldable', 'number', ['number'])
+        this.lua_setwarnf = this.cwrap('lua_setwarnf', null, ['number', 'number', 'number'])
+        this.lua_warning = this.cwrap('lua_warning', null, ['number', 'string', 'number'])
+        this.lua_error = this.cwrap('lua_error', 'number', ['number'])
+        this.lua_next = this.cwrap('lua_next', 'number', ['number', 'number'])
+        this.lua_concat = this.cwrap('lua_concat', null, ['number', 'number'])
+        this.lua_len = this.cwrap('lua_len', null, ['number', 'number'])
+        this.lua_stringtonumber = this.cwrap('lua_stringtonumber', 'number', ['number', 'string'])
+        this.lua_getallocf = this.cwrap('lua_getallocf', 'number', ['number', 'number'])
+        this.lua_setallocf = this.cwrap('lua_setallocf', null, ['number', 'number', 'number'])
+        this.lua_toclose = this.cwrap('lua_toclose', null, ['number', 'number'])
+        this.lua_closeslot = this.cwrap('lua_closeslot', null, ['number', 'number'])
+        this.lua_getstack = this.cwrap('lua_getstack', 'number', ['number', 'number', 'number'])
+        this.lua_getinfo = this.cwrap('lua_getinfo', 'number', ['number', 'string', 'number'])
+        this.lua_getlocal = this.cwrap('lua_getlocal', 'string', ['number', 'number', 'number'])
+        this.lua_setlocal = this.cwrap('lua_setlocal', 'string', ['number', 'number', 'number'])
+        this.lua_getupvalue = this.cwrap('lua_getupvalue', 'string', ['number', 'number', 'number'])
+        this.lua_setupvalue = this.cwrap('lua_setupvalue', 'string', ['number', 'number', 'number'])
+        this.lua_upvalueid = this.cwrap('lua_upvalueid', 'number', ['number', 'number', 'number'])
+        this.lua_upvaluejoin = this.cwrap('lua_upvaluejoin', null, ['number', 'number', 'number', 'number', 'number'])
+        this.lua_sethook = this.cwrap('lua_sethook', null, ['number', 'number', 'number', 'number'])
+        this.lua_gethook = this.cwrap('lua_gethook', 'number', ['number'])
+        this.lua_gethookmask = this.cwrap('lua_gethookmask', 'number', ['number'])
+        this.lua_gethookcount = this.cwrap('lua_gethookcount', 'number', ['number'])
+        this.lua_setcstacklimit = this.cwrap('lua_setcstacklimit', 'number', ['number', 'number'])
+        this.luaopen_base = this.cwrap('luaopen_base', 'number', ['number'])
+        this.luaopen_coroutine = this.cwrap('luaopen_coroutine', 'number', ['number'])
+        this.luaopen_table = this.cwrap('luaopen_table', 'number', ['number'])
+        this.luaopen_io = this.cwrap('luaopen_io', 'number', ['number'])
+        this.luaopen_os = this.cwrap('luaopen_os', 'number', ['number'])
+        this.luaopen_string = this.cwrap('luaopen_string', 'number', ['number'])
+        this.luaopen_utf8 = this.cwrap('luaopen_utf8', 'number', ['number'])
+        this.luaopen_math = this.cwrap('luaopen_math', 'number', ['number'])
+        this.luaopen_debug = this.cwrap('luaopen_debug', 'number', ['number'])
+        this.luaopen_package = this.cwrap('luaopen_package', 'number', ['number'])
+        this.luaL_openlibs = this.cwrap('luaL_openlibs', null, ['number'])
     }
 
     public lua_remove(luaState: LuaState, index: number): void {
@@ -417,6 +426,49 @@ export default class LuaWasm {
     public printRefs(): void {
         for (const [key, value] of this.referenceMap.entries()) {
             console.log(key, value)
+        }
+    }
+
+    private cwrap(
+        name: string,
+        returnType: Emscripten.JSType | null,
+        argTypes: Array<Emscripten.JSType | 'string|number'>,
+    ): (...args: any[]) => any {
+        // optimization for common case
+        const hasStringOrNumber = argTypes.some((argType) => argType === 'string|number')
+        if (!hasStringOrNumber) {
+            return (...args: any[]) =>
+                this.module.ccall(name, returnType, argTypes as Emscripten.JSType[], args as Emscripten.TypeCompatibleWithC[])
+        }
+
+        return (...args: any[]) => {
+            const pointersToBeFreed: number[] = []
+            const resolvedArgTypes: Emscripten.JSType[] = argTypes.map((argType, i) => {
+                if (argType === 'string|number') {
+                    if (typeof args[i] === 'number') {
+                        return 'number'
+                    } else {
+                        // because it will be freed later, this can only be used on functions that lua internally copies the string
+                        if (args[i]?.length > 1024) {
+                            const bufferPointer = this.module.allocateUTF8(args[i] as string)
+                            args[i] = bufferPointer
+                            pointersToBeFreed.push(bufferPointer)
+                            return 'number'
+                        } else {
+                            return 'string'
+                        }
+                    }
+                }
+                return argType
+            })
+
+            try {
+                return this.module.ccall(name, returnType, resolvedArgTypes, args as Emscripten.TypeCompatibleWithC[])
+            } finally {
+                for (const pointer of pointersToBeFreed) {
+                    this.module._free(pointer)
+                }
+            }
         }
     }
 }
