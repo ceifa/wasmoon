@@ -24,6 +24,8 @@ emcc \
         'ENV', \
         'getValue', \
         'setValue', \
+        'lengthBytesUTF8', \
+        'stringToUTF8', \
         'allocateUTF8'
     ]" \
     -s MODULARIZE=1 \

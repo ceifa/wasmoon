@@ -604,12 +604,12 @@ describe('Engine', () => {
         `)
             throw new Error('should not be reached')
         } catch (err) {
-            expect(err.message).to.includes('[string "?"]:3: function a threw error')
+            expect(err.message).to.includes('[string "..."]:3: function a threw error')
             expect(err.message).to.includes('stack traceback:')
-            expect(err.message).to.includes(`[string "?"]:3: in upvalue 'a'`)
-            expect(err.message).to.includes(`[string "?"]:5: in upvalue 'b'`)
-            expect(err.message).to.includes(`[string "?"]:6: in local 'c'`)
-            expect(err.message).to.includes(`[string "?"]:7: in main chunk`)
+            expect(err.message).to.includes(`[string "..."]:3: in upvalue 'a'`)
+            expect(err.message).to.includes(`[string "..."]:5: in upvalue 'b'`)
+            expect(err.message).to.includes(`[string "..."]:6: in local 'c'`)
+            expect(err.message).to.includes(`[string "..."]:7: in main chunk`)
         }
     })
 

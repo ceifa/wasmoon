@@ -9,6 +9,8 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     getValue: typeof getValue
     FS: typeof FS
     allocateUTF8: typeof allocateUTF8
+    lengthBytesUTF8: typeof lengthBytesUTF8
+    stringToUTF8: typeof stringToUTF8
     ENV: EnvironmentVariables
     _realloc: (pointer: number, size: number) => number
 }
@@ -62,7 +64,13 @@ export default class LuaWasm {
     public luaL_ref: (L: LuaState, t: number) => number
     public luaL_unref: (L: LuaState, t: number, ref: number) => void
     public luaL_loadfilex: (L: LuaState, filename: string | null, mode: string | null) => LuaReturn
-    public luaL_loadbufferx: (L: LuaState, buff: string | number | null, sz: number, name: string | null, mode: string | null) => LuaReturn
+    public luaL_loadbufferx: (
+        L: LuaState,
+        buff: string | number | null,
+        sz: number,
+        name: string | number | null,
+        mode: string | null,
+    ) => LuaReturn
     public luaL_loadstring: (L: LuaState, s: string | null) => LuaReturn
     public luaL_newstate: () => LuaState
     public luaL_len: (L: LuaState, idx: number) => number
@@ -219,7 +227,7 @@ export default class LuaWasm {
         this.luaL_ref = this.cwrap('luaL_ref', 'number', ['number', 'number'])
         this.luaL_unref = this.cwrap('luaL_unref', null, ['number', 'number', 'number'])
         this.luaL_loadfilex = this.cwrap('luaL_loadfilex', 'number', ['number', 'string', 'string'])
-        this.luaL_loadbufferx = this.cwrap('luaL_loadbufferx', 'number', ['number', 'string|number', 'number', 'string', 'string'])
+        this.luaL_loadbufferx = this.cwrap('luaL_loadbufferx', 'number', ['number', 'string|number', 'number', 'string|number', 'string'])
         this.luaL_loadstring = this.cwrap('luaL_loadstring', 'number', ['number', 'string'])
         this.luaL_newstate = this.cwrap('luaL_newstate', 'number', [])
         this.luaL_len = this.cwrap('luaL_len', 'number', ['number', 'number'])
@@ -434,15 +442,21 @@ export default class LuaWasm {
         }
 
         return (...args: any[]) => {
+            const pointersToBeFreed: number[] = []
             const resolvedArgTypes: Emscripten.JSType[] = argTypes.map((argType, i) => {
-                // because it will be freed later, this can only be used on functions that lua internally copies the string
                 if (argType === 'string|number') {
-                    if (args[i]?.length > 1024) {
-                        const bufferPointer = this.module.allocateUTF8(args[i] as string)
-                        args[i] = bufferPointer
+                    if (typeof args[i] === 'number') {
                         return 'number'
                     } else {
-                        return 'string'
+                        // because it will be freed later, this can only be used on functions that lua internally copies the string
+                        if (args[i]?.length > 1024) {
+                            const bufferPointer = this.module.allocateUTF8(args[i] as string)
+                            args[i] = bufferPointer
+                            pointersToBeFreed.push(bufferPointer)
+                            return 'number'
+                        } else {
+                            return 'string'
+                        }
                     }
                 }
                 return argType
@@ -451,11 +465,9 @@ export default class LuaWasm {
             try {
                 return this.module.ccall(name, returnType, resolvedArgTypes, args as Emscripten.TypeCompatibleWithC[])
             } finally {
-                argTypes.forEach((argType, i) => {
-                    if (argType === 'string|number' && resolvedArgTypes[i] === 'number') {
-                        this.module._free(args[i] as number)
-                    }
-                })
+                for (const pointer of pointersToBeFreed) {
+                    this.module._free(pointer)
+                }
             }
         }
     }
