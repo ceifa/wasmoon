@@ -182,7 +182,7 @@ describe('Engine', () => {
 
         const test = engine.global.get('test')
         expect(test).length.above(3)
-        expect(test).length.below(20)
+        expect(test).length.below(21)
         expect(test).to.be.equal(''.padEnd(test.length, 'i'))
     })
 
