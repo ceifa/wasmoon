@@ -28,6 +28,7 @@ emcc \
         'stringToUTF8', \
         'allocateUTF8'
     ]" \
+    -s STRICT_JS=0 \
     -s MODULARIZE=1 \
     -s ALLOW_TABLE_GROWTH=1 \
     -s EXPORT_NAME="initWasmModule" \
