@@ -10,6 +10,7 @@
         "build:wasm:docker": "docker run --rm -v $(pwd):/wasmoon emscripten/emsdk /wasmoon/build.sh",
         "start": "rollup -c -w",
         "test": "mocha --parallel --require ./test/boot.js test/*.test.js",
+        "luatests": "node --experimental-import-meta-resolve test/luatests.mjs",
         "build": "rollup -c && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",
         "clean": "rm -rf dist build",
         "lint": "prettier --write . && eslint . --fix --cache",

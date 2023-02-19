@@ -28,6 +28,7 @@ emcc \
         'stringToUTF8', \
         'allocateUTF8'
     ]" \
+    -s STRICT_JS=0 \
     -s MODULARIZE=1 \
     -s ALLOW_TABLE_GROWTH=1 \
     -s EXPORT_NAME="initWasmModule" \
@@ -37,6 +38,7 @@ emcc \
     -s NODEJS_CATCH_EXIT=0 \
 	-s NODEJS_CATCH_REJECTION=0 \
     -s MALLOC=emmalloc \
+    -s STACK_SIZE=1MB \
     -s EXPORTED_FUNCTIONS="[
         '_malloc', \
         '_free', \
