@@ -52,7 +52,7 @@ const runInteropedHeapsort = async () => {
 
     console.time('Run interoped heapsort')
     const runHeapsort = await state.doString(heapsort)
-    await runHeapsort()
+    runHeapsort()
     console.timeEnd('Run interoped heapsort')
 }
 
