@@ -26,7 +26,7 @@ emcc \
         'setValue', \
         'lengthBytesUTF8', \
         'stringToUTF8', \
-        'allocateUTF8'
+        'stringToNewUTF8'
     ]" \
     -s STRICT_JS=0 \
     -s MODULARIZE=1 \
