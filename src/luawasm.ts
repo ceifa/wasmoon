@@ -8,7 +8,7 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     setValue: typeof setValue
     getValue: typeof getValue
     FS: typeof FS
-    allocateUTF8: typeof allocateUTF8
+    stringToNewUTF8: typeof allocateUTF8
     lengthBytesUTF8: typeof lengthBytesUTF8
     stringToUTF8: typeof stringToUTF8
     ENV: EnvironmentVariables
@@ -450,7 +450,7 @@ export default class LuaWasm {
                     } else {
                         // because it will be freed later, this can only be used on functions that lua internally copies the string
                         if (args[i]?.length > 1024) {
-                            const bufferPointer = this.module.allocateUTF8(args[i] as string)
+                            const bufferPointer = this.module.stringToNewUTF8(args[i] as string)
                             args[i] = bufferPointer
                             pointersToBeFreed.push(bufferPointer)
                             return 'number'
