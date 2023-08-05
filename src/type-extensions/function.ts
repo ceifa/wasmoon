@@ -1,5 +1,5 @@
 import { BaseDecorationOptions, Decoration } from '../decoration'
-import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from '../types'
+import { LUA_MULTRET, LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from '../types'
 import Global from '../global'
 import MultiReturn from '../multireturn'
 import RawResult from '../raw-result'
@@ -22,10 +22,10 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
             ? new FinalizationRegistry((func: number) => {
-                  if (!this.thread.isClosed()) {
-                      this.thread.lua.luaL_unref(this.thread.address, LUA_REGISTRYINDEX, func)
-                  }
-              })
+                if (!this.thread.isClosed()) {
+                    this.thread.lua.luaL_unref(this.thread.address, LUA_REGISTRYINDEX, func)
+                }
+            })
             : undefined
 
     private gcPointer: number
@@ -177,15 +177,22 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                 thread.pushValue(arg)
             }
 
-            const status = thread.lua.lua_pcallk(thread.address, args.length, 1, 0, 0, null)
+            const base = thread.getTop()
+            const status = thread.lua.lua_pcallk(thread.address, args.length, LUA_MULTRET, 0, 0, null)
             if (status === LuaReturn.Yield) {
                 throw new Error('cannot yield in callbacks from javascript')
             }
             thread.assertOk(status)
+            let result = null
+            const deltaTop = thread.getTop() - base
+            console.log(args.length, deltaTop)
+            if (deltaTop > 1) {
+                result = thread.getStackValues(deltaTop)
+            } else {
+                result = thread.getValue(-1)
+            }
 
-            const result = thread.getValue(-1)
-
-            thread.pop()
+            thread.pop(deltaTop + 1)
             return result
         }
 

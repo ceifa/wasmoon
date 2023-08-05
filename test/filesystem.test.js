@@ -17,7 +17,7 @@ describe('Filesystem', () => {
         await factory.mountFile('yolo/sofancy/test.lua', 'return 42')
         const engine = await factory.createEngine()
 
-        const value = await engine.doString('return require("yolo/sofancy/test")')
+        const [value] = await engine.doString('return require("yolo/sofancy/test")')
 
         expect(value).to.be.equal(42)
     })
@@ -27,7 +27,7 @@ describe('Filesystem', () => {
         await factory.mountFile('hello/init.lua', 'return 42')
         const engine = await factory.createEngine()
 
-        const value = await engine.doString('return require("hello")')
+        const [value] = await engine.doString('return require("hello")')
 
         expect(value).to.be.equal(42)
     })
