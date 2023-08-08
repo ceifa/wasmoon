@@ -158,7 +158,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
         thread.lua.lua_pushvalue(thread.address, index)
         const func = thread.lua.luaL_ref(thread.address, LUA_REGISTRYINDEX)
 
-        const jsFunc = (...args: any[]): any => {
+        const jsFunc = (...args: any[]): MultiReturn | any => {
             if (thread.isClosed()) {
                 console.warn('Tried to call a function after closing lua state')
                 return
@@ -177,22 +177,21 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                 thread.pushValue(arg)
             }
 
-            const base = thread.getTop()
+            const oldTop = thread.lua.lua_gettop(thread.address)
             const status = thread.lua.lua_pcallk(thread.address, args.length, LUA_MULTRET, 0, 0, null)
+            const newTop = thread.lua.lua_gettop(thread.address)
             if (status === LuaReturn.Yield) {
                 throw new Error('cannot yield in callbacks from javascript')
             }
             thread.assertOk(status)
+            const deltaTop = newTop - (oldTop - 1)
             let result = null
-            const deltaTop = thread.getTop() - base
-            console.log(args.length, deltaTop)
             if (deltaTop > 1) {
-                result = thread.getStackValues(deltaTop)
+                result = thread.getStackValues(oldTop - 1)
             } else {
                 result = thread.getValue(-1)
             }
-
-            thread.pop(deltaTop + 1)
+            thread.pop(deltaTop)
             return result
         }
 
