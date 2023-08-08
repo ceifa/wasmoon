@@ -173,11 +173,12 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                 }
             }
 
+            const oldTop = thread.lua.lua_gettop(thread.address)
+
             for (const arg of args) {
                 thread.pushValue(arg)
             }
 
-            const oldTop = thread.lua.lua_gettop(thread.address)
             const status = thread.lua.lua_pcallk(thread.address, args.length, LUA_MULTRET, 0, 0, null)
             const newTop = thread.lua.lua_gettop(thread.address)
             if (status === LuaReturn.Yield) {

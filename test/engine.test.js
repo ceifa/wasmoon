@@ -257,20 +257,34 @@ describe('Engine', () => {
         const engine = await getEngine()
 
         const fn = await engine.doString(`
-            return function ()
-                -- return 1, x, y, "Hello World", {}, function() end;
+            return function (x, y)
                 return 1, x, y, function () end, {1,2,3}, {a = 1, b = 2};
             end
         `)
 
         expect(fn).to.be.a('function')
 
-        const returns = fn()
+        const returns = fn(4, 5)
         const [func, arr, obj] = returns.slice(3)
         expect(returns).to.have.length(6)
         expect(func).to.be.a('function')
         expect(arr).to.be.a('array')
         expect(obj).to.be.a('object')
+    })
+
+    it('call lua function with single returns array should succeed', async () => {
+        const engine = await getEngine()
+
+        const fn = await engine.doString(`
+            return function (a, b, c)
+                return {a, b, c};
+            end
+        `)
+
+        expect(fn).to.be.a('function')
+        const array = fn(3, 4, 5)
+        expect(array).to.be.an('array')
+        expect(array).to.have.length(3)
     })
 
     it('get a lua thread should succeed', async () => {
