@@ -158,7 +158,7 @@ git submodule update --init # download lua submodule
 npm i # install dependencies
 ```
 
-### Windows / Linux (Docker way)
+### Windows / Linux / MacOS (Docker way)
 
 You need to install [docker](https://www.docker.com/) and ensure it is on your `PATH`.
 
@@ -170,7 +170,7 @@ npm run build # build the js code/bridge
 npm test # ensure everything it's working fine
 ```
 
-### Ubuntu / Debian
+### Ubuntu / Debian / MacOS
 
 You need to install [emscripten](https://emscripten.org/) and ensure it is on your `PATH`.
 
