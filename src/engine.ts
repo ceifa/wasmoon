@@ -51,15 +51,11 @@ export default class LuaEngine {
     }
 
     public doStringSync(script: string): any {
-        this.global.loadString(script)
-        const result = this.global.runSync()
-        return result[0]
+        return this.callByteCodeSync((global) => global.loadString(script))
     }
 
     public doFileSync(filename: string): any {
-        this.global.loadFile(filename)
-        const result = this.global.runSync()
-        return result[0]
+        return this.callByteCodeSync((global) => global.loadFile(filename))
     }
 
     // WARNING: It will not wait for open handles and can potentially cause bugs if JS code tries to reference Lua after executed
@@ -72,10 +68,25 @@ export default class LuaEngine {
             if (result.length > 0) {
                 this.cmodule.lua_xmove(thread.address, this.global.address, result.length)
             }
+
+            if (result.length > 1) {
+                return result // support for multi return values
+            }
+
             return result[0]
         } finally {
             // Pop the read on success or failure
             this.global.remove(threadIndex)
         }
+    }
+
+    private callByteCodeSync(loader: (global: Global) => void): any {
+        const global = this.global
+        loader(global)
+        const result = global.runSync()
+        if (result.length > 1) {
+            return result // support for multi return values
+        }
+        return result[0]
     }
 }

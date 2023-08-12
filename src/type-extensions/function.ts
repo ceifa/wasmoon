@@ -1,5 +1,5 @@
 import { BaseDecorationOptions, Decoration } from '../decoration'
-import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from '../types'
+import { LUA_MULTRET, LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from '../types'
 import Global from '../global'
 import MultiReturn from '../multireturn'
 import RawResult from '../raw-result'
@@ -158,7 +158,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
         thread.lua.lua_pushvalue(thread.address, index)
         const func = thread.lua.luaL_ref(thread.address, LUA_REGISTRYINDEX)
 
-        const jsFunc = (...args: any[]): any => {
+        const jsFunc = (...args: any[]): MultiReturn | any => {
             if (thread.isClosed()) {
                 console.warn('Tried to call a function after closing lua state')
                 return
@@ -173,19 +173,26 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                 }
             }
 
+            const oldTop = thread.getTop()
+
             for (const arg of args) {
                 thread.pushValue(arg)
             }
 
-            const status = thread.lua.lua_pcallk(thread.address, args.length, 1, 0, 0, null)
+            const status = thread.lua.lua_pcallk(thread.address, args.length, LUA_MULTRET, 0, 0, null)
+            const newTop = thread.lua.lua_gettop(thread.address)
             if (status === LuaReturn.Yield) {
                 throw new Error('cannot yield in callbacks from javascript')
             }
             thread.assertOk(status)
-
-            const result = thread.getValue(-1)
-
-            thread.pop()
+            const deltaTop = newTop - (oldTop - 1)
+            let result = null
+            if (deltaTop > 1) {
+                result = thread.getStackValues(oldTop - 1)
+            } else {
+                result = thread.getValue(-1)
+            }
+            thread.pop(deltaTop)
             return result
         }
 

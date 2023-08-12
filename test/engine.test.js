@@ -168,13 +168,14 @@ describe('Engine', () => {
         expect(sum(10, 50)).to.be.equal(60)
     })
 
+    // TEST OFTEN BREAKS
     it('scheduled lua calls should succeed', async () => {
         const engine = await getEngine()
         engine.global.set('setInterval', setInterval)
 
         await engine.doString(`
             test = ""
-            setInterval(function()
+            setInterval(function ()
                 test = test .. "i"
             end, 1)
         `)
@@ -236,6 +237,54 @@ describe('Engine', () => {
         expect(returns).to.have.length(6)
         expect(returns.slice(0, -1)).to.eql([1, 10, 25, 'Hello World', {}])
         expect(returns.at(-1)).to.be.a('function')
+    })
+
+    it('doString with multiple returns should succeed', async () => {
+        const engine = await getEngine()
+
+        const returns = await engine.doString(`
+            return 1, x, y, "Hello World", {}, function() end, {1,2,3}, {a = 1, b = 2, c = 3};
+        `)
+
+        expect(returns).to.be.a('array')
+        expect(returns).to.have.length(8)
+        expect(returns[5]).to.be.a('function')
+        expect(returns[6]).to.be.a('array')
+        expect(returns[7]).to.be.a('object')
+    })
+
+    it('call lua function with multiple returns should succeed', async () => {
+        const engine = await getEngine()
+
+        const fn = await engine.doString(`
+            return function (x, y)
+                return 1, x, y, function () end, {1,2,3}, {a = 1, b = 2};
+            end
+        `)
+
+        expect(fn).to.be.a('function')
+
+        const returns = fn(4, 5)
+        const [func, arr, obj] = returns.slice(3)
+        expect(returns).to.have.length(6)
+        expect(func).to.be.a('function')
+        expect(arr).to.be.a('array')
+        expect(obj).to.be.a('object')
+    })
+
+    it('call lua function with single returns array should succeed', async () => {
+        const engine = await getEngine()
+
+        const fn = await engine.doString(`
+            return function (a, b, c)
+                return {a, b, c};
+            end
+        `)
+
+        expect(fn).to.be.a('function')
+        const array = fn(3, 4, 5)
+        expect(array).to.be.an('array')
+        expect(array).to.have.length(3)
     })
 
     it('get a lua thread should succeed', async () => {
