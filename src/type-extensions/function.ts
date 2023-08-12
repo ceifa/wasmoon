@@ -22,10 +22,10 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
             ? new FinalizationRegistry((func: number) => {
-                  if (!this.thread.isClosed()) {
-                      this.thread.lua.luaL_unref(this.thread.address, LUA_REGISTRYINDEX, func)
-                  }
-              })
+                if (!this.thread.isClosed()) {
+                    this.thread.lua.luaL_unref(this.thread.address, LUA_REGISTRYINDEX, func)
+                }
+            })
             : undefined
 
     private gcPointer: number
@@ -173,7 +173,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                 }
             }
 
-            const oldTop = thread.lua.lua_gettop(thread.address)
+            const oldTop = thread.getTop()
 
             for (const arg of args) {
                 thread.pushValue(arg)
