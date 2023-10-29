@@ -150,7 +150,7 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
                 }
             }
 
-            if (Promise.resolve(target) === target) {
+            if (Promise.resolve(target) === target || typeof target.then === 'function') {
                 return false
             }
         } else if (options.proxy === false) {

@@ -34,7 +34,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
             thread.lua.lua_setfield(thread.address, metatableIndex, '__gc')
 
             const checkSelf = (self: Promise<any>): true => {
-                if (Promise.resolve(self) !== self) {
+                if (Promise.resolve(self) !== self && typeof self.then !== 'function') {
                     throw new Error('promise method called without self instance')
                 }
                 return true
@@ -131,7 +131,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     }
 
     public pushValue(thread: Thread, decoration: Decoration<Promise<T>>): boolean {
-        if (Promise.resolve(decoration.target) !== decoration.target) {
+        if (Promise.resolve(decoration.target) !== decoration.target && typeof decoration.target.then !== 'function') {
             return false
         }
         return super.pushValue(thread, decoration)
