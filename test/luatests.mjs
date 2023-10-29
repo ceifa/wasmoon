@@ -16,7 +16,8 @@ async function* walk(dir) {
 }
 
 const factory = new LuaFactory()
-const filePath = fileURLToPath(import.meta.resolve('../lua/testes'))
+const testsPath = import.meta.resolve('../lua/testes')
+const filePath = fileURLToPath(typeof testsPath === 'string' ? testsPath : await Promise.resolve(testsPath))
 
 for await (const file of walk(filePath)) {
     const relativeFile = file.replace(`${filePath}/`, '')
