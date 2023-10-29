@@ -32,6 +32,10 @@ emcc \
         'stringToUTF8', \
         'stringToNewUTF8'
     ]" \
+    -s INCOMING_MODULE_JS_API="[
+        'locateFile', \
+        'preRun'
+    ]" \
     -s STRICT_JS=0 \
     -s MODULARIZE=1 \
     -s ALLOW_TABLE_GROWTH=1 \

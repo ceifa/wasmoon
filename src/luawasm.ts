@@ -23,8 +23,6 @@ interface ReferenceMetadata {
 export default class LuaWasm {
     public static async initialize(customWasmFileLocation?: string, environmentVariables?: EnvironmentVariables): Promise<LuaWasm> {
         const module: LuaEmscriptenModule = await initWasmModule({
-            print: console.log,
-            printErr: console.error,
             locateFile: (path: string, scriptDirectory: string) => {
                 return customWasmFileLocation || scriptDirectory + path
             },
