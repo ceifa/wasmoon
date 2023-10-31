@@ -14,8 +14,7 @@ export default class LuaFactory {
                 (typeof self === 'object' && self?.constructor?.name === 'DedicatedWorkerGlobalScope')
 
             if (isBrowser) {
-                const majorminor = version.slice(0, version.lastIndexOf('.'))
-                customWasmUri = `https://unpkg.com/wasmoon@${majorminor}/dist/glue.wasm`
+                customWasmUri = `https://unpkg.com/wasmoon@${version}/dist/glue.wasm`
             }
         }
 
