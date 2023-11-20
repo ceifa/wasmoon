@@ -7,15 +7,18 @@ LUA_SRC=$(ls ./lua/*.c | grep -v "luac.c" | grep -v "lua.c" | tr "\n" " ")
 extension=""
 if [ "$1" == "dev" ];
 then
-    extension="$extension -O0 -g3 -s ASSERTIONS=1 -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2"
+    extension="-O0 -g3 -s ASSERTIONS=1 -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2"
 else
-    extension="$extension -O3 --closure 1"
+    # ASSERTIONS=1 required with optimisations and strict mode. https://github.com/emscripten-core/emscripten/issues/20721
+    extension="-O3 --closure 1 -s ASSERTIONS=1"
 fi
 
+# Instead of telling Lua to be 32 bit for both floats and ints override the default
+# int type to 32 bit and leave the float as 64 bits.
 if [[ "$OSTYPE" == "darwin"* ]]; then
-    sed -i '' "s/^#define LUA_32BITS\t0$/#define LUA_32BITS\t1/" ./lua/luaconf.h
+    sed -E -i '' "s/#define LUA_INT_DEFAULT\s+LUA_INT_LONGLONG/#define LUA_INT_DEFAULT \tLUA_INT_INT/" ./lua/luaconf.h
 else
-    sed -i "s/^#define LUA_32BITS\t0$/#define LUA_32BITS\t1/" ./lua/luaconf.h
+    sed -E -i "s/#define LUA_INT_DEFAULT\s+LUA_INT_LONGLONG/#define LUA_INT_DEFAULT \tLUA_INT_INT/" ./lua/luaconf.h
 fi
 
 emcc \
@@ -44,7 +47,7 @@ emcc \
     -s STRICT=1 \
     -s EXPORT_ES6=1 \
     -s NODEJS_CATCH_EXIT=0 \
-	-s NODEJS_CATCH_REJECTION=0 \
+    -s NODEJS_CATCH_REJECTION=0 \
     -s MALLOC=emmalloc \
     -s STACK_SIZE=1MB \
     -s EXPORTED_FUNCTIONS="[

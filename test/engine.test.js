@@ -660,4 +660,55 @@ describe('Engine', () => {
 
         expect(res).to.be.equal(str)
     })
+
+    it('negative integers should be pushed and retrieved as string', async () => {
+        const engine = await getEngine()
+        engine.global.set('value', -1)
+
+        const res = await engine.doString(`return tostring(value)`)
+
+        expect(res).to.be.equal('-1')
+    })
+
+    it('negative integers should be pushed and retrieved as number', async () => {
+        const engine = await getEngine()
+        engine.global.set('value', -1)
+
+        const res = await engine.doString(`return value`)
+
+        expect(res).to.be.equal(-1)
+    })
+
+    it('number greater than 32 bit int should be pushed and retrieved as string', async () => {
+        const engine = await getEngine()
+        const value = 1689031554550
+        engine.global.set('value', value)
+
+        const res = await engine.doString(`return tostring(value)`)
+
+        // Since it's a float in Lua it will be prefixed with .0 from tostring()
+        expect(res).to.be.equal(`${String(value)}.0`)
+    })
+
+    it('number greater than 32 bit int should be pushed and retrieved as number', async () => {
+        const engine = await getEngine()
+        const value = 1689031554550
+        engine.global.set('value', value)
+
+        const res = await engine.doString(`return value`)
+
+        expect(res).to.be.equal(value)
+    })
+
+    it('print max integer as 32 bits', async () => {
+        const engine = await getEngine()
+        const res = await engine.doString(`return math.maxinteger`)
+        expect(res).to.be.equal(2147483647)
+    })
+
+    it('print min integer as 32 bits', async () => {
+        const engine = await getEngine()
+        const res = await engine.doString(`return math.mininteger`)
+        expect(res).to.be.equal(-2147483648)
+    })
 })

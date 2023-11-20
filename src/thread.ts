@@ -23,6 +23,9 @@ export interface OrderedExtension {
 
 // When the debug count hook is set, call it every X instructions.
 const INSTRUCTION_HOOK_COUNT = 1000
+// These reflect math.maxinteger and math.mininteger with 32 bit ints in Lua.
+const MAX_SAFE_INTEGER = Math.pow(2, 31) - 1
+const MIN_SAFE_INTEGER = -Math.pow(2, 31)
 
 export default class Thread {
     public readonly address: LuaState
@@ -204,7 +207,9 @@ export default class Thread {
                 this.lua.lua_pushnil(this.address)
                 break
             case 'number':
-                if (Number.isInteger(target)) {
+                // Only push it as an integer if it fits within 32 bits, otherwise treat it as a double.
+                // This is because wasm doesn't support 32 bit ints but does support 64 bit floats.
+                if (Number.isInteger(target) && target <= MAX_SAFE_INTEGER && target >= MIN_SAFE_INTEGER) {
                     this.lua.lua_pushinteger(this.address, target)
                 } else {
                     this.lua.lua_pushnumber(this.address, target)
