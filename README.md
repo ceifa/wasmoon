@@ -181,3 +181,90 @@ npm run build:wasm:dev # build lua
 npm run build # build the js code/bridge
 npm test # ensure everything it's working fine
 ```
+
+## Edge Cases
+
+### Numbers
+
+WASM does not support 64 bit integers only 32 bit integers and 64 bit doubles. If a number is an integer and will fit within a Lua integer then it will be pushed as a Lua native integer type. However, if it exceeds that size even if it is still an integer it will be pushed as a 64 bit double. This is unlikely to effect inteoperability with JS since JS treats all numbers the same but should allow some optimisation within Lua for smaller numbers.
+
+### Null
+
+`null` is not exposed to Lua and it has no awareness of it which can cause some issues when using it a table. `nil` is equivalent to `undefined`. Issue #39 tracks this and a workaround until `null` is added into Wasmoon.
+
+### Promises
+
+Promises can be await'd from Lua with some caveats detailed in the below section. To await a Promise call `:await()` on it which will yield the Lua execution until the promise completes.
+
+```js
+const { LuaFactory } = require('wasmoon')
+const factory = new LuaFactory()
+const lua = await factory.createEngine()
+
+try {
+    lua.global.set('sleep', (length) => new Promise((resolve) => setTimeout(resolve, length)))
+    await lua.doString(`
+        sleep(1000):await()
+    `)
+} finally {
+    lua.global.close()
+}
+```
+
+### Async/Await
+
+It's not possible to await in a callback from JS into Lua. This is a limitation of Lua but there are some workarounds. It can also be encountered when yielding at the top-level of a file. An example where you might encounter this is a snippet like this:
+
+```js
+local res = sleep(1):next(function ()
+    sleep(10):await()
+    return 15
+end)
+print("res", res:await())
+```
+
+Which will throw an error like this:
+
+```
+Error: Lua Error(ErrorRun/2): cannot resume dead coroutine
+    at Thread.assertOk (/home/tstableford/projects/wasmoon/dist/index.js:409:23)
+    at Thread.<anonymous> (/home/tstableford/projects/wasmoon/dist/index.js:142:22)
+    at Generator.throw (<anonymous>)
+    at rejected (/home/tstableford/projects/wasmoon/dist/index.js:26:69)
+```
+
+Or like this:
+
+```
+attempt to yield across a C-call boundary
+```
+
+You can workaround this by doing something like below:
+
+```lua
+function async(callback)
+    return function(...)
+        local co = coroutine.create(callback)
+        local safe, result = coroutine.resume(co, ...)
+
+        return Promise.create(function(resolve, reject)
+            local function step()
+                if coroutine.status(co) == "dead" then
+                    local send = safe and resolve or reject
+                    return send(result)
+                end
+
+                safe, result = coroutine.resume(co)
+
+                if safe and result == Promise.resolve(result) then
+                    result:finally(step)
+                else
+                    step()
+                end
+            end
+
+            result:finally(step)
+        end)
+    end
+end
+```
