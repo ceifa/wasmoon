@@ -185,6 +185,7 @@ npm test # ensure everything it's working fine
 ## Edge Cases
 
 ### Numbers
+
 WASM does not support 64 bit integers only 32 bit integers and 64 bit doubles. If a number is an integer and will fit within a Lua integer then it will be pushed as a Lua native integer type. However, if it exceeds that size even if it is still an integer it will be pushed as a 64 bit double. This is unlikely to effect inteoperability with JS since JS treats all numbers the same but should allow some optimisation within Lua for smaller numbers.
 
 ### Null
@@ -201,7 +202,7 @@ const factory = new LuaFactory()
 const lua = await factory.createEngine()
 
 try {
-    lua.global.set('sleep', (length) => new Promise(resolve => setTimeout(resolve, length)))
+    lua.global.set('sleep', (length) => new Promise((resolve) => setTimeout(resolve, length)))
     await lua.doString(`
         sleep(1000):await()
     `)
@@ -213,6 +214,7 @@ try {
 ### Async/Await
 
 It's not possible to await in a callback from JS into Lua. This is a limitation of Lua but there are some workarounds. It can also be encountered when yielding at the top-level of a file. An example where you might encounter this is a snippet like this:
+
 ```js
 local res = sleep(1):next(function ()
     sleep(10):await()
@@ -220,7 +222,9 @@ local res = sleep(1):next(function ()
 end)
 print("res", res:await())
 ```
+
 Which will throw an error like this:
+
 ```
 Error: Lua Error(ErrorRun/2): cannot resume dead coroutine
     at Thread.assertOk (/home/tstableford/projects/wasmoon/dist/index.js:409:23)
@@ -228,12 +232,15 @@ Error: Lua Error(ErrorRun/2): cannot resume dead coroutine
     at Generator.throw (<anonymous>)
     at rejected (/home/tstableford/projects/wasmoon/dist/index.js:26:69)
 ```
+
 Or like this:
+
 ```
 attempt to yield across a C-call boundary
 ```
 
 You can workaround this by doing something like below:
+
 ```lua
 function async(callback)
     return function(...)
