@@ -9,6 +9,7 @@ if [ "$1" == "dev" ];
 then
     extension="-O0 -g3 -s ASSERTIONS=1 -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2"
 else
+    # TODO: This appears to be a bug in emscripten. Disable assertions when that bug is resolved or a workaround found.
     # ASSERTIONS=1 required with optimisations and strict mode. https://github.com/emscripten-core/emscripten/issues/20721
     extension="-O3 --closure 1 -s ASSERTIONS=1"
 fi
