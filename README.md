@@ -184,10 +184,6 @@ npm test # ensure everything it's working fine
 
 ## Edge Cases
 
-### Numbers
-
-WASM does not support 64 bit integers only 32 bit integers and 64 bit doubles. If a number is an integer and will fit within a Lua integer then it will be pushed as a Lua native integer type. However, if it exceeds that size even if it is still an integer it will be pushed as a 64 bit double. This is unlikely to effect inteoperability with JS since JS treats all numbers the same but should allow some optimisation within Lua for smaller numbers.
-
 ### Null
 
 `null` is not exposed to Lua and it has no awareness of it which can cause some issues when using it a table. `nil` is equivalent to `undefined`. Issue #39 tracks this and a workaround until `null` is added into Wasmoon.

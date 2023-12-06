@@ -14,14 +14,6 @@ else
     extension="-O3 --closure 1 -s ASSERTIONS=1"
 fi
 
-# Instead of telling Lua to be 32 bit for both floats and ints override the default
-# int type to 32 bit and leave the float as 64 bits.
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    sed -E -i '' "s/#define LUA_INT_DEFAULT\s+LUA_INT_LONGLONG/#define LUA_INT_DEFAULT \tLUA_INT_INT/" ./lua/luaconf.h
-else
-    sed -E -i "s/#define LUA_INT_DEFAULT\s+LUA_INT_LONGLONG/#define LUA_INT_DEFAULT \tLUA_INT_INT/" ./lua/luaconf.h
-fi
-
 emcc \
     -s WASM=1 $extension -o ./build/glue.js \
     -s EXPORTED_RUNTIME_METHODS="[
@@ -51,6 +43,7 @@ emcc \
     -s NODEJS_CATCH_REJECTION=0 \
     -s MALLOC=emmalloc \
     -s STACK_SIZE=1MB \
+    -s WASM_BIGINT \
     -s EXPORTED_FUNCTIONS="[
         '_malloc', \
         '_free', \
@@ -205,9 +198,3 @@ emcc \
         '_luaL_openlibs' \
     ]" \
     ${LUA_SRC}
-
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    sed -i '' "s/^#define LUA_32BITS\t1$/#define LUA_32BITS\t0/" ./lua/luaconf.h
-else
-    sed -i "s/^#define LUA_32BITS\t1$/#define LUA_32BITS\t0/" ./lua/luaconf.h
-fi

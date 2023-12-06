@@ -108,7 +108,7 @@ export default class LuaWasm {
     public lua_type: (L: LuaState, idx: number) => LuaType
     public lua_typename: (L: LuaState, tp: number) => string
     public lua_tonumberx: (L: LuaState, idx: number, isnum: number | null) => number
-    public lua_tointegerx: (L: LuaState, idx: number, isnum: number | null) => number
+    public lua_tointegerx: (L: LuaState, idx: number, isnum: number | null) => bigint
     public lua_toboolean: (L: LuaState, idx: number) => number
     public lua_tolstring: (L: LuaState, idx: number, len: number | null) => string
     public lua_rawlen: (L: LuaState, idx: number) => number
@@ -121,7 +121,7 @@ export default class LuaWasm {
     public lua_compare: (L: LuaState, idx1: number, idx2: number, op: number) => number
     public lua_pushnil: (L: LuaState) => void
     public lua_pushnumber: (L: LuaState, n: number) => void
-    public lua_pushinteger: (L: LuaState, n: number) => void
+    public lua_pushinteger: (L: LuaState, n: bigint) => void
     public lua_pushlstring: (L: LuaState, s: string | number | null, len: number) => string
     public lua_pushstring: (L: LuaState, s: string | number | null) => string
     public lua_pushcclosure: (L: LuaState, fn: number, n: number) => void
@@ -131,9 +131,9 @@ export default class LuaWasm {
     public lua_getglobal: (L: LuaState, name: string | null) => LuaType
     public lua_gettable: (L: LuaState, idx: number) => LuaType
     public lua_getfield: (L: LuaState, idx: number, k: string | null) => LuaType
-    public lua_geti: (L: LuaState, idx: number, n: number) => LuaType
+    public lua_geti: (L: LuaState, idx: number, n: bigint) => LuaType
     public lua_rawget: (L: LuaState, idx: number) => number
-    public lua_rawgeti: (L: LuaState, idx: number, n: number) => LuaType
+    public lua_rawgeti: (L: LuaState, idx: number, n: bigint) => LuaType
     public lua_rawgetp: (L: LuaState, idx: number, p: number | null) => LuaType
     public lua_createtable: (L: LuaState, narr: number, nrec: number) => void
     public lua_newuserdatauv: (L: LuaState, sz: number, nuvalue: number) => number
@@ -142,9 +142,9 @@ export default class LuaWasm {
     public lua_setglobal: (L: LuaState, name: string | null) => void
     public lua_settable: (L: LuaState, idx: number) => void
     public lua_setfield: (L: LuaState, idx: number, k: string | null) => void
-    public lua_seti: (L: LuaState, idx: number, n: number) => void
+    public lua_seti: (L: LuaState, idx: number, n: bigint) => void
     public lua_rawset: (L: LuaState, idx: number) => void
-    public lua_rawseti: (L: LuaState, idx: number, n: number) => void
+    public lua_rawseti: (L: LuaState, idx: number, n: bigint) => void
     public lua_rawsetp: (L: LuaState, idx: number, p: number | null) => void
     public lua_setmetatable: (L: LuaState, objindex: number) => number
     public lua_setiuservalue: (L: LuaState, idx: number, n: number) => number
