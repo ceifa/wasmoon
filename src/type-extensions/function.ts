@@ -164,7 +164,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                 return
             }
 
-            const internalType = thread.lua.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, func)
+            const internalType = thread.lua.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(func))
             if (internalType !== LuaType.Function) {
                 const callMetafieldType = thread.lua.luaL_getmetafield(thread.address, -1, '__call')
                 thread.pop()

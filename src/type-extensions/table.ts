@@ -47,7 +47,7 @@ class TableTypeExtension extends TypeExtension<TableType> {
         const seenMap = userdata || new Map<any, number>()
         const existingReference = seenMap.get(target)
         if (existingReference !== undefined) {
-            thread.lua.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, existingReference)
+            thread.lua.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(existingReference))
             return true
         }
 
@@ -58,7 +58,7 @@ class TableTypeExtension extends TypeExtension<TableType> {
                 thread.lua.lua_createtable(thread.address, arrayCount, keyCount)
                 const ref = thread.lua.luaL_ref(thread.address, LUA_REGISTRYINDEX)
                 seenMap.set(target, ref)
-                thread.lua.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, ref)
+                thread.lua.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(ref))
             }
 
             if (Array.isArray(target)) {
