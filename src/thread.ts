@@ -45,7 +45,7 @@ export default class Thread {
         if (!address) {
             throw new Error('lua_newthread returned a null pointer')
         }
-        return new Thread(this.lua, this.typeExtensions, address)
+        return new Thread(this.lua, this.typeExtensions, address, this.parent || this)
     }
 
     public resetThread(): void {
@@ -186,7 +186,7 @@ export default class Thread {
 
     public pushValue(rawValue: unknown, userdata?: unknown): void {
         const decoratedValue = this.getValueDecorations(rawValue)
-        const target = decoratedValue.target ?? undefined
+        const target = decoratedValue.target
 
         if (target instanceof Thread) {
             const isMain = this.lua.lua_pushthread(target.address) === 1

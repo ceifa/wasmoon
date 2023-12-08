@@ -186,7 +186,7 @@ npm test # ensure everything it's working fine
 
 ### Null
 
-`null` is not exposed to Lua and it has no awareness of it which can cause some issues when using it a table. `nil` is equivalent to `undefined`. Issue #39 tracks this and a workaround until `null` is added into Wasmoon.
+`null` is injected as userdata type if `injectObjects` is set to `true`. This works as expected except that it will evaluate to `true` in Lua.
 
 ### Promises
 
