@@ -2,6 +2,7 @@ const { LuaLibraries, LuaReturn, LuaThread, LuaType, decorate, decorateProxy, de
 const { expect } = require('chai')
 const { getEngine, getFactory } = require('./utils')
 const { setTimeout } = require('node:timers/promises')
+const { EventEmitter } = require('events')
 const jestMock = require('jest-mock')
 
 class TestClass {
@@ -19,6 +20,18 @@ class TestClass {
 }
 
 describe('Engine', () => {
+    let intervals = []
+    const setIntervalSafe = (callback, interval) => {
+        intervals.push(setInterval(() => callback(), interval))
+    }
+
+    afterEach(() => {
+        for (const interval of intervals) {
+            clearInterval(interval)
+        }
+        intervals = []
+    })
+
     it('receive lua table on JS function should succeed', async () => {
         const engine = await getEngine()
         engine.global.set('stringify', (table) => {
@@ -170,7 +183,7 @@ describe('Engine', () => {
 
     it('scheduled lua calls should succeed', async () => {
         const engine = await getEngine()
-        engine.global.set('setInterval', setInterval)
+        engine.global.set('setInterval', setIntervalSafe)
 
         await engine.doString(`
             test = ""
@@ -188,7 +201,7 @@ describe('Engine', () => {
 
     it('scheduled lua calls should fail silently if invalid', async () => {
         const engine = await getEngine()
-        engine.global.set('setInterval', setInterval)
+        engine.global.set('setInterval', setIntervalSafe)
 
         // TODO: Disable mock at the end of the test.
         jestMock.spyOn(console, 'warn').mockImplementation(() => {
@@ -497,14 +510,12 @@ describe('Engine', () => {
 
     it('timeout blocking lua program', async () => {
         const engine = await getEngine()
-        const thread = engine.global.newThread()
+        engine.global.loadString(`
+            local i = 0
+            while true do i = i + 1 end
+        `)
 
-        thread.loadString(`
-        local i = 0
-        while true do i = i + 1 end
-    `)
-
-        await expect(thread.run(0, { timeout: 5 })).eventually.to.be.rejectedWith('thread timeout exceeded')
+        await expect(engine.global.run(0, { timeout: 5 })).eventually.to.be.rejectedWith('thread timeout exceeded')
     })
 
     it('overwrite lib function', async () => {
@@ -707,5 +718,80 @@ describe('Engine', () => {
         const res = await engine.doString(`return ("%d"):format(value)`)
 
         expect(res).to.be.equal('1689031554550')
+    })
+
+    it('yielding in a JS callback into Lua does not break lua state', async () => {
+        // When yielding within a callback the error 'attempt to yield across a C-call boundary'.
+        // This test just checks that throwing that error still allows the lua global to be
+        // re-used and doesn't cause JS to abort or some nonsense.
+        const engine = await getEngine()
+        const testEmitter = new EventEmitter()
+        engine.global.set('yield', () => new Promise((resolve) => testEmitter.once('resolve', resolve)))
+        const resPromise = engine.doString(`
+        local res = yield():next(function ()
+            coroutine.yield()
+            return 15
+        end)
+        print("res", res:await())
+      `)
+
+        testEmitter.emit('resolve')
+        await expect(resPromise).to.eventually.be.rejectedWith('Error: attempt to yield across a C-call boundary')
+
+        expect(await engine.doString(`return 42`)).to.equal(42)
+    })
+
+    it('forced yield within JS callback from Lua doesnt cause vm to crash', async () => {
+        const engine = await getEngine({ functionTimeout: 10 })
+        engine.global.set('promise', Promise.resolve())
+        const thread = engine.global.newThread()
+        thread.loadString(`
+        promise:next(function ()
+            while true do
+              -- nothing
+            end
+        end):await()
+      `)
+        await expect(thread.run(0, { timeout: 5 })).to.eventually.be.rejectedWith('thread timeout exceeded')
+
+        expect(await engine.doString(`return 42`)).to.equal(42)
+    })
+
+    it('function callback timeout still allows timeout of caller thread', async () => {
+        const engine = await getEngine()
+        engine.global.set('promise', Promise.resolve())
+        const thread = engine.global.newThread()
+        thread.loadString(`
+        promise:next(function ()
+            -- nothing
+        end):await()
+        while true do end
+      `)
+        await expect(thread.run(0, { timeout: 5 })).to.eventually.be.rejectedWith('thread timeout exceeded')
+    })
+
+    it('null injected and valid', async () => {
+        const engine = await getEngine()
+        engine.global.loadString(`
+        local args = { ... }
+        assert(args[1] == null, string.format("expected first argument to be null, got %s", tostring(args[1])))
+        return null, args[1], tostring(null)
+      `)
+        engine.global.pushValue(null)
+        const res = await engine.global.run(1)
+        expect(res).to.deep.equal([null, null, 'null'])
+    })
+
+    it('Nested callback from JS to Lua', async () => {
+        const engine = await getEngine()
+        engine.global.set('call', (fn) => fn())
+        const res = await engine.doString(`
+        return call(function ()
+          return call(function ()
+            return 10
+          end)
+        end)
+      `)
+        expect(res).to.equal(10)
     })
 })

@@ -2,6 +2,7 @@ import Global from './global'
 import Thread from './thread'
 import createErrorType from './type-extensions/error'
 import createFunctionType from './type-extensions/function'
+import createNullType from './type-extensions/null'
 import createPromiseType from './type-extensions/promise'
 import createProxyType from './type-extensions/proxy'
 import createTableType from './type-extensions/table'
@@ -13,16 +14,28 @@ export default class LuaEngine {
 
     public constructor(
         private cmodule: LuaWasm,
-        { openStandardLibs = true, injectObjects = false, enableProxy = true, traceAllocations = false } = {},
+        {
+            openStandardLibs = true,
+            injectObjects = false,
+            enableProxy = true,
+            traceAllocations = false,
+            functionTimeout = undefined as number | undefined,
+        } = {},
     ) {
         this.global = new Global(this.cmodule, traceAllocations)
 
         // Generic handlers - These may be required to be registered for additional types.
         this.global.registerTypeExtension(0, createTableType(this.global))
-        this.global.registerTypeExtension(0, createFunctionType(this.global))
+        this.global.registerTypeExtension(0, createFunctionType(this.global, { functionTimeout }))
 
         // Contains the :await functionality.
         this.global.registerTypeExtension(1, createPromiseType(this.global, injectObjects))
+
+        if (injectObjects) {
+            // Should be higher priority than table since that catches generic objects along
+            // with userdata so it doesn't end up a userdata type.
+            this.global.registerTypeExtension(5, createNullType(this.global))
+        }
 
         if (enableProxy) {
             // This extension only really overrides tables and arrays.

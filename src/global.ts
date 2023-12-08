@@ -41,7 +41,12 @@ export default class Global extends Thread {
                 'iiiii',
             )
 
-            super(cmodule, [], cmodule.lua_newstate(allocatorFunctionPointer, null))
+            const address = cmodule.lua_newstate(allocatorFunctionPointer, null)
+            if (!address) {
+                cmodule.module.removeFunction(allocatorFunctionPointer)
+                throw new Error('lua_newstate returned a null pointer')
+            }
+            super(cmodule, [], address)
 
             this.memoryStats = memoryStats
             this.allocatorFunctionPointer = allocatorFunctionPointer

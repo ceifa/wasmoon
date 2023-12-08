@@ -18,6 +18,10 @@ export function decorateFunction(target: FunctionType, options: FunctionDecorati
     return new Decoration<FunctionType, FunctionDecoration>(target, options)
 }
 
+export interface FunctionTypeExtensionOptions {
+    functionTimeout?: number
+}
+
 class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecoration> {
     private readonly functionRegistry =
         typeof FinalizationRegistry !== 'undefined'
@@ -30,9 +34,20 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
 
     private gcPointer: number
     private functionWrapper: number
+    private callbackContext: Thread
+    private callbackContextIndex: number
+    private options?: FunctionTypeExtensionOptions
 
-    public constructor(thread: Global) {
+    public constructor(thread: Global, options?: FunctionTypeExtensionOptions) {
         super(thread, 'js_function')
+
+        this.options = options
+        // Create a thread off of the global thread to be used to create function call threads without
+        // interfering with the global context. This creates a callback context that will always exist
+        // even if the thread that called getValue() has been destroyed.
+        this.callbackContext = thread.newThread()
+        // Pops it from the global stack but keeps it alive
+        this.callbackContextIndex = this.thread.lua.luaL_ref(thread.address, LUA_REGISTRYINDEX)
 
         if (!this.functionRegistry) {
             console.warn('FunctionTypeExtension: FinalizationRegistry not found. Memory leaks likely.')
@@ -117,6 +132,10 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
     public close(): void {
         this.thread.lua.module.removeFunction(this.gcPointer)
         this.thread.lua.module.removeFunction(this.functionWrapper)
+        // Doesn't destroy the Lua thread, just function pointers.
+        this.callbackContext.close()
+        // Destroy the Lua thread
+        this.callbackContext.lua.luaL_unref(this.callbackContext.address, LUA_REGISTRYINDEX, this.callbackContextIndex)
     }
 
     public isType(_thread: Thread, _index: number, type: LuaType): boolean {
@@ -155,38 +174,58 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
     }
 
     public getValue(thread: Thread, index: number): FunctionType {
+        // Create a copy of the function
         thread.lua.lua_pushvalue(thread.address, index)
+        // Create a reference to the function which pops it from the stack
         const func = thread.lua.luaL_ref(thread.address, LUA_REGISTRYINDEX)
 
         const jsFunc = (...args: any[]): any => {
-            if (thread.isClosed()) {
+            // Calling a function would ideally be in the Lua context that's calling it. For example if the JS function
+            // setInterval were exposed to Lua then the calling thread would be created in that Lua context for executing
+            // the function call back to Lua through JS. However, if getValue were called in a thread, the thread then
+            // destroyed, and then this JS func were called it would be calling from a dead context. That means the safest
+            // thing to do is to have a thread you know will always exist.
+            if (this.callbackContext.isClosed()) {
                 console.warn('Tried to call a function after closing lua state')
                 return
             }
 
-            const internalType = thread.lua.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(func))
-            if (internalType !== LuaType.Function) {
-                const callMetafieldType = thread.lua.luaL_getmetafield(thread.address, -1, '__call')
-                thread.pop()
-                if (callMetafieldType !== LuaType.Function) {
-                    throw new Error(`A value of type '${internalType}' was pushed but it is not callable`)
+            // Function calls back to value should always be within a new thread because
+            // they can be left in inconsistent states.
+            const callThread = this.callbackContext.newThread()
+            try {
+                const internalType = callThread.lua.lua_rawgeti(callThread.address, LUA_REGISTRYINDEX, BigInt(func))
+                if (internalType !== LuaType.Function) {
+                    const callMetafieldType = callThread.lua.luaL_getmetafield(callThread.address, -1, '__call')
+                    callThread.pop()
+                    if (callMetafieldType !== LuaType.Function) {
+                        throw new Error(`A value of type '${internalType}' was pushed but it is not callable`)
+                    }
                 }
+
+                for (const arg of args) {
+                    callThread.pushValue(arg)
+                }
+
+                if (this.options?.functionTimeout) {
+                    callThread.setTimeout(Date.now() + this.options.functionTimeout)
+                }
+
+                const status: LuaReturn = callThread.lua.lua_pcallk(callThread.address, args.length, 1, 0, 0, null)
+                if (status === LuaReturn.Yield) {
+                    throw new Error('cannot yield in callbacks from javascript')
+                }
+                callThread.assertOk(status)
+
+                if (callThread.getTop() > 0) {
+                    return callThread.getValue(-1)
+                }
+                return undefined
+            } finally {
+                callThread.close()
+                // Pop thread used for function call.
+                this.callbackContext.pop()
             }
-
-            for (const arg of args) {
-                thread.pushValue(arg)
-            }
-
-            const status: LuaReturn = thread.lua.lua_pcallk(thread.address, args.length, 1, 0, 0, null)
-            if (status === LuaReturn.Yield) {
-                throw new Error('cannot yield in callbacks from javascript')
-            }
-            thread.assertOk(status)
-
-            const result = thread.getValue(-1)
-
-            thread.pop()
-            return result
         }
 
         this.functionRegistry?.register(jsFunc, func)
@@ -195,6 +234,9 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
     }
 }
 
-export default function createTypeExtension(thread: Global): TypeExtension<FunctionType, FunctionDecoration> {
-    return new FunctionTypeExtension(thread)
+export default function createTypeExtension(
+    thread: Global,
+    options?: FunctionTypeExtensionOptions,
+): TypeExtension<FunctionType, FunctionDecoration> {
+    return new FunctionTypeExtension(thread, options)
 }
