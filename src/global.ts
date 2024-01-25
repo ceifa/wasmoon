@@ -98,11 +98,11 @@ export default class Global extends Thread {
     // To allow library users to specify custom types
     // Higher is more important and will be evaluated first.
     /**
-      * Registers a type extension for Lua objects.
+     * Registers a type extension for Lua objects.
      *  Higher priority is more important and will be evaluated first.
-      * @param {number} priority - Priority of the type extension.
-      * @param {LuaTypeExtension<unknown>} extension - The type extension to register.
-      */
+     * @param {number} priority - Priority of the type extension.
+     * @param {LuaTypeExtension<unknown>} extension - The type extension to register.
+     */
     public registerTypeExtension(priority: number, extension: LuaTypeExtension<unknown>): void {
         this.typeExtensions.push({ extension, priority })
         this.typeExtensions.sort((a, b) => b.priority - a.priority)

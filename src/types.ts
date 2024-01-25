@@ -1,4 +1,4 @@
-import LuaEngine from "./engine";
+import LuaEngine from './engine'
 
 export type LuaState = number
 

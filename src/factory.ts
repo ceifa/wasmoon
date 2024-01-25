@@ -1,4 +1,4 @@
-import { CreateEngineOptions, EnvironmentVariables } from "./types";
+import { CreateEngineOptions, EnvironmentVariables } from './types'
 import LuaEngine from './engine'
 import LuaWasm from './luawasm'
 // A rollup plugin will resolve this to the current version on package.json
