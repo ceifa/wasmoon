@@ -8,10 +8,21 @@ interface LuaMemoryStats {
     memoryMax?: number
 }
 
+/**
+ * Represents the global state of the Lua engine.
+ * @class
+ * @export
+ */
 export default class Global extends Thread {
     private memoryStats: LuaMemoryStats | undefined
     private allocatorFunctionPointer: number | undefined
 
+    /**
+     * Constructs a new Global instance.
+     * @constructor
+     * @param {LuaWasm} cmodule - The Lua WebAssembly module.
+     * @param {boolean} shouldTraceAllocations - Whether to trace memory allocations.
+     */
     public constructor(cmodule: LuaWasm, shouldTraceAllocations: boolean) {
         if (shouldTraceAllocations) {
             const memoryStats: LuaMemoryStats = { memoryUsed: 0 }
@@ -59,6 +70,9 @@ export default class Global extends Thread {
         }
     }
 
+    /**
+     * Closes the global state of the Lua engine.
+     */
     public close(): void {
         if (this.isClosed()) {
             return
@@ -83,11 +97,21 @@ export default class Global extends Thread {
 
     // To allow library users to specify custom types
     // Higher is more important and will be evaluated first.
+    /**
+      * Registers a type extension for Lua objects.
+     *  Higher priority is more important and will be evaluated first.
+      * @param {number} priority - Priority of the type extension.
+      * @param {LuaTypeExtension<unknown>} extension - The type extension to register.
+      */
     public registerTypeExtension(priority: number, extension: LuaTypeExtension<unknown>): void {
         this.typeExtensions.push({ extension, priority })
         this.typeExtensions.sort((a, b) => b.priority - a.priority)
     }
 
+    /**
+     * Loads a default Lua library.
+     * @param {LuaLibraries} library - The Lua library to load.
+     */
     public loadLibrary(library: LuaLibraries): void {
         switch (library) {
             case LuaLibraries.Base:
@@ -124,6 +148,11 @@ export default class Global extends Thread {
         this.lua.lua_setglobal(this.address, library)
     }
 
+    /**
+     * Retrieves the value of a global variable.
+     * @param {string} name - The name of the global variable.
+     * @returns {any} - The value of the global variable.
+     */
     public get(name: string): any {
         const type = this.lua.lua_getglobal(this.address, name)
         const value = this.getValue(-1, type)
@@ -131,6 +160,11 @@ export default class Global extends Thread {
         return value
     }
 
+    /**
+     * Sets the value of a global variable.
+     * @param {string} name - The name of the global variable.
+     * @param {unknown} value - The value to set for the global variable.
+     */
     public set(name: string, value: unknown): void {
         this.pushValue(value)
         this.lua.lua_setglobal(this.address, name)
@@ -153,14 +187,26 @@ export default class Global extends Thread {
         }
     }
 
+    /**
+     * Gets the amount of memory used by the Lua engine. Can only be used if the state was created with the `traceAllocations` option set to true.
+     * @returns {number} - The amount of memory used in bytes.
+     */
     public getMemoryUsed(): number {
         return this.getMemoryStatsRef().memoryUsed
     }
 
+    /**
+     * Gets the maximum memory allowed for the Lua engine. Can only be used if the state was created with the `traceAllocations` option set to true.
+     * @returns {number | undefined} - The maximum memory allowed in bytes, or undefined if not set.
+     */
     public getMemoryMax(): number | undefined {
         return this.getMemoryStatsRef().memoryMax
     }
 
+    /**
+     * Sets the maximum memory allowed for the Lua engine. Can only be used if the state was created with the `traceAllocations` option set to true.
+     * @param {number | undefined} max - The maximum memory allowed in bytes, or undefined for unlimited.
+     */
     public setMemoryMax(max: number | undefined): void {
         this.getMemoryStatsRef().memoryMax = max
     }

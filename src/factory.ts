@@ -1,12 +1,27 @@
-import { EnvironmentVariables } from './types'
+import { CreateEngineOptions, EnvironmentVariables } from "./types";
 import LuaEngine from './engine'
 import LuaWasm from './luawasm'
 // A rollup plugin will resolve this to the current version on package.json
 import version from 'package-version'
 
+/**
+ * Represents a factory for creating and configuring Lua engines.
+ * @class
+ * @export
+ */
 export default class LuaFactory {
+    /**
+     * Promise for the Lua WebAssembly module.
+     * @private
+     */
     private luaWasmPromise: Promise<LuaWasm>
 
+    /**
+     * Constructs a new LuaFactory instance.
+     * @constructor
+     * @param {string} [customWasmUri] - Custom URI for the Lua WebAssembly module.
+     * @param {EnvironmentVariables} [environmentVariables] - Environment variables for the Lua engine.
+     */
     public constructor(customWasmUri?: string, environmentVariables?: EnvironmentVariables) {
         if (customWasmUri === undefined) {
             const isBrowser =
@@ -21,10 +36,23 @@ export default class LuaFactory {
         this.luaWasmPromise = LuaWasm.initialize(customWasmUri, environmentVariables)
     }
 
+    /**
+     * Mounts a file in the Lua environment asynchronously.
+     * @async
+     * @param {string} path - Path to the file in the Lua environment.
+     * @param {string | ArrayBufferView} content - Content of the file to be mounted.
+     * @returns {Promise<void>} - A Promise that resolves once the file is mounted.
+     */
     public async mountFile(path: string, content: string | ArrayBufferView): Promise<void> {
         this.mountFileSync(await this.getLuaModule(), path, content)
     }
 
+    /**
+     * Mounts a file in the Lua environment synchronously.
+     * @param {LuaWasm} luaWasm - Lua WebAssembly module.
+     * @param {string} path - Path to the file in the Lua environment.
+     * @param {string | ArrayBufferView} content - Content of the file to be mounted.
+     */
     public mountFileSync(luaWasm: LuaWasm, path: string, content: string | ArrayBufferView): void {
         const fileSep = path.lastIndexOf('/')
         const file = path.substring(fileSep + 1)
@@ -54,10 +82,21 @@ export default class LuaFactory {
         luaWasm.module.FS.writeFile(path, content)
     }
 
-    public async createEngine(options: ConstructorParameters<typeof LuaEngine>[1] = {}): Promise<LuaEngine> {
+    /**
+     * Creates a Lua engine with the specified options.
+     * @async
+     * @param {CreateEngineOptions} [options] - Configuration options for the Lua engine.
+     * @returns {Promise<LuaEngine>} - A Promise that resolves to a new LuaEngine instance.
+     */
+    public async createEngine(options: CreateEngineOptions = {}): Promise<LuaEngine> {
         return new LuaEngine(await this.getLuaModule(), options)
     }
 
+    /**
+     * Gets the Lua WebAssembly module.
+     * @async
+     * @returns {Promise<LuaWasm>} - A Promise that resolves to the Lua WebAssembly module.
+     */
     public async getLuaModule(): Promise<LuaWasm> {
         return this.luaWasmPromise
     }

@@ -1,6 +1,10 @@
+import LuaEngine from "./engine";
+
 export type LuaState = number
 
 export type EnvironmentVariables = Record<string, string | undefined>
+
+export type CreateEngineOptions = ConstructorParameters<typeof LuaEngine>[1]
 
 export enum LuaReturn {
     Ok = 0,

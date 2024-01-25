@@ -55,20 +55,46 @@ export default class LuaEngine {
         }
     }
 
+    /**
+     * Executes Lua code from a string asynchronously.
+     * @async
+     * @param {string} script - Lua script to execute.
+     * @returns {Promise<any>} - A Promise that resolves to the result returned by the Lua script execution.
+     * @throws {Error}
+     */
     public doString(script: string): Promise<any> {
         return this.callByteCode((thread) => thread.loadString(script))
     }
 
+    /**
+     * Executes Lua code from a file asynchronously.
+     * @async
+     * @param {string} filename - Path to the Lua script file.
+     * @returns {Promise<any>} - A Promise that resolves to the result returned by the Lua script execution.
+     * @throws {Error}
+     */
     public doFile(filename: string): Promise<any> {
         return this.callByteCode((thread) => thread.loadFile(filename))
     }
 
+    /**
+     * Executes Lua code from a string synchronously.
+     * @param {string} script - Lua script to execute.
+     * @returns {any} - The result returned by the Lua script.
+     * @throws {Error}
+     */
     public doStringSync(script: string): any {
         this.global.loadString(script)
         const result = this.global.runSync()
         return result[0]
     }
 
+    /**
+     * Executes Lua code from a file synchronously.
+     * @param {string} filename - Path to the Lua script file.
+     * @returns {any} - The result returned by the Lua script.
+     * @throws {Error}
+     */
     public doFileSync(filename: string): any {
         this.global.loadFile(filename)
         const result = this.global.runSync()
