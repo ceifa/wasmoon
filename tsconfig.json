@@ -3,7 +3,7 @@
         "incremental": false,
         "moduleResolution": "node",
         "inlineSources": false,
-        "removeComments": true,
+        "removeComments": false,
         "sourceMap": false,
         "target": "ES2018",
         "skipLibCheck": true,
@@ -16,7 +16,8 @@
         "noUnusedLocals": true,
         "importHelpers": true,
         "strict": true,
-        "resolveJsonModule": true
+        "resolveJsonModule": true,
+
     },
     "include": ["src/**/*", "test/**/*", "bench/**/*"],
     "exclude": ["node_modules"]
