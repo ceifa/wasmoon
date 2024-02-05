@@ -10,8 +10,6 @@ interface LuaMemoryStats {
 
 /**
  * Represents the global state of the Lua engine.
- * @class
- * @export
  */
 export default class Global extends Thread {
     private memoryStats: LuaMemoryStats | undefined
@@ -19,9 +17,8 @@ export default class Global extends Thread {
 
     /**
      * Constructs a new Global instance.
-     * @constructor
-     * @param {LuaWasm} cmodule - The Lua WebAssembly module.
-     * @param {boolean} shouldTraceAllocations - Whether to trace memory allocations.
+     * @param cmodule - The Lua WebAssembly module.
+     * @param shouldTraceAllocations - Whether to trace memory allocations.
      */
     public constructor(cmodule: LuaWasm, shouldTraceAllocations: boolean) {
         if (shouldTraceAllocations) {
@@ -99,9 +96,9 @@ export default class Global extends Thread {
     // Higher is more important and will be evaluated first.
     /**
      * Registers a type extension for Lua objects.
-     *  Higher priority is more important and will be evaluated first.
-     * @param {number} priority - Priority of the type extension.
-     * @param {LuaTypeExtension<unknown>} extension - The type extension to register.
+     * Higher priority is more important and will be evaluated first.
+     * @param priority - Priority of the type extension.
+     * @param extension - The type extension to register.
      */
     public registerTypeExtension(priority: number, extension: LuaTypeExtension<unknown>): void {
         this.typeExtensions.push({ extension, priority })
@@ -110,7 +107,7 @@ export default class Global extends Thread {
 
     /**
      * Loads a default Lua library.
-     * @param {LuaLibraries} library - The Lua library to load.
+     * @param library - The Lua library to load.
      */
     public loadLibrary(library: LuaLibraries): void {
         switch (library) {
@@ -150,8 +147,8 @@ export default class Global extends Thread {
 
     /**
      * Retrieves the value of a global variable.
-     * @param {string} name - The name of the global variable.
-     * @returns {any} - The value of the global variable.
+     * @param name - The name of the global variable.
+     * @returns - The value of the global variable.
      */
     public get(name: string): any {
         const type = this.lua.lua_getglobal(this.address, name)
@@ -162,8 +159,8 @@ export default class Global extends Thread {
 
     /**
      * Sets the value of a global variable.
-     * @param {string} name - The name of the global variable.
-     * @param {unknown} value - The value to set for the global variable.
+     * @param name - The name of the global variable.
+     * @param value - The value to set for the global variable.
      */
     public set(name: string, value: unknown): void {
         this.pushValue(value)
@@ -189,7 +186,7 @@ export default class Global extends Thread {
 
     /**
      * Gets the amount of memory used by the Lua engine. Can only be used if the state was created with the `traceAllocations` option set to true.
-     * @returns {number} - The amount of memory used in bytes.
+     * @returns - The amount of memory used in bytes.
      */
     public getMemoryUsed(): number {
         return this.getMemoryStatsRef().memoryUsed
@@ -197,7 +194,7 @@ export default class Global extends Thread {
 
     /**
      * Gets the maximum memory allowed for the Lua engine. Can only be used if the state was created with the `traceAllocations` option set to true.
-     * @returns {number | undefined} - The maximum memory allowed in bytes, or undefined if not set.
+     * @returns - The maximum memory allowed in bytes, or undefined if not set.
      */
     public getMemoryMax(): number | undefined {
         return this.getMemoryStatsRef().memoryMax
@@ -205,7 +202,7 @@ export default class Global extends Thread {
 
     /**
      * Sets the maximum memory allowed for the Lua engine. Can only be used if the state was created with the `traceAllocations` option set to true.
-     * @param {number | undefined} max - The maximum memory allowed in bytes, or undefined for unlimited.
+     * @param max - The maximum memory allowed in bytes, or undefined for unlimited.
      */
     public setMemoryMax(max: number | undefined): void {
         this.getMemoryStatsRef().memoryMax = max

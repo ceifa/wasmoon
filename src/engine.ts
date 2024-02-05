@@ -1,3 +1,4 @@
+import { CreateEngineOptions } from './types'
 import Global from './global'
 import Thread from './thread'
 import createErrorType from './type-extensions/error'
@@ -20,7 +21,7 @@ export default class LuaEngine {
             enableProxy = true,
             traceAllocations = false,
             functionTimeout = undefined as number | undefined,
-        } = {},
+        }: CreateEngineOptions = {},
     ) {
         this.global = new Global(this.cmodule, traceAllocations)
 
@@ -57,9 +58,8 @@ export default class LuaEngine {
 
     /**
      * Executes Lua code from a string asynchronously.
-     * @async
-     * @param {string} script - Lua script to execute.
-     * @returns {Promise<any>} - A Promise that resolves to the result returned by the Lua script execution.
+     * @param script - Lua script to execute.
+     * @returns A Promise that resolves to the result returned by the Lua script execution.
      * @throws {Error}
      */
     public doString(script: string): Promise<any> {
@@ -69,8 +69,8 @@ export default class LuaEngine {
     /**
      * Executes Lua code from a file asynchronously.
      * @async
-     * @param {string} filename - Path to the Lua script file.
-     * @returns {Promise<any>} - A Promise that resolves to the result returned by the Lua script execution.
+     * @param filename - Path to the Lua script file.
+     * @returns - A Promise that resolves to the result returned by the Lua script execution.
      * @throws {Error}
      */
     public doFile(filename: string): Promise<any> {
@@ -79,8 +79,8 @@ export default class LuaEngine {
 
     /**
      * Executes Lua code from a string synchronously.
-     * @param {string} script - Lua script to execute.
-     * @returns {any} - The result returned by the Lua script.
+     * @param script - Lua script to execute.
+     * @returns - The result returned by the Lua script.
      * @throws {Error}
      */
     public doStringSync(script: string): any {
@@ -91,8 +91,8 @@ export default class LuaEngine {
 
     /**
      * Executes Lua code from a file synchronously.
-     * @param {string} filename - Path to the Lua script file.
-     * @returns {any} - The result returned by the Lua script.
+     * @param filename - Path to the Lua script file.
+     * @returns - The result returned by the Lua script.
      * @throws {Error}
      */
     public doFileSync(filename: string): any {

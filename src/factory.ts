@@ -6,8 +6,6 @@ import version from 'package-version'
 
 /**
  * Represents a factory for creating and configuring Lua engines.
- * @class
- * @export
  */
 export default class LuaFactory {
     /**
@@ -18,9 +16,8 @@ export default class LuaFactory {
 
     /**
      * Constructs a new LuaFactory instance.
-     * @constructor
-     * @param {string} [customWasmUri] - Custom URI for the Lua WebAssembly module.
-     * @param {EnvironmentVariables} [environmentVariables] - Environment variables for the Lua engine.
+     * @param [customWasmUri] - Custom URI for the Lua WebAssembly module.
+     * @param [environmentVariables] - Environment variables for the Lua engine.
      */
     public constructor(customWasmUri?: string, environmentVariables?: EnvironmentVariables) {
         if (customWasmUri === undefined) {
@@ -38,10 +35,9 @@ export default class LuaFactory {
 
     /**
      * Mounts a file in the Lua environment asynchronously.
-     * @async
-     * @param {string} path - Path to the file in the Lua environment.
-     * @param {string | ArrayBufferView} content - Content of the file to be mounted.
-     * @returns {Promise<void>} - A Promise that resolves once the file is mounted.
+     * @param path - Path to the file in the Lua environment.
+     * @param content - Content of the file to be mounted.
+     * @returns - A Promise that resolves once the file is mounted.
      */
     public async mountFile(path: string, content: string | ArrayBufferView): Promise<void> {
         this.mountFileSync(await this.getLuaModule(), path, content)
@@ -49,9 +45,9 @@ export default class LuaFactory {
 
     /**
      * Mounts a file in the Lua environment synchronously.
-     * @param {LuaWasm} luaWasm - Lua WebAssembly module.
-     * @param {string} path - Path to the file in the Lua environment.
-     * @param {string | ArrayBufferView} content - Content of the file to be mounted.
+     * @param luaWasm - Lua WebAssembly module.
+     * @param path - Path to the file in the Lua environment.
+     * @param content - Content of the file to be mounted.
      */
     public mountFileSync(luaWasm: LuaWasm, path: string, content: string | ArrayBufferView): void {
         const fileSep = path.lastIndexOf('/')
@@ -84,9 +80,8 @@ export default class LuaFactory {
 
     /**
      * Creates a Lua engine with the specified options.
-     * @async
-     * @param {CreateEngineOptions} [options] - Configuration options for the Lua engine.
-     * @returns {Promise<LuaEngine>} - A Promise that resolves to a new LuaEngine instance.
+     * @param [options] - Configuration options for the Lua engine.
+     * @returns - A Promise that resolves to a new LuaEngine instance.
      */
     public async createEngine(options: CreateEngineOptions = {}): Promise<LuaEngine> {
         return new LuaEngine(await this.getLuaModule(), options)
@@ -94,8 +89,7 @@ export default class LuaFactory {
 
     /**
      * Gets the Lua WebAssembly module.
-     * @async
-     * @returns {Promise<LuaWasm>} - A Promise that resolves to the Lua WebAssembly module.
+     * @returns - A Promise that resolves to the Lua WebAssembly module.
      */
     public async getLuaModule(): Promise<LuaWasm> {
         return this.luaWasmPromise

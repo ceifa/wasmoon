@@ -1,10 +1,16 @@
-import LuaEngine from './engine'
-
 export type LuaState = number
 
 export type EnvironmentVariables = Record<string, string | undefined>
 
-export type CreateEngineOptions = ConstructorParameters<typeof LuaEngine>[1]
+export interface CreateEngineOptions {
+    openStandardLibs?: boolean
+    injectObjects?: boolean
+    enableProxy?: boolean
+    /** Whether to trace memory allocations. */
+    traceAllocations?: boolean
+    /** Maximum time in milliseconds a Lua function can run before being interrupted. */
+    functionTimeout?: number
+}
 
 export enum LuaReturn {
     Ok = 0,
