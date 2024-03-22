@@ -131,7 +131,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     }
 
     public pushValue(thread: Thread, decoration: Decoration<Promise<T>>): boolean {
-        if (Promise.resolve(decoration.target) !== decoration.target && typeof decoration.target.then !== 'function') {
+        if (Promise.resolve(decoration.target) !== decoration.target && typeof decoration.target?.then !== 'function') {
             return false
         }
         return super.pushValue(thread, decoration)

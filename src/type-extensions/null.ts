@@ -3,6 +3,7 @@ import { LuaReturn, LuaState } from '../types'
 import Global from '../global'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
+import createDefaultNullType from './default-null'
 
 class NullTypeExtension extends TypeExtension<unknown> {
     private gcPointer: number
@@ -73,6 +74,9 @@ class NullTypeExtension extends TypeExtension<unknown> {
     }
 }
 
-export default function createTypeExtension(thread: Global): TypeExtension<null> {
-    return new NullTypeExtension(thread)
+export default function createTypeExtension(thread: Global, userDataType: boolean): TypeExtension<null> {
+    if (userDataType) {
+        return new NullTypeExtension(thread)
+    }
+    return createDefaultNullType(thread)
 }

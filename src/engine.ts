@@ -31,11 +31,9 @@ export default class LuaEngine {
         // Contains the :await functionality.
         this.global.registerTypeExtension(1, createPromiseType(this.global, injectObjects))
 
-        if (injectObjects) {
-            // Should be higher priority than table since that catches generic objects along
-            // with userdata so it doesn't end up a userdata type.
-            this.global.registerTypeExtension(5, createNullType(this.global))
-        }
+        // Should be higher priority than table since that catches generic objects along
+        // with userdata so it doesn't end up a userdata type.
+        this.global.registerTypeExtension(5, createNullType(this.global, injectObjects))
 
         if (enableProxy) {
             // This extension only really overrides tables and arrays.
