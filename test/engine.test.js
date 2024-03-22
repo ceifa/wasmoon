@@ -782,6 +782,18 @@ describe('Engine', () => {
         expect(res).to.deep.equal([null, null, 'null'])
     })
 
+    it('null injected as nil', async () => {
+        const engine = await getEngine({ injectObjects: false })
+        engine.global.loadString(`
+        local args = { ... }
+        assert(type(args[1]) == "nil", string.format("expected first argument to be nil, got %s", type(args[1])))
+        return nil, args[1], tostring(nil)
+      `)
+        engine.global.pushValue(null)
+        const res = await engine.global.run(1)
+        expect(res).to.deep.equal([null, null, 'nil'])
+    })
+
     it('Nested callback from JS to Lua', async () => {
         const engine = await getEngine()
         engine.global.set('call', (fn) => fn())
