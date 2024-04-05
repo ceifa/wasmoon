@@ -217,9 +217,14 @@ export default class Thread {
                 this.lua.lua_pushboolean(this.address, target ? 1 : 0)
                 break
             default:
-                if (!this.typeExtensions.find((wrapper) => wrapper.extension.pushValue(this, decoratedValue, userdata))) {
-                    throw new Error(`The type '${typeof target}' is not supported by Lua`)
+                if (this.typeExtensions.find((wrapper) => wrapper.extension.pushValue(this, decoratedValue, userdata))) {
+                    break
                 }
+                if (target === null) {
+                    this.lua.lua_pushnil(this.address)
+                    break
+                }
+                throw new Error(`The type '${typeof target}' is not supported by Lua`)
         }
 
         if (decoratedValue.options.metatable) {
