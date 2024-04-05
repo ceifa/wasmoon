@@ -86,7 +86,7 @@ export default class LuaEngine {
                 // Move all stack results to the global state to avoid referencing the thread values
                 // which will be cleaned up in the finally below.
                 this.cmodule.lua_xmove(thread.address, this.global.address, result.length)
-                // The shenanigans here are to return the first reuslt value on the stack.
+                // The shenanigans here are to return the first result value on the stack.
                 // Say there's 2 values at stack indexes 1 and 2. Then top is 2, result.length is 2.
                 // That's why there's a + 1 sitting at the end.
                 return this.global.getValue(this.global.getTop() - result.length + 1)
