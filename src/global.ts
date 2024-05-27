@@ -92,11 +92,10 @@ export default class Global extends Thread {
         }
     }
 
-    // To allow library users to specify custom types
-    // Higher is more important and will be evaluated first.
     /**
      * Registers a type extension for Lua objects.
      * Higher priority is more important and will be evaluated first.
+     * Allows library users to specify custom types
      * @param priority - Priority of the type extension.
      * @param extension - The type extension to register.
      */

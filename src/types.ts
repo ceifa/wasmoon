@@ -3,8 +3,11 @@ export type LuaState = number
 export type EnvironmentVariables = Record<string, string | undefined>
 
 export interface CreateEngineOptions {
+    /** Injects all the lua standard libraries (math, coroutine, debug) */
     openStandardLibs?: boolean
+    /** Injects some JS objects to the Lua environment: Error, Promise, null, Objects */
     injectObjects?: boolean
+    /** Enables the proxy for JS objects, useful for classes, etc... */
     enableProxy?: boolean
     /** Whether to trace memory allocations. */
     traceAllocations?: boolean

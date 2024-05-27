@@ -60,7 +60,6 @@ export default class LuaEngine {
      * Executes Lua code from a string asynchronously.
      * @param script - Lua script to execute.
      * @returns A Promise that resolves to the result returned by the Lua script execution.
-     * @throws {Error}
      */
     public doString(script: string): Promise<any> {
         return this.callByteCode((thread) => thread.loadString(script))
@@ -71,7 +70,6 @@ export default class LuaEngine {
      * @async
      * @param filename - Path to the Lua script file.
      * @returns - A Promise that resolves to the result returned by the Lua script execution.
-     * @throws {Error}
      */
     public doFile(filename: string): Promise<any> {
         return this.callByteCode((thread) => thread.loadFile(filename))
@@ -81,7 +79,6 @@ export default class LuaEngine {
      * Executes Lua code from a string synchronously.
      * @param script - Lua script to execute.
      * @returns - The result returned by the Lua script.
-     * @throws {Error}
      */
     public doStringSync(script: string): any {
         this.global.loadString(script)
@@ -93,7 +90,6 @@ export default class LuaEngine {
      * Executes Lua code from a file synchronously.
      * @param filename - Path to the Lua script file.
      * @returns - The result returned by the Lua script.
-     * @throws {Error}
      */
     public doFileSync(filename: string): any {
         this.global.loadFile(filename)

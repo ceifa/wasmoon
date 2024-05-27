@@ -8,10 +8,6 @@ import version from 'package-version'
  * Represents a factory for creating and configuring Lua engines.
  */
 export default class LuaFactory {
-    /**
-     * Promise for the Lua WebAssembly module.
-     * @private
-     */
     private luaWasmPromise: Promise<LuaWasm>
 
     /**
