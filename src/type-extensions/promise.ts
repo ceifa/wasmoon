@@ -1,6 +1,7 @@
 import { Decoration } from '../decoration'
 import { LuaReturn, LuaState } from '../types'
 import { decorateFunction } from './function'
+import { isPromise } from '../utils'
 import Global from '../global'
 import MultiReturn from '../multireturn'
 import RawResult from '../raw-result'
@@ -34,8 +35,8 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
             thread.lua.lua_setfield(thread.address, metatableIndex, '__gc')
 
             const checkSelf = (self: Promise<any>): true => {
-                if (Promise.resolve(self) !== self && typeof self.then !== 'function') {
-                    throw new Error('promise method called without self instance')
+                if (!isPromise(self)) {
+                    throw new Error('self instance is not a promise')
                 }
                 return true
             }
@@ -131,7 +132,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     }
 
     public pushValue(thread: Thread, decoration: Decoration<Promise<T>>): boolean {
-        if (Promise.resolve(decoration.target) !== decoration.target && typeof decoration.target.then !== 'function') {
+        if (!isPromise(decoration.target)) {
             return false
         }
         return super.pushValue(thread, decoration)

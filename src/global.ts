@@ -129,7 +129,7 @@ export default class Global extends Thread {
                 this.lua.luaopen_string(this.address)
                 break
             case LuaLibraries.UTF8:
-                this.lua.luaopen_string(this.address)
+                this.lua.luaopen_utf8(this.address)
                 break
             case LuaLibraries.Math:
                 this.lua.luaopen_math(this.address)
