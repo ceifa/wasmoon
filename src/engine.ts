@@ -67,7 +67,6 @@ export default class LuaEngine {
 
     /**
      * Executes Lua code from a file asynchronously.
-     * @async
      * @param filename - Path to the Lua script file.
      * @returns - A Promise that resolves to the result returned by the Lua script execution.
      */
