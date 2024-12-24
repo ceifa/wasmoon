@@ -1,9 +1,9 @@
-const { LuaLibraries, LuaReturn, LuaThread, LuaType, decorate, decorateProxy, decorateUserdata } = require('..')
-const { expect } = require('chai')
-const { getEngine, getFactory } = require('./utils')
-const { setTimeout } = require('node:timers/promises')
-const { EventEmitter } = require('events')
-const jestMock = require('jest-mock')
+import { LuaLibraries, LuaReturn, LuaThread, LuaType, decorate, decorateProxy, decorateUserdata } from '../dist/index.js'
+import { expect } from 'chai'
+import { getEngine, getFactory } from './utils.mjs'
+import { setTimeout } from 'node:timers/promises'
+import { EventEmitter } from 'events'
+import jestMock from 'jest-mock'
 
 class TestClass {
     static hello() {
