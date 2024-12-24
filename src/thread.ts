@@ -1,4 +1,8 @@
 import { Decoration } from './decoration'
+import type LuaWasm from './luawasm'
+import MultiReturn from './multireturn'
+import { Pointer } from './pointer'
+import LuaTypeExtension from './type-extension'
 import {
     LUA_MULTRET,
     LuaEventMasks,
@@ -10,10 +14,6 @@ import {
     LuaType,
     PointerSize,
 } from './types'
-import { Pointer } from './pointer'
-import LuaTypeExtension from './type-extension'
-import MultiReturn from './multireturn'
-import type LuaWasm from './luawasm'
 
 export interface OrderedExtension {
     // Bigger is more important

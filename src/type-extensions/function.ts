@@ -1,10 +1,10 @@
 import { BaseDecorationOptions, Decoration } from '../decoration'
-import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from '../types'
 import Global from '../global'
 import MultiReturn from '../multireturn'
 import RawResult from '../raw-result'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
+import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from '../types'
 
 export interface FunctionDecoration extends BaseDecorationOptions {
     receiveArgsQuantity?: boolean

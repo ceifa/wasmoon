@@ -1,6 +1,6 @@
+import { expect } from 'chai'
 import { getEngine, tick } from './utils.mjs'
 import jestMock from 'jest-mock'
-import { expect } from 'chai'
 
 describe('Promises', () => {
     it('use promise next should succeed', async () => {

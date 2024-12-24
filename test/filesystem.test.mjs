@@ -1,5 +1,5 @@
-import { getEngine, getFactory } from './utils.mjs'
 import { expect } from 'chai'
+import { getEngine, getFactory } from './utils.mjs'
 
 describe('Filesystem', () => {
     it('mount a file and require inside lua should succeed', async () => {

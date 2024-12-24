@@ -18,6 +18,6 @@
         "strict": true,
         "resolveJsonModule": true
     },
-    "include": ["src/**/*", "test/**/*", "bench/**/*"],
+    "include": ["src/**/*", "test/**/*", "bench/**/*", "eslint.config.mjs"],
     "exclude": ["node_modules"]
 }

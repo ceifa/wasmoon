@@ -1,8 +1,8 @@
+import { EventEmitter } from 'events'
 import { LuaLibraries, LuaReturn, LuaThread, LuaType, decorate, decorateProxy, decorateUserdata } from '../dist/index.js'
 import { expect } from 'chai'
 import { getEngine, getFactory } from './utils.mjs'
 import { setTimeout } from 'node:timers/promises'
-import { EventEmitter } from 'events'
 import jestMock from 'jest-mock'
 
 class TestClass {

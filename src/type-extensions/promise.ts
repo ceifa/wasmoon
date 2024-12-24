@@ -1,12 +1,12 @@
 import { Decoration } from '../decoration'
-import { LuaReturn, LuaState } from '../types'
-import { decorateFunction } from './function'
-import { isPromise } from '../utils'
 import Global from '../global'
 import MultiReturn from '../multireturn'
 import RawResult from '../raw-result'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
+import { LuaReturn, LuaState } from '../types'
+import { isPromise } from '../utils'
+import { decorateFunction } from './function'
 
 class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     private gcPointer: number

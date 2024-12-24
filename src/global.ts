@@ -1,7 +1,7 @@
-import { LuaLibraries, LuaType } from './types'
-import LuaTypeExtension from './type-extension'
-import Thread from './thread'
 import type LuaWasm from './luawasm'
+import Thread from './thread'
+import LuaTypeExtension from './type-extension'
+import { LuaLibraries, LuaType } from './types'
 
 interface LuaMemoryStats {
     memoryUsed: number
