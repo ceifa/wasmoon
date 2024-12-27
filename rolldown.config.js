@@ -1,4 +1,3 @@
-import typescript from '@rollup/plugin-typescript'
 import copy from 'rollup-plugin-copy'
 import pkg from './package.json' with { type: 'json' }
 
@@ -26,10 +25,6 @@ export default {
                 }
             },
         },
-        typescript({
-            sourceMap: !production,
-            outputToFilesystem: true,
-        }),
         copy({
             targets: [{ src: 'build/glue.wasm', dest: 'dist' }],
         }),
