@@ -7,7 +7,12 @@ import { EnvironmentVariables } from './types'
 export default class LuaFactory {
     private luaWasmPromise: Promise<LuaWasm>
 
-    public constructor(customWasmUri?: string, environmentVariables?: EnvironmentVariables) {
+    // TODO: Update this API in the next major version
+    public constructor(
+        customWasmUri?: string,
+        environmentVariables?: EnvironmentVariables,
+        opts: Omit<Parameters<typeof LuaWasm.initialize>[0], 'wasmFile' | 'env'> = {},
+    ) {
         if (customWasmUri === undefined) {
             const isBrowser =
                 (typeof window === 'object' && typeof window.document !== 'undefined') ||
@@ -18,7 +23,11 @@ export default class LuaFactory {
             }
         }
 
-        this.luaWasmPromise = LuaWasm.initialize(customWasmUri, environmentVariables)
+        this.luaWasmPromise = LuaWasm.initialize({
+            wasmFile: customWasmUri,
+            env: environmentVariables,
+            ...opts,
+        })
     }
 
     public async mountFile(path: string, content: string | ArrayBufferView): Promise<void> {
