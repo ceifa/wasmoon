@@ -1,5 +1,6 @@
 import { CreateEngineOptions } from './types'
 import Global from './global'
+import type LuaWasm from './luawasm'
 import Thread from './thread'
 import createErrorType from './type-extensions/error'
 import createFunctionType from './type-extensions/function'
@@ -8,7 +9,6 @@ import createPromiseType from './type-extensions/promise'
 import createProxyType from './type-extensions/proxy'
 import createTableType from './type-extensions/table'
 import createUserdataType from './type-extensions/userdata'
-import type LuaWasm from './luawasm'
 
 export default class LuaEngine {
     public global: Global

@@ -1,6 +1,6 @@
-const { getEngine, tick } = require('./utils')
-const jestMock = require('jest-mock')
-const { expect } = require('chai')
+import { expect } from 'chai'
+import { getEngine, tick } from './utils.mjs'
+import jestMock from 'jest-mock'
 
 describe('Promises', () => {
     it('use promise next should succeed', async () => {

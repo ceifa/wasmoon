@@ -1,4 +1,4 @@
-const { LuaFactory } = require('..')
+import { LuaFactory } from '../dist/index.js'
 
 describe('Initialization', () => {
     it('create engine should succeed', async () => {

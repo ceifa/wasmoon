@@ -1,5 +1,5 @@
-import { EnvironmentVariables, LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType } from './types'
 import initWasmModule from '../build/glue.js'
+import { EnvironmentVariables, LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType } from './types'
 
 interface LuaEmscriptenModule extends EmscriptenModule {
     ccall: typeof ccall

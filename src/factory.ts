@@ -1,8 +1,8 @@
-import { CreateEngineOptions, EnvironmentVariables } from './types'
-import LuaEngine from './engine'
-import LuaWasm from './luawasm'
 // A rollup plugin will resolve this to the current version on package.json
 import version from 'package-version'
+import LuaEngine from './engine'
+import LuaWasm from './luawasm'
+import { CreateEngineOptions, EnvironmentVariables } from './types'
 
 /**
  * Represents a factory for creating and configuring Lua engines.
@@ -63,7 +63,7 @@ export default class LuaFactory {
                 const current = `${parent}/${part}`
                 try {
                     luaWasm.module.FS.mkdir(current)
-                } catch (err) {
+                } catch {
                     // ignore EEXIST
                 }
 

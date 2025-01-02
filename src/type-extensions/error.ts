@@ -1,8 +1,8 @@
 import { Decoration } from '../decoration'
-import { LuaReturn, LuaState } from '../types'
 import Global from '../global'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
+import { LuaReturn, LuaState } from '../types'
 
 class ErrorTypeExtension extends TypeExtension<Error> {
     private gcPointer: number

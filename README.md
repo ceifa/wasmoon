@@ -6,9 +6,9 @@
 
 This package aims to provide a way to:
 
--   Embed Lua to any Node.js, Deno or Web Application.
--   Run lua code in any operational system
--   Interop Lua and JS without memory leaks (including the DOM)
+- Embed Lua to any Node.js, Deno or Web Application.
+- Run lua code in any operational system
+- Interop Lua and JS without memory leaks (including the DOM)
 
 ## API Usage
 
@@ -52,8 +52,8 @@ $: wasmoon [options] [file] [args]
 
 Available options are:
 
--   `-l`: Include a file or directory
--   `-i`: Enter interactive mode after running the files
+- `-l`: Include a file or directory
+- `-i`: Enter interactive mode after running the files
 
 ### Example:
 

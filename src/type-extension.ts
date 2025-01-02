@@ -1,7 +1,7 @@
 import { BaseDecorationOptions, Decoration } from './decoration'
-import { LuaType, PointerSize } from './types'
 import Global from './global'
 import Thread from './thread'
+import { LuaType, PointerSize } from './types'
 
 export default abstract class LuaTypeExtension<T, K extends BaseDecorationOptions = BaseDecorationOptions> {
     // Type name, for metatables and lookups.

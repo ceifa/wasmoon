@@ -1,8 +1,8 @@
 import { BaseDecorationOptions, Decoration } from '../decoration'
-import { LuaReturn, LuaState, LuaType } from '../types'
 import Global from '../global'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
+import { LuaReturn, LuaState, LuaType } from '../types'
 
 export interface UserdataDecorationOptions extends BaseDecorationOptions {
     reference?: boolean

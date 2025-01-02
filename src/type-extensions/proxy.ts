@@ -1,11 +1,11 @@
 import { BaseDecorationOptions, Decoration } from '../decoration'
-import { LuaReturn, LuaState, LuaType } from '../types'
-import { decorateFunction } from './function'
-import { isPromise } from '../utils'
 import Global from '../global'
 import MultiReturn from '../multireturn'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
+import { LuaReturn, LuaState, LuaType } from '../types'
+import { isPromise } from '../utils'
+import { decorateFunction } from './function'
 
 export interface ProxyDecorationOptions extends BaseDecorationOptions {
     // If undefined, will try to figure out if should proxy

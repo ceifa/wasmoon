@@ -1,6 +1,6 @@
 import typescript from '@rollup/plugin-typescript'
 import copy from 'rollup-plugin-copy'
-import pkg from './package.json' assert { type: 'json' }
+import pkg from './package.json' with { type: 'json' }
 
 const production = !process.env.ROLLUP_WATCH
 

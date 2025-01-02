@@ -1,8 +1,8 @@
 import { Decoration } from '../decoration'
-import { LUA_REGISTRYINDEX, LuaType } from '../types'
 import Global from '../global'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
+import { LUA_REGISTRYINDEX, LuaType } from '../types'
 
 export type TableType = Record<any, any> | any[]
 
