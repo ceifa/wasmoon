@@ -29,6 +29,7 @@ export default {
         typescript({
             sourceMap: !production,
             outputToFilesystem: true,
+            removeComments: true
         }),
         copy({
             targets: [{ src: 'build/glue.wasm', dest: 'dist' }],
