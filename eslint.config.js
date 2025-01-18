@@ -22,7 +22,7 @@ export default [
         },
     },
     {
-        files: ['**/*.js', '**/*.mjs', '**/*.ts'],
+        files: ['**/*.js', '**/*.mjs', '**/*.ts', './bin/*'],
         ignores: ['**/test/*', '**/bench/*'],
         plugins: {
             'simple-import-sort': simpleImportSort,

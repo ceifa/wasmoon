@@ -1,98 +1,266 @@
 #!/usr/bin/env node
-import { LuaFactory, LuaReturn, LuaType, LUA_MULTRET, decorate } from '../dist/index.js'
+import { LuaFactory, LuaReturn, LuaType, LUA_MULTRET, LuaRawResult, decorate, decorateFunction } from '../dist/index.js'
 import pkg from '../package.json' with { type: 'json' }
 import fs from 'node:fs'
 import path from 'node:path'
 import readline from 'node:readline'
 
-const factory = new LuaFactory()
+function printUsage() {
+    console.log(
+        `
+usage: wasmoon [options] [script [args]]
+Available options are:
+  -e stat     execute string 'stat'
+  -i          enter interactive mode after executing 'script'
+  -l mod      require library 'mod' into global 'mod'
+  -l g=mod    require library 'mod' into global 'g'
+  -v          show version information
+  -E          ignore environment variables
+  -W          turn warnings on
+  --          stop handling options
+  -           stop handling options and execute stdin
+`.trim(),
+    )
+    process.exit(1)
+}
+
+function parseArgs(args) {
+    const executeSnippets = []
+    const includeModules = []
+    let forceInteractive = false
+    let warnings = false
+    let ignoreEnv = false
+    let showVersion = false
+    let scriptFile = null
+
+    const outArgs = []
+
+    let i = 0
+    for (; i < args.length; i++) {
+        const arg = args[i]
+
+        if (arg === '--') {
+            i++
+            break
+        }
+
+        if (arg.startsWith('-') && arg.length > 1) {
+            switch (arg) {
+                case '-v':
+                    showVersion = true
+                    break
+
+                case '-W':
+                    warnings = true
+                    break
+
+                case '-E':
+                    ignoreEnv = true
+                    break
+
+                case '-i':
+                    forceInteractive = true
+                    break
+
+                case '-e':
+                    i++
+                    if (i >= args.length) {
+                        console.error('Missing argument after -e')
+                        printUsage()
+                    }
+                    executeSnippets.push(args[i])
+                    break
+
+                case '-l':
+                    i++
+                    if (i >= args.length) {
+                        console.error('Missing argument after -l')
+                        printUsage()
+                    }
+                    includeModules.push(args[i])
+                    break
+
+                case '-':
+                    scriptFile = '-'
+                    i++
+                    break
+
+                default:
+                    console.log(`unrecognized option: '${arg}'`)
+                    printUsage()
+                    break
+            }
+        } else {
+            scriptFile = arg
+            i++
+            break
+        }
+    }
+
+    outArgs.push(...args.slice(i))
+
+    return {
+        executeSnippets,
+        includeModules,
+        forceInteractive,
+        warnings,
+        showVersion,
+        scriptFile,
+        scriptArgs: outArgs,
+        ignoreEnv,
+    }
+}
+
+const { executeSnippets, includeModules, ignoreEnv, forceInteractive, warnings, showVersion, scriptFile, scriptArgs } = parseArgs(
+    process.argv.slice(2),
+)
+
+const factory = new LuaFactory({ env: ignoreEnv ? undefined : process.env })
 const luamodule = await factory.getLuaModule()
 const lua = await factory.createEngine()
 
-let snippets = process.argv.splice(2)
-
-const consumeOption = (option, single) => {
-    let i = -1
-    const values = []
-    while ((i = snippets.indexOf(option)) >= 0) {
-        values.push(snippets.splice(i, single ? 1 : 2).reverse()[0])
-    }
-    return values
+if (showVersion) {
+    console.log(`wasmoon ${pkg.version} (${lua.global.get('_VERSION')})`)
+    process.exit(0)
 }
 
-const warnings = consumeOption('-W', true).length > 0
 if (warnings) {
     luamodule.lua_warning(lua.global.address, '@on', 0)
 }
 
-const executes = consumeOption('-e')
-for (const execute of executes) {
-    await lua.doString(execute)
+for (const snippet of executeSnippets) {
+    await lua.doString(snippet)
 }
 
-const includes = consumeOption('-l')
-const forceInteractive = consumeOption('-i', true).length > 0
-const runFile = process.stdin.isTTY && consumeOption(snippets[0], true)[0]
-const args = snippets
+function currentDir() {
+    const pointer = luamodule.module._malloc(128);
+    const baseidx = pointer >> 2;
 
-for (const include of includes) {
-    const relativeInclude = path.resolve(process.cwd(), include)
-    const stat = await fs.promises.lstat(relativeInclude)
-    if (stat.isFile()) {
-        await factory.mountFile(relativeInclude, await fs.promises.readFile(relativeInclude))
-    } else {
-        for (const file of await fs.promises.readdir(relativeInclude, { recursive: true })) {
-            await factory.mountFile(file, await fs.promises.readFile(file))
+    try {
+        if (!luamodule.lua_getstack(lua.global.address, 1, pointer)) {
+            return null;
         }
+
+        if (!luamodule.lua_getinfo(lua.global.address, 'S', pointer)) {
+            return null;
+        }
+
+        // https://www.lua.org/manual/5.4/manual.html#lua_Debug
+        const sourcePtr = luamodule.module.HEAPU32[baseidx + 4];
+        let source = luamodule.module.UTF8ToString(sourcePtr);
+
+        if (!source || source === '=[C]' || source.startsWith('return ')) {
+            return '.'
+        } else {
+            if (source.startsWith('@')) {
+                source = source.substring(1)
+            }
+
+            return source
+        }
+    } finally {
+        luamodule.module._free(pointer);
     }
 }
 
-lua.global.set('arg', decorate(args, { disableProxy: true }))
+lua.global.getTable('package', (packageIdx) => {
+    luamodule.lua_getfield(lua.global.address, packageIdx, 'searchers')
 
-const interactive = process.stdin.isTTY && (forceInteractive || !runFile)
+    lua.global.pushValue(decorateFunction((thread, moduleName) => {
+        if (moduleName.endsWith('.lua')) {
+            const calledDirectory = currentDir()
+            const luafile = path.resolve(calledDirectory, moduleName)
 
-if (runFile) {
-    const relativeRunFile = path.resolve(process.cwd(), runFile)
-    await factory.mountFile(relativeRunFile, await fs.promises.readFile(relativeRunFile))
+            try {
+                const content = fs.readFileSync(luafile)
+                factory.mountFileSync(luamodule, luafile, content)
+            } catch {
+                // ignore
+            }
 
-    await lua.doFile(relativeRunFile)
-    console.log(lua.global.indexToString(-1))
+            const load = luamodule.luaL_loadfilex(lua.global.address, luafile, null)
+            if (load === LuaReturn.Ok) {
+                thread.pushValue(luafile)
+                return new LuaRawResult(2)
+            }
+        }
+    }, { receiveThread: true }))
+
+    const len = luamodule.lua_rawlen(lua.global.address, -1)
+    luamodule.lua_rawseti(lua.global.address, -2, len + BigInt(1))
+
+    lua.global.pop()
+})
+
+lua.global.set('loadfile', (filename) => {
+    // TODO
+})
+
+for (const include of includeModules) {
+    // TODO
 }
 
-if (!interactive && runFile) {
-    process.exit(0)
+lua.global.set('arg', decorate(scriptArgs, { disableProxy: true }))
+
+const isTTY = process.stdin.isTTY
+
+if (scriptFile) {
+    if (scriptFile === '-') {
+        const input = fs.readFileSync(0, 'utf-8')
+        await lua.doString(input)
+        console.log(lua.global.indexToString(-1))
+    } else {
+        const absolutePath = path.resolve(process.cwd(), scriptFile)
+        const content = await fs.promises.readFile(absolutePath)
+        await factory.mountFile(absolutePath, content)
+        await lua.doFile(absolutePath)
+        console.log(lua.global.indexToString(-1))
+    }
 }
 
-if (interactive) {
-    // Call directly from module to bypass the result verification
-    const loadcode = (code) => !lua.global.setTop(0) && luamodule.luaL_loadstring(lua.global.address, code) === LuaReturn.Ok
+const shouldInteractive = isTTY && (forceInteractive || (!scriptFile && !executeSnippets.length))
+
+if (shouldInteractive) {
+    // Bypass result verification for interactive mode
+    const loadcode = (code) => {
+        lua.global.setTop(0)
+        return luamodule.luaL_loadstring(lua.global.address, code) === LuaReturn.Ok
+    }
 
     const version = pkg.version
     const luaversion = lua.global.get('_VERSION')
     console.log(`Welcome to Wasmoon ${version} (${luaversion})`)
+    console.log('Type Lua code and press Enter to execute. Ctrl+C to exit.\n')
 
     const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout,
         terminal: true,
         removeHistoryDuplicates: true,
+        prompt: '> ',
     })
 
     rl.prompt()
 
     for await (const line of rl) {
-        const loaded = loadcode(line) || loadcode(`return ${line}`)
+        // try to load (compile) it first as an expression (return <line>) and second as a statement
+        const loaded = loadcode(`return ${line}`) || loadcode(line)
         if (!loaded) {
-            console.log(lua.global.getValue(-1, LuaType.String))
+            // Failed to parse
+            const err = lua.global.getValue(-1, LuaType.String)
+            console.log(err)
             rl.prompt()
             continue
         }
 
         const result = luamodule.lua_pcallk(lua.global.address, 0, LUA_MULTRET, 0, 0, null)
         if (result === LuaReturn.Ok) {
-            const returnValues = Array.from({ length: lua.global.getTop() }).map((_, i) => lua.global.indexToString(i + 1))
-
-            if (returnValues.length) {
+            const count = lua.global.getTop()
+            if (count > 0) {
+                const returnValues = []
+                for (let i = 1; i <= count; i++) {
+                    returnValues.push(lua.global.indexToString(i))
+                }
                 console.log(...returnValues)
             }
         } else {
@@ -101,7 +269,10 @@ if (interactive) {
 
         rl.prompt()
     }
-} else {
-    await lua.doString(fs.readFileSync(0, 'utf-8'))
+} else if (!scriptFile) {
+    // If we're not interactive, and we did NOT run a file,
+    // read from stdin until EOF. (Non-TTY or no -i, no file).
+    const input = fs.readFileSync(0, 'utf-8')
+    await lua.doString(input)
     console.log(lua.global.indexToString(-1))
 }

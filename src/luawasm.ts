@@ -13,6 +13,7 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     stringToNewUTF8: typeof allocateUTF8
     lengthBytesUTF8: typeof lengthBytesUTF8
     stringToUTF8: typeof stringToUTF8
+    UTF8ToString: typeof UTF8ToString
     ENV: EnvironmentVariables
     _realloc: (pointer: number, size: number) => number
 }
@@ -121,7 +122,7 @@ export default class LuaWasm {
     public lua_tointegerx: (L: LuaState, idx: number, isnum: number | null) => bigint
     public lua_toboolean: (L: LuaState, idx: number) => number
     public lua_tolstring: (L: LuaState, idx: number, len: number | null) => string
-    public lua_rawlen: (L: LuaState, idx: number) => number
+    public lua_rawlen: (L: LuaState, idx: number) => bigint
     public lua_tocfunction: (L: LuaState, idx: number) => number
     public lua_touserdata: (L: LuaState, idx: number) => number
     public lua_tothread: (L: LuaState, idx: number) => LuaState

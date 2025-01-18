@@ -177,7 +177,7 @@ export default class Global extends Thread {
         } finally {
             // +1 for the table
             if (this.getTop() !== startStackTop + 1) {
-                console.warn(`getTable: expected stack size ${startStackTop} got ${this.getTop()}`)
+                console.warn(`getTable: expected stack size ${startStackTop + 1} got ${this.getTop()}`)
             }
             this.setTop(startStackTop)
         }
