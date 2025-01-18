@@ -51,7 +51,6 @@
         "eslint-plugin-prettier": "5.2.1",
         "eslint-plugin-simple-import-sort": "12.1.1",
         "fengari": "0.1.4",
-        "jest-mock": "29.7.0",
         "mocha": "11.0.1",
         "prettier": "3.4.2",
         "rolldown": "1.0.0-beta.1-commit.7c52c94",

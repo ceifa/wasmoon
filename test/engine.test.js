@@ -3,7 +3,7 @@ import { LuaLibraries, LuaReturn, LuaThread, LuaType, decorate, decorateProxy, d
 import { expect } from 'chai'
 import { getEngine, getFactory } from './utils.js'
 import { setTimeout } from 'node:timers/promises'
-import jestMock from 'jest-mock'
+import { mock } from 'node:test';
 
 class TestClass {
     static hello() {
@@ -202,11 +202,8 @@ describe('Engine', () => {
     it('scheduled lua calls should fail silently if invalid', async () => {
         const engine = await getEngine()
         engine.global.set('setInterval', setIntervalSafe)
-
-        // TODO: Disable mock at the end of the test.
-        jestMock.spyOn(console, 'warn').mockImplementation(() => {
-            // Nothing to do.
-        })
+        const originalConsoleWarn = console.warn
+        console.warn = mock.fn()
 
         await engine.doString(`
             test = 0
@@ -214,10 +211,9 @@ describe('Engine', () => {
                 test = test + 1
             end, 5)
         `)
-
         engine.global.close()
-
         await setTimeout(5 + 5)
+        console.warn = originalConsoleWarn
     })
 
     it('call lua function from JS passing an array argument should succeed', async () => {
@@ -266,7 +262,7 @@ describe('Engine', () => {
 
     it('a JS error should pause lua execution', async () => {
         const engine = await getEngine()
-        const check = jestMock.fn()
+        const check = mock.fn()
         engine.global.set('check', check)
         engine.global.set('throw', () => {
             throw new Error('expected error')
@@ -283,7 +279,7 @@ describe('Engine', () => {
 
     it('catch a JS error with pcall should succeed', async () => {
         const engine = await getEngine()
-        const check = jestMock.fn()
+        const check = mock.fn()
         engine.global.set('check', check)
         engine.global.set('throw', () => {
             throw new Error('expected error')
@@ -301,7 +297,7 @@ describe('Engine', () => {
 
     it('call a JS function in a different thread should succeed', async () => {
         const engine = await getEngine()
-        const sum = jestMock.fn((x, y) => x + y)
+        const sum = mock.fn((x, y) => x + y)
         engine.global.set('sum', sum)
 
         await engine.doString(`
@@ -310,7 +306,8 @@ describe('Engine', () => {
             end))
         `)
 
-        expect(sum.mock.lastCall).to.be.eql([10, 20])
+        expect(sum.mock.calls).to.have.length(1)
+        expect(sum.mock.calls[0].arguments).to.be.eql([10, 20])
     })
 
     it('get callable table as function should succeed', async () => {
