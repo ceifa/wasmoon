@@ -1,5 +1,7 @@
 import initWasmModule from '../build/glue.js'
-import { EnvironmentVariables, LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType } from './types'
+import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType } from './types'
+
+type EnvironmentVariables = Record<string, string | undefined>
 
 interface LuaEmscriptenModule extends EmscriptenModule {
     ccall: typeof ccall
@@ -21,15 +23,23 @@ interface ReferenceMetadata {
 }
 
 export default class LuaWasm {
-    public static async initialize(customWasmFileLocation?: string, environmentVariables?: EnvironmentVariables): Promise<LuaWasm> {
+    public static async initialize(opts: {
+        wasmFile?: string
+        env?: EnvironmentVariables
+        stdin?: () => number | null
+        stdout?: () => number | null
+        stderr?: () => number | null
+    }): Promise<LuaWasm> {
         const module: LuaEmscriptenModule = await initWasmModule({
             locateFile: (path: string, scriptDirectory: string) => {
-                return customWasmFileLocation || scriptDirectory + path
+                return opts.wasmFile || scriptDirectory + path
             },
             preRun: (initializedModule: LuaEmscriptenModule) => {
-                if (typeof environmentVariables === 'object') {
-                    Object.entries(environmentVariables).forEach(([k, v]) => (initializedModule.ENV[k] = v))
+                if (typeof opts?.env === 'object') {
+                    Object.entries(opts.env).forEach(([k, v]) => (initializedModule.ENV[k] = v))
                 }
+
+                initializedModule.FS.init(opts?.stdin ?? null, opts?.stdout ?? null, opts?.stderr ?? null)
             },
         })
         return new LuaWasm(module)

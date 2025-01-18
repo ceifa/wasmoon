@@ -2,7 +2,7 @@
 import version from 'package-version'
 import LuaEngine from './engine'
 import LuaWasm from './luawasm'
-import { CreateEngineOptions, EnvironmentVariables } from './types'
+import { CreateEngineOptions } from './types'
 
 /**
  * Represents a factory for creating and configuring Lua engines.
@@ -12,21 +12,24 @@ export default class LuaFactory {
 
     /**
      * Constructs a new LuaFactory instance.
-     * @param [customWasmUri] - Custom URI for the Lua WebAssembly module.
-     * @param [environmentVariables] - Environment variables for the Lua engine.
+     * @param opts.wasmFile - Custom URI for the Lua WebAssembly module.
+     * @param opts.env - Environment variables for the Lua engine.
+     * @param opts.stdin - Standard input for the Lua engine.
+     * @param opts.stdout - Standard output for the Lua engine.
+     * @param opts.stderr - Standard error for the Lua engine.
      */
-    public constructor(customWasmUri?: string, environmentVariables?: EnvironmentVariables) {
-        if (customWasmUri === undefined) {
+    public constructor(opts: Parameters<typeof LuaWasm.initialize>[0] = {}) {
+        if (opts.wasmFile === undefined) {
             const isBrowser =
                 (typeof window === 'object' && typeof window.document !== 'undefined') ||
                 (typeof self === 'object' && self?.constructor?.name === 'DedicatedWorkerGlobalScope')
 
             if (isBrowser) {
-                customWasmUri = `https://unpkg.com/wasmoon@${version}/dist/glue.wasm`
+                opts.wasmFile = `https://unpkg.com/wasmoon@${version}/dist/glue.wasm`
             }
         }
 
-        this.luaWasmPromise = LuaWasm.initialize(customWasmUri, environmentVariables)
+        this.luaWasmPromise = LuaWasm.initialize(opts)
     }
 
     /**
