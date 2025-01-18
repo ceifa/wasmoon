@@ -10,7 +10,7 @@
             "request": "launch",
             "name": "Launch Program",
             "skipFiles": ["<node_internals>/**"],
-            "program": "${workspaceFolder}/test/debug.mjs",
+            "program": "${workspaceFolder}/test/debug.js",
             "runtimeArgs": ["--inspect", "--expose-gc"]
         }
     ]

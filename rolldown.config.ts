@@ -7,9 +7,12 @@ export default {
     input: './src/index.ts',
     output: {
         file: 'dist/index.js',
-        format: 'umd',
-        name: 'wasmoon',
+        format: 'esm',
         sourcemap: !production,
+    },
+    define: {
+        // Webpack workaround: https://github.com/webpack/webpack/issues/16878
+        'import.meta': 'Object(import.meta)',
     },
     plugins: [
         {

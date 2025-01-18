@@ -6,13 +6,13 @@ import tseslint from 'typescript-eslint'
 
 export default [
     {
-        ignores: ['**/dist/*', '**/build/*', '**/rolldown.config.js', '**/utils/*', 'eslint.config.mjs'],
+        ignores: ['**/dist/*', '**/build/*', '**/rolldown.config.ts', '**/utils/*', 'eslint.config.js'],
     },
     eslint.configs.recommended,
     ...tseslint.configs.recommended,
     eslintPluginPrettierRecommended,
     {
-        files: ['test/**/*.mjs', 'bench/**/*.js'],
+        files: ['test/**/*.js', 'bench/**/*.js'],
         rules: {
             '@typescript-eslint/no-var-requires': 'off',
             '@typescript-eslint/no-require-imports': 'off',
