@@ -1,3 +1,4 @@
+import { CreateEngineOptions } from './types'
 import Global from './global'
 import type LuaWasm from './luawasm'
 import Thread from './thread'
@@ -20,7 +21,7 @@ export default class LuaEngine {
             enableProxy = true,
             traceAllocations = false,
             functionTimeout = undefined as number | undefined,
-        } = {},
+        }: CreateEngineOptions = {},
     ) {
         this.global = new Global(this.cmodule, traceAllocations)
 
@@ -55,20 +56,40 @@ export default class LuaEngine {
         }
     }
 
+    /**
+     * Executes Lua code from a string asynchronously.
+     * @param script - Lua script to execute.
+     * @returns A Promise that resolves to the result returned by the Lua script execution.
+     */
     public doString(script: string): Promise<any> {
         return this.callByteCode((thread) => thread.loadString(script))
     }
 
+    /**
+     * Executes Lua code from a file asynchronously.
+     * @param filename - Path to the Lua script file.
+     * @returns - A Promise that resolves to the result returned by the Lua script execution.
+     */
     public doFile(filename: string): Promise<any> {
         return this.callByteCode((thread) => thread.loadFile(filename))
     }
 
+    /**
+     * Executes Lua code from a string synchronously.
+     * @param script - Lua script to execute.
+     * @returns - The result returned by the Lua script.
+     */
     public doStringSync(script: string): any {
         this.global.loadString(script)
         const result = this.global.runSync()
         return result[0]
     }
 
+    /**
+     * Executes Lua code from a file synchronously.
+     * @param filename - Path to the Lua script file.
+     * @returns - The result returned by the Lua script.
+     */
     public doFileSync(filename: string): any {
         this.global.loadFile(filename)
         const result = this.global.runSync()
