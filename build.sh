@@ -9,7 +9,7 @@ if [ "$1" == "dev" ];
 then
     extension="-O0 -g3 -s ASSERTIONS=1 -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2"
 else
-    extension="-O3 --closure 1"
+    extension="-O3"
 fi
 
 emcc \
@@ -31,7 +31,6 @@ emcc \
         'preRun'
     ]" \
     -s ENVIRONMENT="web,worker,node" \
-    -s STRICT_JS=0 \
     -s MODULARIZE=1 \
     -s ALLOW_TABLE_GROWTH=1 \
     -s EXPORT_NAME="initWasmModule" \

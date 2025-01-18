@@ -1,15 +1,18 @@
+import { defineConfig } from 'rolldown'
 import copy from 'rollup-plugin-copy'
 import pkg from './package.json' with { type: 'json' }
 
 const production = !process.env.ROLLUP_WATCH
 
-export default {
+export default defineConfig({
     input: './src/index.ts',
     output: {
         file: 'dist/index.js',
         format: 'esm',
-        sourcemap: !production,
+        sourcemap: true,
+        minify: production,
     },
+    external: ['module'],
     define: {
         // Webpack workaround: https://github.com/webpack/webpack/issues/16878
         'import.meta': 'Object(import.meta)',
@@ -32,4 +35,4 @@ export default {
             targets: [{ src: 'build/glue.wasm', dest: 'dist' }],
         }),
     ],
-}
+})
