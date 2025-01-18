@@ -803,4 +803,16 @@ describe('Engine', () => {
       `)
         expect(res).to.equal(10)
     })
+
+    it('lots of doString calls should succeed', async () => {
+        const engine = await getEngine()
+        const length = 10000;
+
+        for (let i = 0; i < length; i++) {
+            const a = Math.floor(Math.random() * 100);
+            const b = Math.floor(Math.random() * 100);
+            const result = await engine.doString(`return ${a} + ${b};`);
+            expect(result).to.equal(a + b);
+        }
+    })
 })
