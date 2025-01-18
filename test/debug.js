@@ -1,4 +1,4 @@
-import { getEngine } from './utils.mjs'
+import { getEngine } from './utils.js'
 
 // This file was created as a sandbox to test and debug on vscode
 const engine = await getEngine()

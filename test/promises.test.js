@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { getEngine, tick } from './utils.mjs'
+import { getEngine, tick } from './utils.js'
 import jestMock from 'jest-mock'
 
 describe('Promises', () => {

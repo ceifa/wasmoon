@@ -1,4 +1,3 @@
-import typescript from '@rollup/plugin-typescript'
 import copy from 'rollup-plugin-copy'
 import pkg from './package.json' with { type: 'json' }
 
@@ -8,9 +7,12 @@ export default {
     input: './src/index.ts',
     output: {
         file: 'dist/index.js',
-        format: 'umd',
-        name: 'wasmoon',
+        format: 'esm',
         sourcemap: !production,
+    },
+    define: {
+        // Webpack workaround: https://github.com/webpack/webpack/issues/16878
+        'import.meta': 'Object(import.meta)',
     },
     plugins: [
         {
@@ -26,11 +28,6 @@ export default {
                 }
             },
         },
-        typescript({
-            sourceMap: !production,
-            outputToFilesystem: true,
-            removeComments: true
-        }),
         copy({
             targets: [{ src: 'build/glue.wasm', dest: 'dist' }],
         }),
