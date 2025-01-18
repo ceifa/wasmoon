@@ -1,4 +1,5 @@
 import { LuaFactory } from '../dist/index.js'
+import { expect } from 'chai'
 
 describe('Initialization', () => {
     it('create engine should succeed', async () => {
@@ -12,5 +13,16 @@ describe('Initialization', () => {
             openStandardLibs: true,
             traceAllocations: true,
         })
+    })
+
+    it('create with environment variables should succeed', async () => {
+        const env = {
+            ENV_TEST: 'test',
+        }
+        const engine = await new LuaFactory(undefined, env).createEngine()
+
+        const value = await engine.doString('return os.getenv("ENV_TEST")')
+
+        expect(value).to.be.equal(env.ENV_TEST)
     })
 })
