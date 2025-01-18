@@ -1,11 +1,11 @@
 import { expect } from 'chai'
 import { getEngine, tick } from './utils.js'
-import jestMock from 'jest-mock'
+import { mock } from 'node:test'
 
 describe('Promises', () => {
     it('use promise next should succeed', async () => {
         const engine = await getEngine()
-        const check = jestMock.fn()
+        const check = mock.fn()
         engine.global.set('check', check)
         const promise = new Promise((resolve) => setTimeout(() => resolve(60), 5))
         engine.global.set('promise', promise)
@@ -17,12 +17,12 @@ describe('Promises', () => {
         expect(check.mock.calls.length).to.be.equal(0)
         await promise
         await res
-        expect(check.mock.calls[0]).to.be.eql([60])
+        expect(check.mock.calls[0].arguments).to.be.eql([60])
     })
 
     it('chain promises with next should succeed', async () => {
         const engine = await getEngine()
-        const check = jestMock.fn()
+        const check = mock.fn()
         engine.global.set('check', check)
         const promise = new Promise((resolve) => resolve(60))
         engine.global.set('promise', promise)
@@ -37,14 +37,14 @@ describe('Promises', () => {
         await tick()
         await res
 
-        expect(check.mock.calls[0]).to.be.eql([120])
+        expect(check.mock.calls[0].arguments).to.be.eql([120])
         expect(check.mock.calls.length).to.be.equal(2)
     })
 
     it('call an async function should succeed', async () => {
         const engine = await getEngine()
         engine.global.set('asyncFunction', async () => Promise.resolve(60))
-        const check = jestMock.fn()
+        const check = mock.fn()
         engine.global.set('check', check)
 
         const res = engine.doString(`
@@ -53,7 +53,7 @@ describe('Promises', () => {
 
         await tick()
         await res
-        expect(check.mock.calls[0]).to.be.eql([60])
+        expect(check.mock.calls[0].arguments).to.be.eql([60])
     })
 
     it('return an async function should succeed', async () => {
@@ -82,7 +82,7 @@ describe('Promises', () => {
 
     it('await an promise inside coroutine should succeed', async () => {
         const engine = await getEngine()
-        const check = jestMock.fn()
+        const check = mock.fn()
         engine.global.set('check', check)
         const promise = new Promise((resolve) => setTimeout(() => resolve(60), 5))
         engine.global.set('promise', promise)
@@ -104,12 +104,12 @@ describe('Promises', () => {
         expect(check.mock.calls.length).to.be.equal(0)
         await promise
         await res
-        expect(check.mock.calls[0]).to.be.eql([60])
+        expect(check.mock.calls[0].arguments).to.be.eql([60])
     })
 
     it('awaited coroutines should ignore resume until it resolves the promise', async () => {
         const engine = await getEngine()
-        const check = jestMock.fn()
+        const check = mock.fn()
         engine.global.set('check', check)
         const promise = new Promise((resolve) => setTimeout(() => resolve(60), 5))
         engine.global.set('promise', promise)
@@ -129,7 +129,7 @@ describe('Promises', () => {
         expect(check.mock.calls.length).to.be.equal(0)
         await promise
         await res
-        expect(check.mock.calls[0]).to.be.eql([60])
+        expect(check.mock.calls[0].arguments).to.be.eql([60])
     })
 
     it('await a thread run with async calls should succeed', async () => {
@@ -193,8 +193,8 @@ describe('Promises', () => {
 
     it('catch a promise rejection should succeed', async () => {
         const engine = await getEngine()
-        const fulfilled = jestMock.fn()
-        const rejected = jestMock.fn()
+        const fulfilled = mock.fn()
+        const rejected = mock.fn()
         engine.global.set('handlers', { fulfilled, rejected })
         engine.global.set('throw', new Promise((_, reject) => reject(new Error('expected test error'))))
 

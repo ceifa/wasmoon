@@ -3,7 +3,7 @@ import { LuaLibraries, LuaReturn, LuaThread, LuaType, decorate, decorateProxy, d
 import { expect } from 'chai'
 import { getEngine, getFactory } from './utils.js'
 import { setTimeout } from 'node:timers/promises'
-import { mock } from 'node:test';
+import { mock } from 'node:test'
 
 class TestClass {
     static hello() {
