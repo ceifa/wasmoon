@@ -27,17 +27,33 @@ export default class LuaWasm {
     public static async initialize(opts: {
         wasmFile?: string
         env?: EnvironmentVariables
+        fs?: 'node' | 'memory'
         stdin?: () => number | null
         stdout?: () => number | null
         stderr?: () => number | null
     }): Promise<LuaWasm> {
+        const fs = opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:fs') : null
+
         const module: LuaEmscriptenModule = await initWasmModule({
             locateFile: (path: string, scriptDirectory: string) => {
                 return opts.wasmFile || scriptDirectory + path
             },
-            preRun: (initializedModule: LuaEmscriptenModule) => {
+            preRun: (initializedModule: any) => {
                 if (typeof opts?.env === 'object') {
-                    Object.entries(opts.env).forEach(([k, v]) => (initializedModule.ENV[k] = v))
+                    Object.assign(initializedModule.ENV, opts.env)
+                }
+
+                if (fs) {
+                    const rootdirs = fs
+                        .readdirSync('/')
+                        .filter((dir) => !['dev', 'lib', 'proc'].includes(dir))
+                        .map((dir) => `/${dir}`)
+
+                    for (const dir of rootdirs) {
+                        initializedModule.FS.mkdirTree(dir)
+                        initializedModule.FS.mount(initializedModule.FS.filesystems.NODEFS, { root: dir }, dir)
+                    }
+                    initializedModule.FS.chdir(process.cwd())
                 }
 
                 initializedModule.FS.init(opts?.stdin ?? null, opts?.stdout ?? null, opts?.stderr ?? null)

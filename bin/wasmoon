@@ -115,7 +115,7 @@ const { executeSnippets, includeModules, ignoreEnv, forceInteractive, warnings, 
     process.argv.slice(2),
 )
 
-const factory = new LuaFactory({ env: ignoreEnv ? undefined : process.env })
+const factory = new LuaFactory({ env: ignoreEnv ? undefined : process.env, fs: 'node' })
 const luamodule = await factory.getLuaModule()
 const lua = await factory.createEngine()
 
@@ -128,76 +128,18 @@ if (warnings) {
     luamodule.lua_warning(lua.global.address, '@on', 0)
 }
 
+for (const module of includeModules) {
+    let [global, mod] = module.split('=')
+    if (!mod) {
+        mod = global
+    }
+
+    const require = lua.global.get('require')
+    lua.global.set(global, require(mod))
+}
+
 for (const snippet of executeSnippets) {
     await lua.doString(snippet)
-}
-
-function currentDir() {
-    const pointer = luamodule.module._malloc(128);
-    const baseidx = pointer >> 2;
-
-    try {
-        if (!luamodule.lua_getstack(lua.global.address, 1, pointer)) {
-            return null;
-        }
-
-        if (!luamodule.lua_getinfo(lua.global.address, 'S', pointer)) {
-            return null;
-        }
-
-        // https://www.lua.org/manual/5.4/manual.html#lua_Debug
-        const sourcePtr = luamodule.module.HEAPU32[baseidx + 4];
-        let source = luamodule.module.UTF8ToString(sourcePtr);
-
-        if (!source || source === '=[C]' || source.startsWith('return ')) {
-            return '.'
-        } else {
-            if (source.startsWith('@')) {
-                source = source.substring(1)
-            }
-
-            return source
-        }
-    } finally {
-        luamodule.module._free(pointer);
-    }
-}
-
-lua.global.getTable('package', (packageIdx) => {
-    luamodule.lua_getfield(lua.global.address, packageIdx, 'searchers')
-
-    lua.global.pushValue(decorateFunction((thread, moduleName) => {
-        if (moduleName.endsWith('.lua')) {
-            const calledDirectory = currentDir()
-            const luafile = path.resolve(calledDirectory, moduleName)
-
-            try {
-                const content = fs.readFileSync(luafile)
-                factory.mountFileSync(luamodule, luafile, content)
-            } catch {
-                // ignore
-            }
-
-            const load = luamodule.luaL_loadfilex(lua.global.address, luafile, null)
-            if (load === LuaReturn.Ok) {
-                thread.pushValue(luafile)
-                return new LuaRawResult(2)
-            }
-        }
-    }, { receiveThread: true }))
-
-    const len = luamodule.lua_rawlen(lua.global.address, -1)
-    luamodule.lua_rawseti(lua.global.address, -2, len + BigInt(1))
-
-    lua.global.pop()
-})
-
-lua.global.set('loadfile', (filename) => {
-    // TODO
-})
-
-for (const include of includeModules) {
-    // TODO
 }
 
 lua.global.set('arg', decorate(scriptArgs, { disableProxy: true }))

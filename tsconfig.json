@@ -1,11 +1,12 @@
 {
     "compilerOptions": {
         "incremental": false,
-        "moduleResolution": "node",
+        "module": "ES2022",
+        "moduleResolution": "Bundler",
         "inlineSources": false,
         "removeComments": false,
         "sourceMap": false,
-        "target": "ES2018",
+        "target": "ES2022",
         "skipLibCheck": true,
         "lib": ["ESNEXT", "DOM"],
         "forceConsistentCasingInFileNames": true,

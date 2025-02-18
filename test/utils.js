@@ -1,7 +1,7 @@
 import { LuaFactory } from '../dist/index.js'
 
 export const getFactory = (env) => {
-    return new LuaFactory(undefined, env)
+    return new LuaFactory({ env })
 }
 
 export const getEngine = (config = {}) => {

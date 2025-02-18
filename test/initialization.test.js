@@ -19,7 +19,7 @@ describe('Initialization', () => {
         const env = {
             ENV_TEST: 'test',
         }
-        const engine = await new LuaFactory(undefined, env).createEngine()
+        const engine = await new LuaFactory({ env }).createEngine()
 
         const value = await engine.doString('return os.getenv("ENV_TEST")')
 

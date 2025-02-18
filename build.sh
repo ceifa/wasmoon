@@ -13,6 +13,7 @@ else
 fi
 
 emcc \
+    -lnodefs.js \
     -s WASM=1 $extension -o ./build/glue.js \
     -s EXPORTED_RUNTIME_METHODS="[
         'ccall', \

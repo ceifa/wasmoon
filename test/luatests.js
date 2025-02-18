@@ -1,25 +1,12 @@
 import { LuaFactory } from '../dist/index.js'
 import { fileURLToPath } from 'node:url'
-import { readFile, readdir } from 'node:fs/promises'
-import { resolve } from 'node:path'
-
-async function* walk(dir) {
-    const dirents = await readdir(dir, { withFileTypes: true })
-    for (const dirent of dirents) {
-        const res = resolve(dir, dirent.name)
-        if (dirent.isDirectory()) {
-            yield* walk(res)
-        } else {
-            yield res
-        }
-    }
-}
+import { readFile, glob } from 'node:fs/promises'
 
 const factory = new LuaFactory()
 const testsPath = import.meta.resolve('../lua/testes')
 const filePath = fileURLToPath(typeof testsPath === 'string' ? testsPath : await Promise.resolve(testsPath))
 
-for await (const file of walk(filePath)) {
+for await (const file of glob(`${filePath}/**/*.lua`)) {
     const relativeFile = file.replace(`${filePath}/`, '')
     await factory.mountFile(relativeFile, await readFile(file))
 }

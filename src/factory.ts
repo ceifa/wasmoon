@@ -15,6 +15,7 @@ export default class LuaFactory {
      * @param opts.wasmFile - Custom URI for the Lua WebAssembly module.
      * @param opts.env - Environment variables for the Lua engine.
      * @param opts.stdin - Standard input for the Lua engine.
+     * @param opts.fs - File system that should be used for the Lua engine.
      * @param opts.stdout - Standard output for the Lua engine.
      * @param opts.stderr - Standard error for the Lua engine.
      */
