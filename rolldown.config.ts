@@ -2,15 +2,12 @@ import { defineConfig } from 'rolldown'
 import copy from 'rollup-plugin-copy'
 import pkg from './package.json' with { type: 'json' }
 
-const production = !process.env.ROLLUP_WATCH
-
 export default defineConfig({
     input: './src/index.ts',
     output: {
         file: 'dist/index.js',
         format: 'esm',
         sourcemap: true,
-        minify: production,
     },
     external: ['module', 'node:fs'],
     define: {

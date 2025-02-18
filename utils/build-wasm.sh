@@ -1,8 +1,8 @@
 #!/bin/bash -e
 cd $(dirname $0)
-mkdir -p build
+mkdir -p ../build
 
-LUA_SRC=$(ls ./lua/*.c | grep -v "luac.c" | grep -v "lua.c" | tr "\n" " ")
+LUA_SRC=$(ls ../lua/*.c | grep -v "luac.c" | grep -v "lua.c" | tr "\n" " ")
 
 extension=""
 if [ "$1" == "dev" ];
@@ -14,7 +14,7 @@ fi
 
 emcc \
     -lnodefs.js \
-    -s WASM=1 $extension -o ./build/glue.js \
+    -s WASM=1 $extension -o ../build/glue.js \
     -s EXPORTED_RUNTIME_METHODS="[
         'ccall', \
         'addFunction', \
