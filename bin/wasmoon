@@ -1,8 +1,7 @@
 #!/usr/bin/env node
-import { LuaFactory, LuaReturn, LuaType, LUA_MULTRET, LuaRawResult, decorate, decorateFunction } from '../dist/index.js'
+import { LuaFactory, LuaReturn, LuaType, LUA_MULTRET, decorate } from '../dist/index.js'
 import pkg from '../package.json' with { type: 'json' }
 import fs from 'node:fs'
-import path from 'node:path'
 import readline from 'node:readline'
 
 function printUsage() {
@@ -146,18 +145,13 @@ lua.global.set('arg', decorate(scriptArgs, { disableProxy: true }))
 
 const isTTY = process.stdin.isTTY
 
-if (scriptFile) {
-    if (scriptFile === '-') {
-        const input = fs.readFileSync(0, 'utf-8')
-        await lua.doString(input)
-        console.log(lua.global.indexToString(-1))
-    } else {
-        const absolutePath = path.resolve(process.cwd(), scriptFile)
-        const content = await fs.promises.readFile(absolutePath)
-        await factory.mountFile(absolutePath, content)
-        await lua.doFile(absolutePath)
-        console.log(lua.global.indexToString(-1))
-    }
+if (scriptFile === '-' || (!scriptFile && !isTTY)) {
+    const input = fs.readFileSync(0, 'utf-8')
+    await lua.doString(input)
+    console.log(lua.global.indexToString(-1))
+} else if (scriptFile) {
+    await lua.doFile(scriptFile)
+    console.log(lua.global.indexToString(-1))
 }
 
 const shouldInteractive = isTTY && (forceInteractive || (!scriptFile && !executeSnippets.length))
