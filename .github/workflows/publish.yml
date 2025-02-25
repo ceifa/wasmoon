@@ -79,9 +79,6 @@ jobs:
             contents: read
             id-token: write
         steps:
-            - name: Checkout repository
-              uses: actions/checkout@v4
-
             - name: Download build artifact
               uses: actions/download-artifact@v4
               with:
@@ -98,8 +95,7 @@ jobs:
                     name: '@ceifa/' + pkg.name, \
                     version: pkg.version, \
                     exports: pkg.main, \
-                    include: ['dist/**/*', 'bin/**/*'], \
-                    exclude: ['!dist/**/*'], \
+                    include: ['dist/**/*', 'bin/**/*']
                   }; \
                   require('fs').writeFileSync('jsr.json', JSON.stringify(jsr, null, 2));"
 
