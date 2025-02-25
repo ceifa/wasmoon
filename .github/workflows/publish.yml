@@ -98,7 +98,8 @@ jobs:
                     name: '@ceifa/' + pkg.name, \
                     version: pkg.version, \
                     exports: pkg.main, \
-                    include: ['dist/**/*', 'bin/**/*'] \
+                    include: ['dist/**/*', 'bin/**/*'], \
+                    exclude: ['!dist/**/*'], \
                   }; \
                   require('fs').writeFileSync('jsr.json', JSON.stringify(jsr, null, 2));"
 
