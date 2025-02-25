@@ -96,7 +96,7 @@ jobs:
                   node -e "const pkg = require('./package.json'); \
                   const jsr = { \
                     name: '@ceifa/' + pkg.name, \
-                    version: 1.16.1, \
+                    version: '1.16.1', \
                     exports: pkg.main, \
                     include: ['dist/**/*', 'bin/**/*']
                   }; \
