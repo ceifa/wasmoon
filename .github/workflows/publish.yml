@@ -17,6 +17,8 @@ jobs:
 
             - name: Setup EMSDK
               uses: mymindstorm/setup-emsdk@v14
+              with:
+                  version: 4.0.1
 
             - name: Use Node.js 22.x
               uses: actions/setup-node@v4
@@ -94,7 +96,7 @@ jobs:
                   node -e "const pkg = require('./package.json'); \
                   const jsr = { \
                     name: '@ceifa/' + pkg.name, \
-                    version: pkg.version, \
+                    version: 1.16.1, \
                     exports: pkg.main, \
                     include: ['dist/**/*', 'bin/**/*']
                   }; \
