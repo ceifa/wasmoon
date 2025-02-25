@@ -18,7 +18,7 @@ Available options are:
   -W          turn warnings on
   --          stop handling options
   -           stop handling options and execute stdin
-`.trim(),
+`.trim()
     )
     process.exit(1)
 }
@@ -48,19 +48,15 @@ function parseArgs(args) {
                 case '-v':
                     showVersion = true
                     break
-
                 case '-W':
                     warnings = true
                     break
-
                 case '-E':
                     ignoreEnv = true
                     break
-
                 case '-i':
                     forceInteractive = true
                     break
-
                 case '-e':
                     i++
                     if (i >= args.length) {
@@ -69,7 +65,6 @@ function parseArgs(args) {
                     }
                     executeSnippets.push(args[i])
                     break
-
                 case '-l':
                     i++
                     if (i >= args.length) {
@@ -78,12 +73,10 @@ function parseArgs(args) {
                     }
                     includeModules.push(args[i])
                     break
-
                 case '-':
                     scriptFile = '-'
                     i++
                     break
-
                 default:
                     console.log(`unrecognized option: '${arg}'`)
                     printUsage()
@@ -110,11 +103,70 @@ function parseArgs(args) {
     }
 }
 
-const { executeSnippets, includeModules, ignoreEnv, forceInteractive, warnings, showVersion, scriptFile, scriptArgs } = parseArgs(
-    process.argv.slice(2),
-)
+const {
+    executeSnippets,
+    includeModules,
+    ignoreEnv,
+    forceInteractive,
+    warnings,
+    showVersion,
+    scriptFile,
+    scriptArgs,
+} = parseArgs(process.argv.slice(2))
 
-const factory = new LuaFactory({ env: ignoreEnv ? undefined : process.env, fs: 'node' })
+// When running interactively, process.stdin is used by readline.
+// To allow Lua’s io.read to work (even in interactive mode), we open
+// a separate file descriptor to the terminal (e.g. '/dev/tty' on Unix).
+let inputFD = 0
+if (process.stdin.isTTY) {
+    try {
+        inputFD = fs.openSync('/dev/tty', 'r')
+    } catch (e) {
+        // If opening /dev/tty fails (or on non-Unix systems), fallback to fd 0.
+        inputFD = 0
+    }
+}
+
+const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: true,
+    removeHistoryDuplicates: true,
+    prompt: '> '
+})
+
+let isresuming = false
+const factory = new LuaFactory({
+    env: ignoreEnv ? undefined : process.env,
+    fs: 'node',
+    stdin: () => {
+        if (isresuming) {
+            isresuming = false
+            return null
+        } else {
+            rl.pause()
+        }
+
+        const buffer = Buffer.alloc(1)
+        const bytesRead = fs.readSync(inputFD, buffer, 0, buffer.length)
+        if (bytesRead > 0) {
+            const content = buffer.toString('utf8')
+            process.stdout.write(content)
+
+            const charcode = content.charCodeAt(0)
+            if (charcode === 13) {
+                rl.resume()
+                isresuming = true
+                return null
+            }
+
+            return charcode
+        } else {
+            return null
+        }
+    }
+})
+
 const luamodule = await factory.getLuaModule()
 const lua = await factory.createEngine()
 
@@ -132,7 +184,6 @@ for (const module of includeModules) {
     if (!mod) {
         mod = global
     }
-
     const require = lua.global.get('require')
     lua.global.set(global, require(mod))
 }
@@ -145,17 +196,14 @@ lua.global.set('arg', decorate(scriptArgs, { disableProxy: true }))
 
 const isTTY = process.stdin.isTTY
 
-if (scriptFile === '-' || (!scriptFile && !isTTY)) {
+if (scriptFile === '-') {
     const input = fs.readFileSync(0, 'utf-8')
     await lua.doString(input)
-    console.log(lua.global.indexToString(-1))
 } else if (scriptFile) {
     await lua.doFile(scriptFile)
-    console.log(lua.global.indexToString(-1))
 }
 
 const shouldInteractive = isTTY && (forceInteractive || (!scriptFile && !executeSnippets.length))
-
 if (shouldInteractive) {
     // Bypass result verification for interactive mode
     const loadcode = (code) => {
@@ -167,14 +215,6 @@ if (shouldInteractive) {
     const luaversion = lua.global.get('_VERSION')
     console.log(`Welcome to Wasmoon ${version} (${luaversion})`)
     console.log('Type Lua code and press Enter to execute. Ctrl+C to exit.\n')
-
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-        terminal: true,
-        removeHistoryDuplicates: true,
-        prompt: '> ',
-    })
 
     rl.prompt()
 
@@ -210,5 +250,4 @@ if (shouldInteractive) {
     // read from stdin until EOF. (Non-TTY or no -i, no file).
     const input = fs.readFileSync(0, 'utf-8')
     await lua.doString(input)
-    console.log(lua.global.indexToString(-1))
 }
