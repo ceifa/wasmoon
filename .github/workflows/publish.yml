@@ -50,6 +50,7 @@ jobs:
                       package-lock.json
                       dist/
                       bin/
+                      LICENSE
 
     publish_npm:
         runs-on: ubuntu-latest
