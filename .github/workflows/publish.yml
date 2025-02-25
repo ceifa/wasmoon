@@ -97,9 +97,7 @@ jobs:
                   const jsr = { \
                     name: pkg.name, \
                     version: pkg.version, \
-                    description: pkg.description, \
-                    repository: pkg.repository, \
-                    license: pkg.license \
+                    exports: pkg.main \
                   }; \
                   require('fs').writeFileSync('jsr.json', JSON.stringify(jsr, null, 2));"
 
