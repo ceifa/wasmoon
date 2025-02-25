@@ -3,26 +3,105 @@ name: CI
 on:
     push:
         branches: [main]
+    pull_request:
+        branches: [main]
 
 jobs:
-    publish:
+    build:
         runs-on: ubuntu-latest
-
         steps:
-            - uses: actions/checkout@v4
+            - name: Checkout repository
+              uses: actions/checkout@v4
               with:
                   submodules: recursive
-            - uses: mymindstorm/setup-emsdk@v14
+
+            - name: Setup EMSDK
+              uses: mymindstorm/setup-emsdk@v14
+
             - name: Use Node.js 22.x
               uses: actions/setup-node@v4
               with:
                   node-version: 22.x
-            - run: npm ci
-            - run: npm run lint:nofix
-            - run: npm run build:wasm
-            - run: npm run build
-            - run: npm test
-            - run: npm run luatests
-            - uses: JS-DevTools/npm-publish@v3
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Run lint (no fix)
+              run: npm run lint:nofix
+
+            - name: Build WASM
+              run: npm run build:wasm
+
+            - name: Build project
+              run: npm run build
+
+            - name: Run tests
+              run: npm test
+
+            - name: Run Lua tests
+              run: npm run luatests
+
+            - name: Upload build artifact
+              uses: actions/upload-artifact@v3
+              with:
+                  name: build-artifact
+                  path: |
+                      package.json
+                      package-lock.json
+                      dist/
+                      wasm/
+
+    publish_npm:
+        runs-on: ubuntu-latest
+        needs: build
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Download build artifact
+              uses: actions/download-artifact@v3
+              with:
+                  name: build-artifact
+                  path: build-artifact
+
+            - name: Restore build artifact
+              run: cp -r build-artifact/* .
+
+            - name: Publish to npm
+              uses: JS-DevTools/npm-publish@v3
               with:
                   token: ${{ secrets.NPM_TOKEN }}
+
+    publish_jsr:
+        runs-on: ubuntu-latest
+        needs: build
+        permissions:
+            contents: read
+            id-token: write
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Download build artifact
+              uses: actions/download-artifact@v3
+              with:
+                  name: build-artifact
+                  path: build-artifact
+
+            - name: Restore build artifact
+              run: cp -r build-artifact/* .
+
+            - name: Generate jsr.json from package.json
+              run: |
+                  node -e "const pkg = require('./package.json'); \
+                  const jsr = { \
+                    name: pkg.name, \
+                    version: pkg.version, \
+                    description: pkg.description, \
+                    repository: pkg.repository, \
+                    license: pkg.license \
+                  }; \
+                  require('fs').writeFileSync('jsr.json', JSON.stringify(jsr, null, 2));"
+
+            - name: Publish to JSR
+              run: npx jsr publish
