@@ -3,8 +3,6 @@ name: CI
 on:
     push:
         branches: [main]
-    pull_request:
-        branches: [main]
 
 jobs:
     build:
@@ -75,32 +73,33 @@ jobs:
               with:
                   token: ${{ secrets.NPM_TOKEN }}
 
-    publish_jsr:
-        runs-on: ubuntu-latest
-        needs: build
-        permissions:
-            contents: read
-            id-token: write
-        steps:
-            - name: Download build artifact
-              uses: actions/download-artifact@v4
-              with:
-                  name: build-artifact
-                  path: build-artifact
+    # Emscripten still doesn't support deno
+    # publish_jsr:
+    #     runs-on: ubuntu-latest
+    #     needs: build
+    #     permissions:
+    #         contents: read
+    #         id-token: write
+    #     steps:
+    #         - name: Download build artifact
+    #           uses: actions/download-artifact@v4
+    #           with:
+    #               name: build-artifact
+    #               path: build-artifact
 
-            - name: Restore build artifact
-              run: cp -r build-artifact/* .
+    #         - name: Restore build artifact
+    #           run: cp -r build-artifact/* .
 
-            - name: Generate jsr.json from package.json
-              run: |
-                  node -e "const pkg = require('./package.json'); \
-                  const jsr = { \
-                    name: '@ceifa/' + pkg.name, \
-                    version: '1.16.1', \
-                    exports: pkg.main, \
-                    include: ['dist/**/*', 'bin/**/*']
-                  }; \
-                  require('fs').writeFileSync('jsr.json', JSON.stringify(jsr, null, 2));"
+    #         - name: Generate jsr.json from package.json
+    #           run: |
+    #               node -e "const pkg = require('./package.json'); \
+    #               const jsr = { \
+    #                 name: '@ceifa/' + pkg.name, \
+    #                 version: pkg.version, \
+    #                 exports: pkg.main, \
+    #                 include: ['dist/**/*', 'bin/**/*']
+    #               }; \
+    #               require('fs').writeFileSync('jsr.json', JSON.stringify(jsr, null, 2));"
 
-            - name: Publish to JSR
-              run: npx jsr publish
+    #         - name: Publish to JSR
+    #           run: npx jsr publish
