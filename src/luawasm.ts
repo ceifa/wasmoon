@@ -33,6 +33,7 @@ export default class LuaWasm {
         stderr?: () => number | null
     }): Promise<LuaWasm> {
         const fs = opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:fs') : null
+        const child_process = opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:child_process') : null
 
         const module: LuaEmscriptenModule = await initWasmModule({
             locateFile: (path: string, scriptDirectory: string) => {
@@ -43,17 +44,42 @@ export default class LuaWasm {
                     Object.assign(initializedModule.ENV, opts.env)
                 }
 
-                if (fs) {
-                    const rootdirs = fs
-                        .readdirSync('/')
-                        .filter((dir) => !['dev', 'lib', 'proc'].includes(dir))
-                        .map((dir) => `/${dir}`)
+                if (fs && child_process) {
+                    let rootdirs: string[]
+                    if (process.platform === 'win32') {
+                        const stdout = child_process.execSync('wmic logicaldisk get name', { encoding: 'utf8' })
+                        const drives = stdout
+                            .split('\n')
+                            .map((line) => line.trim())
+                            .filter((line) => line && line !== 'Name')
+                            .map((line) => line + '\\')
+
+                        rootdirs = []
+                        for (const drive of drives) {
+                            rootdirs.push(
+                                ...fs
+                                    .readdirSync(drive)
+                                    .filter((dir) => !['dev', 'lib', 'proc'].includes(dir))
+                                    .map((dir) => `${drive}${dir}`.replace(/\\|\\\\/g, '/')),
+                            )
+                        }
+                    } else {
+                        rootdirs = fs
+                            .readdirSync('/')
+                            .filter((dir) => !['dev', 'lib', 'proc'].includes(dir))
+                            .map((dir) => `/${dir}`)
+                    }
 
                     for (const dir of rootdirs) {
-                        initializedModule.FS.mkdirTree(dir)
-                        initializedModule.FS.mount(initializedModule.FS.filesystems.NODEFS, { root: dir }, dir)
+                        try {
+                            initializedModule.FS.mkdirTree(dir)
+                            initializedModule.FS.mount(initializedModule.FS.filesystems.NODEFS, { root: dir }, dir)
+                        } catch {
+                            // silently fail to mount (generally due to EPERM)
+                        }
                     }
-                    initializedModule.FS.chdir(process.cwd())
+
+                    initializedModule.FS.chdir(process.cwd().replace(/\\|\\\\/g, '/'))
                 }
 
                 initializedModule.FS.init(opts?.stdin ?? null, opts?.stdout ?? null, opts?.stderr ?? null)

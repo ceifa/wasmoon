@@ -9,7 +9,7 @@ export default defineConfig({
         format: 'esm',
         sourcemap: true,
     },
-    external: ['module', 'node:fs'],
+    external: ['module', 'node:fs', 'node:child_process'],
     define: {
         // Webpack workaround: https://github.com/webpack/webpack/issues/16878
         'import.meta': 'Object(import.meta)',
