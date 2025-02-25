@@ -23,14 +23,11 @@ export interface FunctionTypeExtensionOptions {
 }
 
 class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecoration> {
-    private readonly functionRegistry =
-        typeof FinalizationRegistry !== 'undefined'
-            ? new FinalizationRegistry((func: number) => {
-                  if (!this.thread.isClosed()) {
-                      this.thread.lua.luaL_unref(this.thread.address, LUA_REGISTRYINDEX, func)
-                  }
-              })
-            : undefined
+    private readonly functionRegistry = new FinalizationRegistry((func: number) => {
+        if (!this.thread.isClosed()) {
+            this.thread.lua.luaL_unref(this.thread.address, LUA_REGISTRYINDEX, func)
+        }
+    })
 
     private gcPointer: number
     private functionWrapper: number
