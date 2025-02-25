@@ -5,8 +5,8 @@
     "main": "./dist/index.js",
     "type": "module",
     "scripts": {
-        "build:wasm:dev": "node build-wasm dev",
-        "build:wasm": "node build-wasm",
+        "build:wasm:dev": "node utils/build-wasm dev",
+        "build:wasm": "node utils/build-wasm",
         "start": "rolldown -w -c",
         "test": "mocha --parallel --require ./test/boot.js test/*.test.js",
         "luatests": "node --experimental-import-meta-resolve test/luatests.js",

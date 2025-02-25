@@ -52,7 +52,7 @@ export default class LuaWasm {
                             .split('\n')
                             .map((line) => line.trim())
                             .filter((line) => line && line !== 'Name')
-                            .map((line) => line + '\\')
+                            .map((line) => `${line}\\`)
 
                         rootdirs = []
                         for (const drive of drives) {

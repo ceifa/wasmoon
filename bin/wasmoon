@@ -18,7 +18,7 @@ Available options are:
   -W          turn warnings on
   --          stop handling options
   -           stop handling options and execute stdin
-`.trim()
+`.trim(),
     )
     process.exit(1)
 }
@@ -103,16 +103,9 @@ function parseArgs(args) {
     }
 }
 
-const {
-    executeSnippets,
-    includeModules,
-    ignoreEnv,
-    forceInteractive,
-    warnings,
-    showVersion,
-    scriptFile,
-    scriptArgs,
-} = parseArgs(process.argv.slice(2))
+const { executeSnippets, includeModules, ignoreEnv, forceInteractive, warnings, showVersion, scriptFile, scriptArgs } = parseArgs(
+    process.argv.slice(2),
+)
 
 // When running interactively, process.stdin is used by readline.
 // To allow Lua’s io.read to work (even in interactive mode), we open
@@ -132,7 +125,7 @@ const rl = readline.createInterface({
     output: process.stdout,
     terminal: true,
     removeHistoryDuplicates: true,
-    prompt: '> '
+    prompt: '> ',
 })
 
 let isresuming = false
@@ -164,7 +157,7 @@ const factory = new LuaFactory({
         } else {
             return null
         }
-    }
+    },
 })
 
 const luamodule = await factory.getLuaModule()

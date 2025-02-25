@@ -2,7 +2,7 @@ import { execSync } from 'node:child_process'
 import { resolve } from 'node:path'
 
 const isUnix = process.platform !== 'win32'
-const rootdir = import.meta.dirname;
+const rootdir = resolve(import.meta.dirname, '..')
 const args = process.argv.slice(2)
 
 const execute = (command) => {
@@ -31,9 +31,10 @@ if (isUnix) {
     if (emccInstalled) {
         const command = `${resolve(rootdir, 'utils/build-wasm.sh')} ${args.join(' ')}`
         execute(command)
+
+        process.exit(0)
     }
 }
-
 
 const dockerVolume = `${rootdir}:/wasmoon`
 const command = `docker run --rm -v "${dockerVolume}" emscripten/emsdk /wasmoon/utils/build-wasm.sh ${args.join(' ')}`
