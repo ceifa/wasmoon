@@ -128,34 +128,43 @@ const rl = readline.createInterface({
     prompt: '> ',
 })
 
-let isresuming = false
 const factory = new LuaFactory({
     env: ignoreEnv ? undefined : process.env,
     fs: 'node',
     stdin: () => {
-        if (isresuming) {
-            isresuming = false
-            return null
-        } else {
+        try {
             rl.pause()
-        }
 
-        const buffer = Buffer.alloc(1)
-        const bytesRead = fs.readSync(inputFD, buffer, 0, buffer.length)
-        if (bytesRead > 0) {
-            const content = buffer.toString('utf8')
-            process.stdout.write(content)
+            let buffer = Buffer.alloc(0xff)
+            let content = ''
+            let current = 0
 
-            const charcode = content.charCodeAt(0)
-            if (charcode === 13) {
-                rl.resume()
-                isresuming = true
-                return null
+            while (true) {
+                const bytesRead = fs.readSync(inputFD, buffer, current, buffer.length - current)
+                if (bytesRead > 0) {
+                    const charcode = buffer[current++]
+                    if (charcode === 127) {
+                        current = Math.max(0, current - 2)
+                    } else {
+                        if (charcode === 13) {
+                            break
+                        }
+                    }
+
+                    content = buffer.subarray(0, current).toString('utf8')
+                    process.stdout.write('\x1b[2K')
+                    process.stdout.write('\x1b[0G')
+                    process.stdout.write(content)
+                } else {
+                    break
+                }
             }
 
-            return charcode
-        } else {
-            return null
+            rl.resume()
+            return content
+        } catch (err) {
+            // the error will not be thrown to the top, its better to log it
+            console.error(err)
         }
     },
 })

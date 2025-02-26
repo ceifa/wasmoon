@@ -13,6 +13,7 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     stringToNewUTF8: typeof allocateUTF8
     lengthBytesUTF8: typeof lengthBytesUTF8
     stringToUTF8: typeof stringToUTF8
+    intArrayFromString: typeof intArrayFromString
     UTF8ToString: typeof UTF8ToString
     ENV: EnvironmentVariables
     _realloc: (pointer: number, size: number) => number
@@ -28,18 +29,20 @@ export default class LuaWasm {
         wasmFile?: string
         env?: EnvironmentVariables
         fs?: 'node' | 'memory'
-        stdin?: () => number | null
-        stdout?: () => number | null
-        stderr?: () => number | null
+        stdin?: () => string
+        stdout?: (content: string) => void
+        stderr?: (content: string) => void
     }): Promise<LuaWasm> {
         const fs = opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:fs') : null
         const child_process = opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:child_process') : null
 
         const module: LuaEmscriptenModule = await initWasmModule({
+            print: opts.stdout,
+            printErr: opts.stderr,
             locateFile: (path: string, scriptDirectory: string) => {
                 return opts.wasmFile || scriptDirectory + path
             },
-            preRun: (initializedModule: any) => {
+            preRun: (initializedModule: LuaEmscriptenModule) => {
                 if (typeof opts?.env === 'object') {
                     Object.assign(initializedModule.ENV, opts.env)
                 }
@@ -72,8 +75,9 @@ export default class LuaWasm {
 
                     for (const dir of rootdirs) {
                         try {
-                            initializedModule.FS.mkdirTree(dir)
-                            initializedModule.FS.mount(initializedModule.FS.filesystems.NODEFS, { root: dir }, dir)
+                            const moduleFS = initializedModule.FS as any // emscripten FS module is not correctly typed
+                            moduleFS.mkdirTree(dir)
+                            moduleFS.mount(moduleFS.filesystems.NODEFS, { root: dir }, dir)
                         } catch {
                             // silently fail to mount (generally due to EPERM)
                         }
@@ -82,7 +86,35 @@ export default class LuaWasm {
                     initializedModule.FS.chdir(process.cwd().replace(/\\|\\\\/g, '/'))
                 }
 
-                initializedModule.FS.init(opts?.stdin ?? null, opts?.stdout ?? null, opts?.stderr ?? null)
+                if (opts.stdin) {
+                    let bufferedInput: number[] | undefined
+                    initializedModule.FS.init(
+                        () => {
+                            if (!opts.stdin) {
+                                throw new Error('stdin is not defined, it was probably mutated from original options')
+                            }
+
+                            if (!bufferedInput) {
+                                const stdin = opts.stdin()
+                                if (typeof stdin === 'string') {
+                                    bufferedInput = initializedModule.intArrayFromString(stdin, true).concat([0])
+                                } else {
+                                    throw new Error('stdin must return a string')
+                                }
+                            }
+
+                            if (bufferedInput.length === 0) {
+                                bufferedInput = undefined
+                                return null
+                            }
+
+                            const item = bufferedInput.shift()
+                            return !item || item === 0 ? null : item
+                        },
+                        null,
+                        null,
+                    )
+                }
             },
         })
         return new LuaWasm(module)
