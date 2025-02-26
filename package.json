@@ -3,6 +3,7 @@
     "version": "1.16.0",
     "description": "A real lua VM with JS bindings made with webassembly",
     "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
     "type": "module",
     "scripts": {
         "build:wasm:dev": "node utils/build-wasm dev",

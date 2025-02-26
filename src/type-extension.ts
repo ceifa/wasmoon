@@ -25,7 +25,7 @@ export default abstract class LuaTypeExtension<T, K extends BaseDecorationOption
         if (!refUserdata) {
             throw new Error(`data does not have the expected metatable: ${this.name}`)
         }
-        const referencePointer = thread.lua.module.getValue(refUserdata, '*')
+        const referencePointer = thread.lua._emscripten.getValue(refUserdata, '*')
         return thread.lua.getRef(referencePointer)
     }
 
@@ -37,7 +37,7 @@ export default abstract class LuaTypeExtension<T, K extends BaseDecorationOption
         const pointer = thread.lua.ref(target)
         // 4 = size of pointer in wasm.
         const userDataPointer = thread.lua.lua_newuserdatauv(thread.address, PointerSize, 0)
-        thread.lua.module.setValue(userDataPointer, pointer, '*')
+        thread.lua._emscripten.setValue(userDataPointer, pointer, '*')
 
         if (LuaType.Nil === thread.lua.luaL_getmetatable(thread.address, this.name)) {
             // Pop the pushed nil value and the user data. Don't need to unref because it's

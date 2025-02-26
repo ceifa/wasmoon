@@ -1,5 +1,7 @@
 import initWasmModule from '../build/glue.js'
-import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType } from './types'
+import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType } from './types.js'
+// A rolldown plugin will resolve this to the current version on package.json
+import version from 'package-version'
 
 type EnvironmentVariables = Record<string, string | undefined>
 
@@ -9,7 +11,16 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     removeFunction: typeof removeFunction
     setValue: typeof setValue
     getValue: typeof getValue
-    FS: typeof FS
+    FS: typeof FS & {
+        mkdirTree: (path: string) => void
+        filesystems: {
+            NODEFS: Emscripten.FileSystemType
+            MEMFS: Emscripten.FileSystemType
+        }
+    }
+    PATH: {
+        dirname: (typeof import('node:path'))['dirname']
+    }
     stringToNewUTF8: typeof allocateUTF8
     lengthBytesUTF8: typeof lengthBytesUTF8
     stringToUTF8: typeof stringToUTF8
@@ -24,7 +35,7 @@ interface ReferenceMetadata {
     refCount: number
 }
 
-export default class LuaWasm {
+export default class LuaModule {
     public static async initialize(opts: {
         wasmFile?: string
         env?: EnvironmentVariables
@@ -32,9 +43,17 @@ export default class LuaWasm {
         stdin?: () => string
         stdout?: (content: string) => void
         stderr?: (content: string) => void
-    }): Promise<LuaWasm> {
-        const fs = opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:fs') : null
-        const child_process = opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:child_process') : null
+    }): Promise<LuaModule> {
+        const isBrowser =
+            (typeof window === 'object' && typeof window.document !== 'undefined') ||
+            (typeof self === 'object' && self?.constructor?.name === 'DedicatedWorkerGlobalScope')
+
+        if (opts.wasmFile === undefined && isBrowser) {
+            opts.wasmFile = `https://unpkg.com/wasmoon@${version}/dist/glue.wasm`
+        }
+
+        const fs = !isBrowser && opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:fs') : null
+        const child_process = !isBrowser && opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:child_process') : null
 
         const module: LuaEmscriptenModule = await initWasmModule({
             print: opts.stdout,
@@ -75,7 +94,7 @@ export default class LuaWasm {
 
                     for (const dir of rootdirs) {
                         try {
-                            const moduleFS = initializedModule.FS as any // emscripten FS module is not correctly typed
+                            const moduleFS = initializedModule.FS
                             moduleFS.mkdirTree(dir)
                             moduleFS.mount(moduleFS.filesystems.NODEFS, { root: dir }, dir)
                         } catch {
@@ -117,10 +136,10 @@ export default class LuaWasm {
                 }
             },
         })
-        return new LuaWasm(module)
+        return new LuaModule(module)
     }
 
-    public module: LuaEmscriptenModule
+    public _emscripten: LuaEmscriptenModule
 
     public luaL_checkversion_: (L: LuaState, ver: number, sz: number) => void
     public luaL_getmetafield: (L: LuaState, obj: number, e: string | null) => LuaType
@@ -283,7 +302,7 @@ export default class LuaWasm {
     private lastRefIndex?: number
 
     public constructor(module: LuaEmscriptenModule) {
-        this.module = module
+        this._emscripten = module
 
         this.luaL_checkversion_ = this.cwrap('luaL_checkversion_', null, ['number', 'number', 'number'])
         this.luaL_getmetafield = this.cwrap('luaL_getmetafield', 'number', ['number', 'number', 'string'])
@@ -521,7 +540,7 @@ export default class LuaWasm {
         const hasStringOrNumber = argTypes.some((argType) => argType === 'string|number')
         if (!hasStringOrNumber) {
             return (...args: any[]) =>
-                this.module.ccall(name, returnType, argTypes as Emscripten.JSType[], args as Emscripten.TypeCompatibleWithC[])
+                this._emscripten.ccall(name, returnType, argTypes as Emscripten.JSType[], args as Emscripten.TypeCompatibleWithC[])
         }
 
         return (...args: any[]) => {
@@ -533,7 +552,7 @@ export default class LuaWasm {
                     } else {
                         // because it will be freed later, this can only be used on functions that lua internally copies the string
                         if (args[i]?.length > 1024) {
-                            const bufferPointer = this.module.stringToNewUTF8(args[i] as string)
+                            const bufferPointer = this._emscripten.stringToNewUTF8(args[i] as string)
                             args[i] = bufferPointer
                             pointersToBeFreed.push(bufferPointer)
                             return 'number'
@@ -546,10 +565,10 @@ export default class LuaWasm {
             })
 
             try {
-                return this.module.ccall(name, returnType, resolvedArgTypes, args as Emscripten.TypeCompatibleWithC[])
+                return this._emscripten.ccall(name, returnType, resolvedArgTypes, args as Emscripten.TypeCompatibleWithC[])
             } finally {
                 for (const pointer of pointersToBeFreed) {
-                    this.module._free(pointer)
+                    this._emscripten._free(pointer)
                 }
             }
         }

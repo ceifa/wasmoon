@@ -1,44 +1,39 @@
-const { readFileSync } = require('fs')
-const path = require('path')
+import { readFileSync } from 'fs'
+import path from 'path'
+import { Lua } from '../dist/index.js'
+import assert from 'node:assert'
 
-const wasmoon = require('../dist/index')
+const heapsort = readFileSync(path.resolve(import.meta.dirname, 'heapsort.lua'), 'utf-8')
 
-const heapsort = readFileSync(path.resolve(__dirname, 'heapsort.lua'), 'utf-8')
-
-const createFactory = () => {
+const createFactory = async () => {
     console.time('Create factory')
-    _ = new wasmoon.LuaFactory()
+    await Lua.load()
     console.timeEnd('Create factory')
 }
 
-const loadWasm = async () => {
-    console.time('Load wasm')
-    await new wasmoon.LuaFactory().getLuaModule()
-    console.timeEnd('Load wasm')
+const createState = async () => {
+    const lua = await Lua.load()
+
+    console.time('Create state')
+    lua.createState()
+    console.timeEnd('Create state')
 }
 
-const createEngine = async () => {
-    const factory = new wasmoon.LuaFactory()
+const createStateWithoutSuperpowers = async () => {
+    const lua = await Lua.load()
 
-    console.time('Create engine')
-    await factory.createEngine()
-    console.timeEnd('Create engine')
-}
-
-const createEngineWithoutSuperpowers = async () => {
-    const factory = new wasmoon.LuaFactory()
-
-    console.time('Create engine without superpowers')
-    await factory.createEngine({
+    console.time('Create state without superpowers')
+    lua.createState({
         injectObjects: false,
         enableProxy: false,
         openStandardLibs: false,
     })
-    console.timeEnd('Create engine without superpowers')
+    console.timeEnd('Create state without superpowers')
 }
 
 const runHeapsort = async () => {
-    const state = await new wasmoon.LuaFactory().createEngine()
+    const lua = await Lua.load()
+    const state = lua.createState()
 
     console.time('Run plain heapsort')
     state.global.lua.luaL_loadstring(state.global.address, heapsort)
@@ -48,16 +43,18 @@ const runHeapsort = async () => {
 }
 
 const runInteropedHeapsort = async () => {
-    const state = await new wasmoon.LuaFactory().createEngine()
+    const lua = await Lua.load()
+    const state = lua.createState()
 
     console.time('Run interoped heapsort')
     const runHeapsort = await state.doString(heapsort)
-    runHeapsort()
+    assert(runHeapsort() === 10)
     console.timeEnd('Run interoped heapsort')
 }
 
 const insertComplexObjects = async () => {
-    const state = await new wasmoon.LuaFactory().createEngine()
+    const lua = await Lua.load()
+    const state = lua.createState()
     const obj1 = {
         hello: 'world',
     }
@@ -77,7 +74,8 @@ const insertComplexObjects = async () => {
 }
 
 const insertComplexObjectsWithoutProxy = async () => {
-    const state = await new wasmoon.LuaFactory().createEngine({
+    const lua = await Lua.load()
+    const state = lua.createState({
         enableProxy: false,
     })
     const obj1 = {
@@ -99,7 +97,8 @@ const insertComplexObjectsWithoutProxy = async () => {
 }
 
 const getComplexObjects = async () => {
-    const state = await new wasmoon.LuaFactory().createEngine()
+    const lua = await Lua.load()
+    const state = lua.createState()
     await state.doString(`
         local obj1 = {
             hello = 'world',
@@ -124,9 +123,8 @@ const getComplexObjects = async () => {
 
 Promise.resolve()
     .then(createFactory)
-    .then(loadWasm)
-    .then(createEngine)
-    .then(createEngineWithoutSuperpowers)
+    .then(createState)
+    .then(createStateWithoutSuperpowers)
     .then(runHeapsort)
     .then(runInteropedHeapsort)
     .then(insertComplexObjects)

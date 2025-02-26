@@ -57,4 +57,6 @@ return function()
             assert(a[i] <= a[i + 1])
         end
     end
+
+    return Num
 end

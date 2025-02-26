@@ -14,10 +14,10 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     public constructor(thread: Global, injectObject: boolean) {
         super(thread, 'js_promise')
 
-        this.gcPointer = thread.lua.module.addFunction((functionStateAddress: LuaState) => {
+        this.gcPointer = thread.lua._emscripten.addFunction((functionStateAddress: LuaState) => {
             // Throws a lua error which does a jump if it does not match.
             const userDataPointer = thread.lua.luaL_checkudata(functionStateAddress, 1, this.name)
-            const referencePointer = thread.lua.module.getValue(userDataPointer, '*')
+            const referencePointer = thread.lua._emscripten.getValue(userDataPointer, '*')
             thread.lua.unref(referencePointer)
 
             return LuaReturn.Ok
@@ -63,7 +63,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                                 promiseResult = { status: 'rejected', value: err }
                             })
 
-                        const continuance = this.thread.lua.module.addFunction((continuanceState: LuaState) => {
+                        const continuance = this.thread.lua._emscripten.addFunction((continuanceState: LuaState) => {
                             // If this yield has been called from within a coroutine and so manually resumed
                             // then there may not yet be any results. In that case yield again.
                             if (!promiseResult) {
@@ -75,7 +75,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                                 return thread.lua.lua_yieldk(functionThread.address, 0, 0, continuance)
                             }
 
-                            this.thread.lua.module.removeFunction(continuance)
+                            this.thread.lua._emscripten.removeFunction(continuance)
 
                             const continuanceThread = thread.stateToThread(continuanceState)
 
@@ -128,7 +128,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     }
 
     public close(): void {
-        this.thread.lua.module.removeFunction(this.gcPointer)
+        this.thread.lua._emscripten.removeFunction(this.gcPointer)
     }
 
     public pushValue(thread: Thread, decoration: Decoration<Promise<T>>): boolean {

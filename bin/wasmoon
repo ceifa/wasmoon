@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { LuaFactory, LuaReturn, LuaType, LUA_MULTRET, decorate } from '../dist/index.js'
+import { Lua, LuaReturn, LuaType, LUA_MULTRET, decorate } from '../dist/index.js'
 import pkg from '../package.json' with { type: 'json' }
 import fs from 'node:fs'
 import readline from 'node:readline'
@@ -128,7 +128,7 @@ const rl = readline.createInterface({
     prompt: '> ',
 })
 
-const factory = new LuaFactory({
+const lua = await Lua.load({
     env: ignoreEnv ? undefined : process.env,
     fs: 'node',
     stdin: () => {
@@ -169,16 +169,15 @@ const factory = new LuaFactory({
     },
 })
 
-const luamodule = await factory.getLuaModule()
-const lua = await factory.createEngine()
+const state = lua.createState()
 
 if (showVersion) {
-    console.log(`wasmoon ${pkg.version} (${lua.global.get('_VERSION')})`)
+    console.log(`wasmoon ${pkg.version} (${state.global.get('_VERSION')})`)
     process.exit(0)
 }
 
 if (warnings) {
-    luamodule.lua_warning(lua.global.address, '@on', 0)
+    lua.module.lua_warning(state.global.address, '@on', 0)
 }
 
 for (const module of includeModules) {
@@ -186,35 +185,35 @@ for (const module of includeModules) {
     if (!mod) {
         mod = global
     }
-    const require = lua.global.get('require')
-    lua.global.set(global, require(mod))
+    const require = state.global.get('require')
+    state.global.set(global, require(mod))
 }
 
 for (const snippet of executeSnippets) {
-    await lua.doString(snippet)
+    await state.doString(snippet)
 }
 
-lua.global.set('arg', decorate(scriptArgs, { disableProxy: true }))
+state.global.set('arg', decorate(scriptArgs, { disableProxy: true }))
 
 const isTTY = process.stdin.isTTY
 
 if (scriptFile === '-') {
     const input = fs.readFileSync(0, 'utf-8')
-    await lua.doString(input)
+    await state.doString(input)
 } else if (scriptFile) {
-    await lua.doFile(scriptFile)
+    await state.doFile(scriptFile)
 }
 
 const shouldInteractive = isTTY && (forceInteractive || (!scriptFile && !executeSnippets.length))
 if (shouldInteractive) {
     // Bypass result verification for interactive mode
     const loadcode = (code) => {
-        lua.global.setTop(0)
-        return luamodule.luaL_loadstring(lua.global.address, code) === LuaReturn.Ok
+        state.global.setTop(0)
+        return lua.module.luaL_loadstring(state.global.address, code) === LuaReturn.Ok
     }
 
     const version = pkg.version
-    const luaversion = lua.global.get('_VERSION')
+    const luaversion = state.global.get('_VERSION')
     console.log(`Welcome to Wasmoon ${version} (${luaversion})`)
     console.log('Type Lua code and press Enter to execute. Ctrl+C to exit.\n')
 
@@ -225,24 +224,24 @@ if (shouldInteractive) {
         const loaded = loadcode(`return ${line}`) || loadcode(line)
         if (!loaded) {
             // Failed to parse
-            const err = lua.global.getValue(-1, LuaType.String)
+            const err = state.global.getValue(-1, LuaType.String)
             console.log(err)
             rl.prompt()
             continue
         }
 
-        const result = luamodule.lua_pcallk(lua.global.address, 0, LUA_MULTRET, 0, 0, null)
+        const result = lua.module.lua_pcallk(state.global.address, 0, LUA_MULTRET, 0, 0, null)
         if (result === LuaReturn.Ok) {
-            const count = lua.global.getTop()
+            const count = state.global.getTop()
             if (count > 0) {
                 const returnValues = []
                 for (let i = 1; i <= count; i++) {
-                    returnValues.push(lua.global.indexToString(i))
+                    returnValues.push(state.global.indexToString(i))
                 }
                 console.log(...returnValues)
             }
         } else {
-            console.log(lua.global.getValue(-1, LuaType.String))
+            console.log(state.global.getValue(-1, LuaType.String))
         }
 
         rl.prompt()
@@ -251,5 +250,5 @@ if (shouldInteractive) {
     // If we're not interactive, and we did NOT run a file,
     // read from stdin until EOF. (Non-TTY or no -i, no file).
     const input = fs.readFileSync(0, 'utf-8')
-    await lua.doString(input)
+    await state.doString(input)
 }

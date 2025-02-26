@@ -1,6 +1,6 @@
 import { CreateEngineOptions } from './types'
 import Global from './global'
-import type LuaWasm from './luawasm'
+import type LuaModule from './module'
 import Thread from './thread'
 import createErrorType from './type-extensions/error'
 import createFunctionType from './type-extensions/function'
@@ -14,7 +14,7 @@ export default class LuaEngine {
     public global: Global
 
     public constructor(
-        private cmodule: LuaWasm,
+        private module: LuaModule,
         {
             openStandardLibs = true,
             injectObjects = false,
@@ -23,7 +23,7 @@ export default class LuaEngine {
             functionTimeout = undefined as number | undefined,
         }: CreateEngineOptions = {},
     ) {
-        this.global = new Global(this.cmodule, traceAllocations)
+        this.global = new Global(this.module, traceAllocations)
 
         // Generic handlers - These may be required to be registered for additional types.
         this.global.registerTypeExtension(0, createTableType(this.global))
@@ -52,7 +52,7 @@ export default class LuaEngine {
         this.global.registerTypeExtension(4, createUserdataType(this.global))
 
         if (openStandardLibs) {
-            this.cmodule.luaL_openlibs(this.global.address)
+            this.module.luaL_openlibs(this.global.address)
         }
     }
 

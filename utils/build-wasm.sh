@@ -20,6 +20,7 @@ emcc \
         'addFunction', \
         'removeFunction', \
         'FS', \
+        'PATH', \
         'ENV', \
         'getValue', \
         'setValue', \

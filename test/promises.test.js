@@ -1,16 +1,16 @@
 import { expect } from 'chai'
-import { getEngine, tick } from './utils.js'
+import { getState, tick } from './utils.js'
 import { mock } from 'node:test'
 
 describe('Promises', () => {
     it('use promise next should succeed', async () => {
-        const engine = await getEngine()
+        const state = await getState()
         const check = mock.fn()
-        engine.global.set('check', check)
+        state.global.set('check', check)
         const promise = new Promise((resolve) => setTimeout(() => resolve(60), 5))
-        engine.global.set('promise', promise)
+        state.global.set('promise', promise)
 
-        const res = engine.doString(`
+        const res = state.doString(`
             promise:next(check)
         `)
 
@@ -21,13 +21,13 @@ describe('Promises', () => {
     })
 
     it('chain promises with next should succeed', async () => {
-        const engine = await getEngine()
+        const state = await getState()
         const check = mock.fn()
-        engine.global.set('check', check)
+        state.global.set('check', check)
         const promise = new Promise((resolve) => resolve(60))
-        engine.global.set('promise', promise)
+        state.global.set('promise', promise)
 
-        const res = engine.doString(`
+        const res = state.doString(`
             promise:next(function(value)
                 return value * 2
             end):next(check):next(check)
@@ -42,12 +42,12 @@ describe('Promises', () => {
     })
 
     it('call an async function should succeed', async () => {
-        const engine = await getEngine()
-        engine.global.set('asyncFunction', async () => Promise.resolve(60))
+        const state = await getState()
+        state.global.set('asyncFunction', async () => Promise.resolve(60))
         const check = mock.fn()
-        engine.global.set('check', check)
+        state.global.set('check', check)
 
-        const res = engine.doString(`
+        const res = state.doString(`
             asyncFunction():next(check)
         `)
 
@@ -57,10 +57,10 @@ describe('Promises', () => {
     })
 
     it('return an async function should succeed', async () => {
-        const engine = await getEngine()
-        engine.global.set('asyncFunction', async () => Promise.resolve(60))
+        const state = await getState()
+        state.global.set('asyncFunction', async () => Promise.resolve(60))
 
-        const asyncFunction = await engine.doString(`
+        const asyncFunction = await state.doString(`
             return asyncFunction
         `)
         const value = await asyncFunction()
@@ -69,10 +69,10 @@ describe('Promises', () => {
     })
 
     it('return a chained promise should succeed', async () => {
-        const engine = await getEngine()
-        engine.global.set('asyncFunction', async () => Promise.resolve(60))
+        const state = await getState()
+        state.global.set('asyncFunction', async () => Promise.resolve(60))
 
-        const asyncFunction = await engine.doString(`
+        const asyncFunction = await state.doString(`
             return asyncFunction():next(function(x) return x * 2 end)
         `)
         const value = await asyncFunction
@@ -81,13 +81,13 @@ describe('Promises', () => {
     })
 
     it('await an promise inside coroutine should succeed', async () => {
-        const engine = await getEngine()
+        const state = await getState()
         const check = mock.fn()
-        engine.global.set('check', check)
+        state.global.set('check', check)
         const promise = new Promise((resolve) => setTimeout(() => resolve(60), 5))
-        engine.global.set('promise', promise)
+        state.global.set('promise', promise)
 
-        const res = engine.doString(`
+        const res = state.doString(`
             local co = coroutine.create(function()
                 local value = promise:await()
                 check(value)
@@ -108,13 +108,13 @@ describe('Promises', () => {
     })
 
     it('awaited coroutines should ignore resume until it resolves the promise', async () => {
-        const engine = await getEngine()
+        const state = await getState()
         const check = mock.fn()
-        engine.global.set('check', check)
+        state.global.set('check', check)
         const promise = new Promise((resolve) => setTimeout(() => resolve(60), 5))
-        engine.global.set('promise', promise)
+        state.global.set('promise', promise)
 
-        const res = engine.doString(`
+        const res = state.doString(`
             local co = coroutine.create(function()
                 local value = promise:await()
                 check(value)
@@ -133,9 +133,9 @@ describe('Promises', () => {
     })
 
     it('await a thread run with async calls should succeed', async () => {
-        const engine = await getEngine()
-        engine.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
-        const asyncThread = engine.global.newThread()
+        const state = await getState()
+        state.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
+        const asyncThread = state.global.newThread()
 
         asyncThread.loadString(`
             sleep(1):await()
@@ -147,9 +147,9 @@ describe('Promises', () => {
     })
 
     it('run thread with async calls and yields should succeed', async () => {
-        const engine = await getEngine()
-        engine.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
-        const asyncThread = engine.global.newThread()
+        const state = await getState()
+        state.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
+        const asyncThread = state.global.newThread()
 
         asyncThread.loadString(`
             coroutine.yield()
@@ -165,9 +165,9 @@ describe('Promises', () => {
     })
 
     it('reject a promise should succeed', async () => {
-        const engine = await getEngine()
-        engine.global.set('throw', () => new Promise((_, reject) => reject(new Error('expected test error'))))
-        const asyncThread = engine.global.newThread()
+        const state = await getState()
+        state.global.set('throw', () => new Promise((_, reject) => reject(new Error('expected test error'))))
+        const asyncThread = state.global.newThread()
 
         asyncThread.loadString(`
             throw():await()
@@ -178,9 +178,9 @@ describe('Promises', () => {
     })
 
     it('pcall a promise await should succeed', async () => {
-        const engine = await getEngine()
-        engine.global.set('throw', () => new Promise((_, reject) => reject(new Error('expected test error'))))
-        const asyncThread = engine.global.newThread()
+        const state = await getState()
+        state.global.set('throw', () => new Promise((_, reject) => reject(new Error('expected test error'))))
+        const asyncThread = state.global.newThread()
 
         asyncThread.loadString(`
             local succeed, err = pcall(function() throw():await() end)
@@ -192,13 +192,13 @@ describe('Promises', () => {
     })
 
     it('catch a promise rejection should succeed', async () => {
-        const engine = await getEngine()
+        const state = await getState()
         const fulfilled = mock.fn()
         const rejected = mock.fn()
-        engine.global.set('handlers', { fulfilled, rejected })
-        engine.global.set('throw', new Promise((_, reject) => reject(new Error('expected test error'))))
+        state.global.set('handlers', { fulfilled, rejected })
+        state.global.set('throw', new Promise((_, reject) => reject(new Error('expected test error'))))
 
-        const res = engine.doString(`
+        const res = state.doString(`
             throw:next(handlers.fulfilled, handlers.rejected):catch(function() end)
         `)
 
@@ -209,10 +209,10 @@ describe('Promises', () => {
     })
 
     it('run with async callback', async () => {
-        const engine = await getEngine()
-        const thread = engine.global.newThread()
+        const state = await getState()
+        const thread = state.global.newThread()
 
-        engine.global.set('asyncCallback', async (input) => {
+        state.global.set('asyncCallback', async (input) => {
             return Promise.resolve(input * 2)
         })
 
@@ -232,8 +232,8 @@ describe('Promises', () => {
     })
 
     it('promise creation from js', async () => {
-        const engine = await getEngine()
-        const res = await engine.doString(`
+        const state = await getState()
+        const res = await state.doString(`
             local promise = Promise.create(function (resolve)
                 resolve(10)
             end)
@@ -248,8 +248,8 @@ describe('Promises', () => {
     })
 
     it('reject promise creation from js', async () => {
-        const engine = await getEngine()
-        const res = await engine.doString(`
+        const state = await getState()
+        const res = await state.doString(`
             local rejection = Promise.create(function (resolve, reject)
                 reject("expected rejection")
             end)
@@ -261,9 +261,9 @@ describe('Promises', () => {
     })
 
     it('resolve multiple promises with promise.all', async () => {
-        const engine = await getEngine()
-        engine.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
-        const resPromise = engine.doString(`
+        const state = await getState()
+        state.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
+        const resPromise = state.doString(`
             local promises = {}
             for i = 1, 10 do
                 table.insert(promises, sleep(5):next(function ()
@@ -278,9 +278,9 @@ describe('Promises', () => {
     })
 
     it('error in promise next catchable', async () => {
-        const engine = await getEngine()
-        engine.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
-        const resPromise = engine.doString(`
+        const state = await getState()
+        state.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
+        const resPromise = state.doString(`
             return sleep(1):next(function ()
                 error("sleep done")
             end):await()
@@ -289,11 +289,11 @@ describe('Promises', () => {
     })
 
     it('should not be possible to await in synchronous run', async () => {
-        const engine = await getEngine()
-        engine.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
+        const state = await getState()
+        state.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
 
         expect(() => {
-            engine.doStringSync(`sleep(5):await()`)
+            state.doStringSync(`sleep(5):await()`)
         }).to.throw('cannot await in the main thread')
     })
 })

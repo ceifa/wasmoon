@@ -1,5 +1,5 @@
 import { Decoration } from './decoration'
-import type LuaWasm from './luawasm'
+import type LuaModule from './module'
 import MultiReturn from './multireturn'
 import { Pointer } from './pointer'
 import LuaTypeExtension from './type-extension'
@@ -26,14 +26,14 @@ const INSTRUCTION_HOOK_COUNT = 1000
 
 export default class Thread {
     public readonly address: LuaState
-    public readonly lua: LuaWasm
+    public readonly lua: LuaModule
     protected readonly typeExtensions: OrderedExtension[]
     private closed = false
     private hookFunctionPointer: number | undefined
     private timeout?: number
     private readonly parent?: Thread
 
-    public constructor(lua: LuaWasm, typeExtensions: OrderedExtension[], address: number, parent?: Thread) {
+    public constructor(lua: LuaModule, typeExtensions: OrderedExtension[], address: number, parent?: Thread) {
         this.lua = lua
         this.typeExtensions = typeExtensions
         this.address = address
@@ -53,14 +53,14 @@ export default class Thread {
     }
 
     public loadString(luaCode: string, name?: string): void {
-        const size = this.lua.module.lengthBytesUTF8(luaCode)
+        const size = this.lua._emscripten.lengthBytesUTF8(luaCode)
         const pointerSize = size + 1
-        const bufferPointer = this.lua.module._malloc(pointerSize)
+        const bufferPointer = this.lua._emscripten._malloc(pointerSize)
         try {
-            this.lua.module.stringToUTF8(luaCode, bufferPointer, pointerSize)
+            this.lua._emscripten.stringToUTF8(luaCode, bufferPointer, pointerSize)
             this.assertOk(this.lua.luaL_loadbufferx(this.address, bufferPointer, size, name ?? bufferPointer, null))
         } finally {
-            this.lua.module._free(bufferPointer)
+            this.lua._emscripten._free(bufferPointer)
         }
     }
 
@@ -69,16 +69,16 @@ export default class Thread {
     }
 
     public resume(argCount = 0): LuaResumeResult {
-        const dataPointer = this.lua.module._malloc(PointerSize)
+        const dataPointer = this.lua._emscripten._malloc(PointerSize)
         try {
-            this.lua.module.setValue(dataPointer, 0, 'i32')
+            this.lua._emscripten.setValue(dataPointer, 0, 'i32')
             const luaResult = this.lua.lua_resume(this.address, null, argCount, dataPointer)
             return {
                 result: luaResult,
-                resultCount: this.lua.module.getValue(dataPointer, 'i32'),
+                resultCount: this.lua._emscripten.getValue(dataPointer, 'i32'),
             }
         } finally {
-            this.lua.module._free(dataPointer)
+            this.lua._emscripten._free(dataPointer)
         }
     }
 
@@ -312,7 +312,7 @@ export default class Thread {
         }
 
         if (this.hookFunctionPointer) {
-            this.lua.module.removeFunction(this.hookFunctionPointer)
+            this.lua._emscripten.removeFunction(this.hookFunctionPointer)
         }
 
         this.closed = true
@@ -322,7 +322,7 @@ export default class Thread {
     public setTimeout(timeout: number | undefined): void {
         if (timeout && timeout > 0) {
             if (!this.hookFunctionPointer) {
-                this.hookFunctionPointer = this.lua.module.addFunction((): void => {
+                this.hookFunctionPointer = this.lua._emscripten.addFunction((): void => {
                     if (Date.now() > timeout) {
                         this.pushValue(new LuaTimeoutError(`thread timeout exceeded`))
                         this.lua.lua_error(this.address)

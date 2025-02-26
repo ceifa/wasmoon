@@ -1,13 +1,23 @@
-import { LuaFactory } from '../dist/index.js'
+import { Lua } from '../dist/index.js'
 import { expect } from 'chai'
 
 describe('Initialization', () => {
-    it('create engine should succeed', async () => {
-        await new LuaFactory().createEngine()
+    it('create state should succeed', async () => {
+        const lua = await Lua.load()
+        lua.createState()
     })
 
-    it('create engine with options should succeed', async () => {
-        await new LuaFactory().createEngine({
+    it('create multiple states should succeed', async () => {
+        const lua = await Lua.load()
+        const state1 = lua.createState()
+        const state2 = lua.createState()
+
+        expect(state1.global.address).to.not.be.equal(state2.global.address)
+    })
+
+    it('create state with options should succeed', async () => {
+        const lua = await Lua.load()
+        lua.createState({
             enableProxy: true,
             injectObjects: true,
             openStandardLibs: true,
@@ -19,9 +29,10 @@ describe('Initialization', () => {
         const env = {
             ENV_TEST: 'test',
         }
-        const engine = await new LuaFactory({ env }).createEngine()
+        const lua = await Lua.load({ env })
+        const state = lua.createState()
 
-        const value = await engine.doString('return os.getenv("ENV_TEST")')
+        const value = await state.doString('return os.getenv("ENV_TEST")')
 
         expect(value).to.be.equal(env.ENV_TEST)
     })
