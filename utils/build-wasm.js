@@ -36,6 +36,14 @@ if (isUnix) {
     }
 }
 
+try {
+    execSync('docker --version', { encoding: 'utf-8' })
+}
+catch (error) {
+    console.error('Docker is not installed or not in your PATH. Please install Docker to build the WASM file.')
+    process.exit(1)
+}
+
 const dockerVolume = `${rootdir}:/wasmoon`
 const command = `docker run --rm -v "${dockerVolume}" emscripten/emsdk /wasmoon/utils/build-wasm.sh ${args.join(' ')}`
 
