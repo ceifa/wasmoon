@@ -1,5 +1,9 @@
 import initWasmModule from '../build/glue.js'
-import { EnvironmentVariables, LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType } from './types'
+import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType } from './types.js'
+// A rolldown plugin will resolve this to the current version on package.json
+import version from 'package-version'
+
+type EnvironmentVariables = Record<string, string | undefined>
 
 interface LuaEmscriptenModule extends EmscriptenModule {
     ccall: typeof ccall
@@ -7,10 +11,21 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     removeFunction: typeof removeFunction
     setValue: typeof setValue
     getValue: typeof getValue
-    FS: typeof FS
+    FS: typeof FS & {
+        mkdirTree: (path: string) => void
+        filesystems: {
+            NODEFS: Emscripten.FileSystemType
+            MEMFS: Emscripten.FileSystemType
+        }
+    }
+    PATH: {
+        dirname: (typeof import('node:path'))['dirname']
+    }
     stringToNewUTF8: typeof allocateUTF8
     lengthBytesUTF8: typeof lengthBytesUTF8
     stringToUTF8: typeof stringToUTF8
+    intArrayFromString: typeof intArrayFromString
+    UTF8ToString: typeof UTF8ToString
     ENV: EnvironmentVariables
     _realloc: (pointer: number, size: number) => number
 }
@@ -20,22 +35,111 @@ interface ReferenceMetadata {
     refCount: number
 }
 
-export default class LuaWasm {
-    public static async initialize(customWasmFileLocation?: string, environmentVariables?: EnvironmentVariables): Promise<LuaWasm> {
+export default class LuaModule {
+    public static async initialize(opts: {
+        wasmFile?: string
+        env?: EnvironmentVariables
+        fs?: 'node' | 'memory'
+        stdin?: () => string
+        stdout?: (content: string) => void
+        stderr?: (content: string) => void
+    }): Promise<LuaModule> {
+        const isBrowser =
+            (typeof window === 'object' && typeof window.document !== 'undefined') ||
+            (typeof self === 'object' && self?.constructor?.name === 'DedicatedWorkerGlobalScope')
+
+        if (opts.wasmFile === undefined && isBrowser) {
+            opts.wasmFile = `https://unpkg.com/wasmoon@${version}/dist/glue.wasm`
+        }
+
+        const fs = !isBrowser && opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:fs') : null
+        const child_process = !isBrowser && opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:child_process') : null
+
         const module: LuaEmscriptenModule = await initWasmModule({
+            print: opts.stdout,
+            printErr: opts.stderr,
             locateFile: (path: string, scriptDirectory: string) => {
-                return customWasmFileLocation || scriptDirectory + path
+                return opts.wasmFile || scriptDirectory + path
             },
             preRun: (initializedModule: LuaEmscriptenModule) => {
-                if (typeof environmentVariables === 'object') {
-                    Object.entries(environmentVariables).forEach(([k, v]) => (initializedModule.ENV[k] = v))
+                if (typeof opts?.env === 'object') {
+                    Object.assign(initializedModule.ENV, opts.env)
+                }
+
+                if (fs && child_process) {
+                    let rootdirs: string[]
+                    if (process.platform === 'win32') {
+                        const stdout = child_process.execSync('wmic logicaldisk get name', { encoding: 'utf8' })
+                        const drives = stdout
+                            .split('\n')
+                            .map((line) => line.trim())
+                            .filter((line) => line && line !== 'Name')
+                            .map((line) => `${line}\\`)
+
+                        rootdirs = []
+                        for (const drive of drives) {
+                            rootdirs.push(
+                                ...fs
+                                    .readdirSync(drive)
+                                    .filter((dir) => !['dev', 'lib', 'proc'].includes(dir))
+                                    .map((dir) => `${drive}${dir}`.replace(/\\|\\\\/g, '/')),
+                            )
+                        }
+                    } else {
+                        rootdirs = fs
+                            .readdirSync('/')
+                            .filter((dir) => !['dev', 'lib', 'proc'].includes(dir))
+                            .map((dir) => `/${dir}`)
+                    }
+
+                    for (const dir of rootdirs) {
+                        try {
+                            const moduleFS = initializedModule.FS
+                            moduleFS.mkdirTree(dir)
+                            moduleFS.mount(moduleFS.filesystems.NODEFS, { root: dir }, dir)
+                        } catch {
+                            // silently fail to mount (generally due to EPERM)
+                        }
+                    }
+
+                    initializedModule.FS.chdir(process.cwd().replace(/\\|\\\\/g, '/'))
+                }
+
+                if (opts.stdin) {
+                    let bufferedInput: number[] | undefined
+                    initializedModule.FS.init(
+                        () => {
+                            if (!opts.stdin) {
+                                throw new Error('stdin is not defined, it was probably mutated from original options')
+                            }
+
+                            if (!bufferedInput) {
+                                const stdin = opts.stdin()
+                                if (typeof stdin === 'string') {
+                                    bufferedInput = initializedModule.intArrayFromString(stdin, true).concat([0])
+                                } else {
+                                    throw new Error('stdin must return a string')
+                                }
+                            }
+
+                            if (bufferedInput.length === 0) {
+                                bufferedInput = undefined
+                                return null
+                            }
+
+                            const item = bufferedInput.shift()
+                            return !item || item === 0 ? null : item
+                        },
+                        null,
+                        null,
+                    )
                 }
             },
         })
-        return new LuaWasm(module)
+        return new LuaModule(module)
     }
 
-    public module: LuaEmscriptenModule
+    public _emscripten: LuaEmscriptenModule
 
     public luaL_checkversion_: (L: LuaState, ver: number, sz: number) => void
     public luaL_getmetafield: (L: LuaState, obj: number, e: string | null) => LuaType
@@ -111,7 +215,7 @@ export default class LuaWasm {
     public lua_tointegerx: (L: LuaState, idx: number, isnum: number | null) => bigint
     public lua_toboolean: (L: LuaState, idx: number) => number
     public lua_tolstring: (L: LuaState, idx: number, len: number | null) => string
-    public lua_rawlen: (L: LuaState, idx: number) => number
+    public lua_rawlen: (L: LuaState, idx: number) => bigint
     public lua_tocfunction: (L: LuaState, idx: number) => number
     public lua_touserdata: (L: LuaState, idx: number) => number
     public lua_tothread: (L: LuaState, idx: number) => LuaState
@@ -198,7 +302,7 @@ export default class LuaWasm {
     private lastRefIndex?: number
 
     public constructor(module: LuaEmscriptenModule) {
-        this.module = module
+        this._emscripten = module
 
         this.luaL_checkversion_ = this.cwrap('luaL_checkversion_', null, ['number', 'number', 'number'])
         this.luaL_getmetafield = this.cwrap('luaL_getmetafield', 'number', ['number', 'number', 'string'])
@@ -436,7 +540,7 @@ export default class LuaWasm {
         const hasStringOrNumber = argTypes.some((argType) => argType === 'string|number')
         if (!hasStringOrNumber) {
             return (...args: any[]) =>
-                this.module.ccall(name, returnType, argTypes as Emscripten.JSType[], args as Emscripten.TypeCompatibleWithC[])
+                this._emscripten.ccall(name, returnType, argTypes as Emscripten.JSType[], args as Emscripten.TypeCompatibleWithC[])
         }
 
         return (...args: any[]) => {
@@ -448,7 +552,7 @@ export default class LuaWasm {
                     } else {
                         // because it will be freed later, this can only be used on functions that lua internally copies the string
                         if (args[i]?.length > 1024) {
-                            const bufferPointer = this.module.stringToNewUTF8(args[i] as string)
+                            const bufferPointer = this._emscripten.stringToNewUTF8(args[i] as string)
                             args[i] = bufferPointer
                             pointersToBeFreed.push(bufferPointer)
                             return 'number'
@@ -461,10 +565,10 @@ export default class LuaWasm {
             })
 
             try {
-                return this.module.ccall(name, returnType, resolvedArgTypes, args as Emscripten.TypeCompatibleWithC[])
+                return this._emscripten.ccall(name, returnType, resolvedArgTypes, args as Emscripten.TypeCompatibleWithC[])
             } finally {
                 for (const pointer of pointersToBeFreed) {
-                    this.module._free(pointer)
+                    this._emscripten._free(pointer)
                 }
             }
         }

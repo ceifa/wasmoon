@@ -22,10 +22,10 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
     public constructor(thread: Global) {
         super(thread, 'js_proxy')
 
-        this.gcPointer = thread.lua.module.addFunction((functionStateAddress: LuaState) => {
+        this.gcPointer = thread.lua._emscripten.addFunction((functionStateAddress: LuaState) => {
             // Throws a lua error which does a jump if it does not match.
             const userDataPointer = thread.lua.luaL_checkudata(functionStateAddress, 1, this.name)
-            const referencePointer = thread.lua.module.getValue(userDataPointer, '*')
+            const referencePointer = thread.lua._emscripten.getValue(userDataPointer, '*')
             thread.lua.unref(referencePointer)
 
             return LuaReturn.Ok
@@ -131,7 +131,7 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
 
     public getValue(thread: Thread, index: number): any {
         const refUserdata = thread.lua.lua_touserdata(thread.address, index)
-        const referencePointer = thread.lua.module.getValue(refUserdata, '*')
+        const referencePointer = thread.lua._emscripten.getValue(refUserdata, '*')
         return thread.lua.getRef(referencePointer)
     }
 
@@ -169,7 +169,7 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
     }
 
     public close(): void {
-        this.thread.lua.module.removeFunction(this.gcPointer)
+        this.thread.lua._emscripten.removeFunction(this.gcPointer)
     }
 }
 

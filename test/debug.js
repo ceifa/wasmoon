@@ -1,10 +1,10 @@
-import { getEngine } from './utils.js'
+import { getState } from './utils.js'
 
 // This file was created as a sandbox to test and debug on vscode
-const engine = await getEngine()
-engine.global.set('potato', {
+const state = await getState()
+state.global.set('potato', {
     test: true,
     hello: ['world'],
 })
-engine.global.get('potato')
-engine.doStringSync('print(potato.hello[1])')
+state.global.get('potato')
+state.doStringSync('print(potato.hello[1])')

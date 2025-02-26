@@ -10,13 +10,13 @@ jobs:
 
         strategy:
             matrix:
-                node-version: [18, 20, 22]
+                node-version: [22]
 
         steps:
             - uses: actions/checkout@v4
               with:
                   submodules: recursive
-            - uses: mymindstorm/setup-emsdk@v12
+            - uses: mymindstorm/setup-emsdk@v14
             - name: Use Node.js ${{ matrix.node-version }}
               uses: actions/setup-node@v4
               with:

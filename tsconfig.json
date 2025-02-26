@@ -1,11 +1,12 @@
 {
     "compilerOptions": {
         "incremental": false,
-        "moduleResolution": "node",
+        "module": "ES2022",
+        "moduleResolution": "Bundler",
         "inlineSources": false,
         "removeComments": false,
         "sourceMap": false,
-        "target": "ES2018",
+        "target": "ES2022",
         "skipLibCheck": true,
         "lib": ["ESNEXT", "DOM"],
         "forceConsistentCasingInFileNames": true,
@@ -16,8 +17,7 @@
         "noUnusedLocals": true,
         "importHelpers": true,
         "strict": true,
-        "resolveJsonModule": true,
-
+        "resolveJsonModule": true
     },
     "include": ["src/**/*", "test/**/*", "bench/**/*", "eslint.config.js"],
     "exclude": ["node_modules"]

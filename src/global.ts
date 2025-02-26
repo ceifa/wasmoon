@@ -1,4 +1,4 @@
-import type LuaWasm from './luawasm'
+import type LuaModule from './module'
 import Thread from './thread'
 import LuaTypeExtension from './type-extension'
 import { LuaLibraries, LuaType } from './types'
@@ -17,18 +17,18 @@ export default class Global extends Thread {
 
     /**
      * Constructs a new Global instance.
-     * @param cmodule - The Lua WebAssembly module.
+     * @param cmodule - The Lua module.
      * @param shouldTraceAllocations - Whether to trace memory allocations.
      */
-    public constructor(cmodule: LuaWasm, shouldTraceAllocations: boolean) {
+    public constructor(cmodule: LuaModule, shouldTraceAllocations: boolean) {
         if (shouldTraceAllocations) {
             const memoryStats: LuaMemoryStats = { memoryUsed: 0 }
-            const allocatorFunctionPointer = cmodule.module.addFunction(
+            const allocatorFunctionPointer = cmodule._emscripten.addFunction(
                 (_userData: number, pointer: number, oldSize: number, newSize: number): number => {
                     if (newSize === 0) {
                         if (pointer) {
                             memoryStats.memoryUsed -= oldSize
-                            cmodule.module._free(pointer)
+                            cmodule._emscripten._free(pointer)
                         }
                         return 0
                     }
@@ -40,7 +40,7 @@ export default class Global extends Thread {
                         return 0
                     }
 
-                    const reallocated = cmodule.module._realloc(pointer, newSize)
+                    const reallocated = cmodule._emscripten._realloc(pointer, newSize)
                     if (reallocated) {
                         memoryStats.memoryUsed = endMemory
                     }
@@ -51,7 +51,7 @@ export default class Global extends Thread {
 
             const address = cmodule.lua_newstate(allocatorFunctionPointer, null)
             if (!address) {
-                cmodule.module.removeFunction(allocatorFunctionPointer)
+                cmodule._emscripten.removeFunction(allocatorFunctionPointer)
                 throw new Error('lua_newstate returned a null pointer')
             }
             super(cmodule, [], address)
@@ -84,7 +84,7 @@ export default class Global extends Thread {
         this.lua.lua_close(this.address)
 
         if (this.allocatorFunctionPointer) {
-            this.lua.module.removeFunction(this.allocatorFunctionPointer)
+            this.lua._emscripten.removeFunction(this.allocatorFunctionPointer)
         }
 
         for (const wrapper of this.typeExtensions) {
@@ -177,7 +177,7 @@ export default class Global extends Thread {
         } finally {
             // +1 for the table
             if (this.getTop() !== startStackTop + 1) {
-                console.warn(`getTable: expected stack size ${startStackTop} got ${this.getTop()}`)
+                console.warn(`getTable: expected stack size ${startStackTop + 1} got ${this.getTop()}`)
             }
             this.setTop(startStackTop)
         }

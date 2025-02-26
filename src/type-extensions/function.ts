@@ -23,14 +23,11 @@ export interface FunctionTypeExtensionOptions {
 }
 
 class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecoration> {
-    private readonly functionRegistry =
-        typeof FinalizationRegistry !== 'undefined'
-            ? new FinalizationRegistry((func: number) => {
-                  if (!this.thread.isClosed()) {
-                      this.thread.lua.luaL_unref(this.thread.address, LUA_REGISTRYINDEX, func)
-                  }
-              })
-            : undefined
+    private readonly functionRegistry = new FinalizationRegistry((func: number) => {
+        if (!this.thread.isClosed()) {
+            this.thread.lua.luaL_unref(this.thread.address, LUA_REGISTRYINDEX, func)
+        }
+    })
 
     private gcPointer: number
     private functionWrapper: number
@@ -53,12 +50,12 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
             console.warn('FunctionTypeExtension: FinalizationRegistry not found. Memory leaks likely.')
         }
 
-        this.gcPointer = thread.lua.module.addFunction((calledL: LuaState) => {
+        this.gcPointer = thread.lua._emscripten.addFunction((calledL: LuaState) => {
             // Throws a lua error which does a jump if it does not match.
             thread.lua.luaL_checkudata(calledL, 1, this.name)
 
             const userDataPointer = thread.lua.luaL_checkudata(calledL, 1, this.name)
-            const referencePointer = thread.lua.module.getValue(userDataPointer, '*')
+            const referencePointer = thread.lua._emscripten.getValue(userDataPointer, '*')
             thread.lua.unref(referencePointer)
 
             return LuaReturn.Ok
@@ -77,11 +74,11 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
         // Pop the metatable from the stack.
         thread.lua.lua_pop(thread.address, 1)
 
-        this.functionWrapper = thread.lua.module.addFunction((calledL: LuaState) => {
+        this.functionWrapper = thread.lua._emscripten.addFunction((calledL: LuaState) => {
             const calledThread = thread.stateToThread(calledL)
 
             const refUserdata = thread.lua.luaL_checkudata(calledL, thread.lua.lua_upvalueindex(1), this.name)
-            const refPointer = thread.lua.module.getValue(refUserdata, '*')
+            const refPointer = thread.lua._emscripten.getValue(refUserdata, '*')
             const { target, options } = thread.lua.getRef(refPointer) as Decoration<FunctionType, FunctionDecoration>
 
             const argsQuantity = calledThread.getTop()
@@ -130,8 +127,8 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
     }
 
     public close(): void {
-        this.thread.lua.module.removeFunction(this.gcPointer)
-        this.thread.lua.module.removeFunction(this.functionWrapper)
+        this.thread.lua._emscripten.removeFunction(this.gcPointer)
+        this.thread.lua._emscripten.removeFunction(this.functionWrapper)
         // Doesn't destroy the Lua thread, just function pointers.
         this.callbackContext.close()
         // Destroy the Lua thread
@@ -154,7 +151,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
         const pointer = thread.lua.ref(decoration)
         // 4 = size of pointer in wasm.
         const userDataPointer = thread.lua.lua_newuserdatauv(thread.address, PointerSize, 0)
-        thread.lua.module.setValue(userDataPointer, pointer, '*')
+        thread.lua._emscripten.setValue(userDataPointer, pointer, '*')
 
         if (LuaType.Nil === thread.lua.luaL_getmetatable(thread.address, this.name)) {
             // Pop the pushed userdata.

@@ -1,8 +1,8 @@
 #!/bin/bash -e
 cd $(dirname $0)
-mkdir -p build
+mkdir -p ../build
 
-LUA_SRC=$(ls ./lua/*.c | grep -v "luac.c" | grep -v "lua.c" | tr "\n" " ")
+LUA_SRC=$(ls ../lua/*.c | grep -v "luac.c" | grep -v "lua.c" | tr "\n" " ")
 
 extension=""
 if [ "$1" == "dev" ];
@@ -13,22 +13,29 @@ else
 fi
 
 emcc \
-    -s WASM=1 $extension -o ./build/glue.js \
+    -lnodefs.js \
+    -s WASM=1 $extension -o ../build/glue.js \
     -s EXPORTED_RUNTIME_METHODS="[
         'ccall', \
         'addFunction', \
         'removeFunction', \
         'FS', \
+        'PATH', \
         'ENV', \
         'getValue', \
         'setValue', \
         'lengthBytesUTF8', \
         'stringToUTF8', \
-        'stringToNewUTF8'
+        'stringToNewUTF8', \
+        'intArrayFromString', \
+        'UTF8ToString', \
+        'HEAPU32'
     ]" \
     -s INCOMING_MODULE_JS_API="[
         'locateFile', \
-        'preRun'
+        'preRun', \
+        'print', \
+        'printErr' \
     ]" \
     -s ENVIRONMENT="web,worker,node" \
     -s MODULARIZE=1 \

@@ -1,11 +1,12 @@
-import { LuaFactory } from '../dist/index.js'
+import { Lua } from '../dist/index.js'
 
-export const getFactory = (env) => {
-    return new LuaFactory(undefined, env)
+export const getLua = (env) => {
+    return Lua.load({ env })
 }
 
-export const getEngine = (config = {}) => {
-    return new LuaFactory().createEngine({
+export const getState = async (config = {}) => {
+    const lua = await Lua.load()
+    return lua.createState({
         injectObjects: true,
         ...config,
     })

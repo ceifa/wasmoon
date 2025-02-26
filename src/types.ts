@@ -1,7 +1,5 @@
 export type LuaState = number
 
-export type EnvironmentVariables = Record<string, string | undefined>
-
 export interface CreateEngineOptions {
     /** Injects all the lua standard libraries (math, coroutine, debug) */
     openStandardLibs?: boolean
