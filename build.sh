@@ -24,6 +24,9 @@ emcc \
         'setValue', \
         'lengthBytesUTF8', \
         'stringToUTF8', \
+        'HEAPU32', \
+        'HEAPU8', \
+        'HEAP8', \
         'stringToNewUTF8'
     ]" \
     -s INCOMING_MODULE_JS_API="[

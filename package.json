@@ -60,6 +60,7 @@
         "typescript-eslint": "8.18.2"
     },
     "dependencies": {
-        "@types/emscripten": "1.39.10"
+        "@types/emscripten": "1.39.10",
+        "isutf8": "^4.0.1"
     }
 }

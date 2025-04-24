@@ -111,6 +111,7 @@ export default class LuaWasm {
     public lua_tointegerx: (L: LuaState, idx: number, isnum: number | null) => bigint
     public lua_toboolean: (L: LuaState, idx: number) => number
     public lua_tolstring: (L: LuaState, idx: number, len: number | null) => string
+    public lua_ptr_tolstring: (L: LuaState, idx: number, len: number | null) => number
     public lua_rawlen: (L: LuaState, idx: number) => number
     public lua_tocfunction: (L: LuaState, idx: number) => number
     public lua_touserdata: (L: LuaState, idx: number) => number
@@ -123,6 +124,7 @@ export default class LuaWasm {
     public lua_pushnumber: (L: LuaState, n: number) => void
     public lua_pushinteger: (L: LuaState, n: bigint) => void
     public lua_pushlstring: (L: LuaState, s: string | number | null, len: number) => string
+    public lua_ptr_pushlstring: (L: LuaState, s: string | number | null, len: number) => number
     public lua_pushstring: (L: LuaState, s: string | number | null) => string
     public lua_pushcclosure: (L: LuaState, fn: number, n: number) => void
     public lua_pushboolean: (L: LuaState, b: number) => void
@@ -268,6 +270,7 @@ export default class LuaWasm {
         this.lua_tointegerx = this.cwrap('lua_tointegerx', 'number', ['number', 'number', 'number'])
         this.lua_toboolean = this.cwrap('lua_toboolean', 'number', ['number', 'number'])
         this.lua_tolstring = this.cwrap('lua_tolstring', 'string', ['number', 'number', 'number'])
+        this.lua_ptr_tolstring = this.cwrap('lua_tolstring', 'number', ['number', 'number', 'number'])
         this.lua_rawlen = this.cwrap('lua_rawlen', 'number', ['number', 'number'])
         this.lua_tocfunction = this.cwrap('lua_tocfunction', 'number', ['number', 'number'])
         this.lua_touserdata = this.cwrap('lua_touserdata', 'number', ['number', 'number'])
@@ -280,6 +283,7 @@ export default class LuaWasm {
         this.lua_pushnumber = this.cwrap('lua_pushnumber', null, ['number', 'number'])
         this.lua_pushinteger = this.cwrap('lua_pushinteger', null, ['number', 'number'])
         this.lua_pushlstring = this.cwrap('lua_pushlstring', 'string', ['number', 'string|number', 'number'])
+        this.lua_ptr_pushlstring = this.cwrap('lua_pushlstring', 'string', ['number', 'string|number', 'number'])
         this.lua_pushstring = this.cwrap('lua_pushstring', 'string', ['number', 'string|number'])
         this.lua_pushcclosure = this.cwrap('lua_pushcclosure', null, ['number', 'number', 'number'])
         this.lua_pushboolean = this.cwrap('lua_pushboolean', null, ['number', 'number'])

@@ -3,6 +3,7 @@ import type LuaWasm from './luawasm'
 import MultiReturn from './multireturn'
 import { Pointer } from './pointer'
 import LuaTypeExtension from './type-extension'
+import isUtf8 from 'isutf8'
 import {
     LUA_MULTRET,
     LuaEventMasks,
@@ -281,7 +282,7 @@ export default class Thread {
             case LuaType.Number:
                 return this.lua.lua_tonumberx(this.address, index, null)
             case LuaType.String:
-                return this.lua.lua_tolstring(this.address, index, null)
+                return this.readStringPtr(index)
             case LuaType.Boolean:
                 return Boolean(this.lua.lua_toboolean(this.address, index))
             case LuaType.Thread:
@@ -412,5 +413,22 @@ export default class Thread {
 
     private getValueDecorations(value: any): Decoration {
         return value instanceof Decoration ? value : new Decoration(value, {})
+    }
+
+    private readStringPtr(index: number): Uint8Array<ArrayBufferLike> | string {
+        const lenPtr = this.lua.module._malloc(PointerSize)
+        const bufferPtr = this.lua.lua_ptr_tolstring(this.address, index, lenPtr)
+        const length = this.lua.module.HEAPU32[lenPtr / Uint32Array.BYTES_PER_ELEMENT]
+        this.lua.module._free(lenPtr)
+
+        const dataView = this.lua.module.HEAPU8.subarray(bufferPtr, bufferPtr + length)
+
+        if (isUtf8(dataView)) {
+            const decoder = new TextDecoder('utf-8')
+            const decodedString = decoder.decode(dataView)
+            return decodedString
+        }
+
+        return dataView
     }
 }
