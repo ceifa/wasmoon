@@ -124,7 +124,6 @@ export default class LuaWasm {
     public lua_pushnumber: (L: LuaState, n: number) => void
     public lua_pushinteger: (L: LuaState, n: bigint) => void
     public lua_pushlstring: (L: LuaState, s: string | number | null, len: number) => string
-    public lua_ptr_pushlstring: (L: LuaState, s: string | number | null, len: number) => number
     public lua_pushstring: (L: LuaState, s: string | number | null) => string
     public lua_pushcclosure: (L: LuaState, fn: number, n: number) => void
     public lua_pushboolean: (L: LuaState, b: number) => void
@@ -283,7 +282,6 @@ export default class LuaWasm {
         this.lua_pushnumber = this.cwrap('lua_pushnumber', null, ['number', 'number'])
         this.lua_pushinteger = this.cwrap('lua_pushinteger', null, ['number', 'number'])
         this.lua_pushlstring = this.cwrap('lua_pushlstring', 'string', ['number', 'string|number', 'number'])
-        this.lua_ptr_pushlstring = this.cwrap('lua_pushlstring', 'string', ['number', 'string|number', 'number'])
         this.lua_pushstring = this.cwrap('lua_pushstring', 'string', ['number', 'string|number'])
         this.lua_pushcclosure = this.cwrap('lua_pushcclosure', null, ['number', 'number', 'number'])
         this.lua_pushboolean = this.cwrap('lua_pushboolean', null, ['number', 'number'])

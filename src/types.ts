@@ -13,6 +13,8 @@ export interface CreateEngineOptions {
     traceAllocations?: boolean
     /** Maximum time in milliseconds a Lua function can run before being interrupted. */
     functionTimeout?: number
+    /** Whether to target lua string as binary data in general, not only UTF encoding, and support byte array as input */
+    binaryString?: boolean
 }
 
 export enum LuaReturn {

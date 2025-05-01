@@ -9,6 +9,8 @@ import createPromiseType from './type-extensions/promise'
 import createProxyType from './type-extensions/proxy'
 import createTableType from './type-extensions/table'
 import createUserdataType from './type-extensions/userdata'
+import createBinaryStringType from './type-extensions/binary-string'
+import createStringType from './type-extensions/string'
 
 export default class LuaEngine {
     public global: Global
@@ -21,9 +23,18 @@ export default class LuaEngine {
             enableProxy = true,
             traceAllocations = false,
             functionTimeout = undefined as number | undefined,
+            binaryString = false,
         }: CreateEngineOptions = {},
     ) {
         this.global = new Global(this.cmodule, traceAllocations)
+
+        // This should be high priority since it is a primitive type.
+        this.global.registerTypeExtension(6, createStringType(this.global))
+
+        if (binaryString) {
+            // This should be higher priority since it is an override for primitive type
+            this.global.registerTypeExtension(7, createBinaryStringType(this.global))
+        }
 
         // Generic handlers - These may be required to be registered for additional types.
         this.global.registerTypeExtension(0, createTableType(this.global))
