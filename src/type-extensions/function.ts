@@ -103,7 +103,9 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
             }
 
             try {
-                const result = target.apply(options?.self, args)
+                let result;
+                if (target.prototype) result = new (target as any)(...args);
+                else result = target.apply(options?.self, args);
 
                 if (result === undefined) {
                     return 0
