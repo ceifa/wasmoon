@@ -717,10 +717,7 @@ describe('Engine', () => {
         expect(res).to.be.equal('1689031554550')
     })
 
-    it('yielding in a JS callback into Lua does not break lua state', async () => {
-        // When yielding within a callback the error 'attempt to yield across a C-call boundary'.
-        // This test just checks that throwing that error still allows the lua global to be
-        // re-used and doesn't cause JS to abort or some nonsense.
+    it('yielding in a JS callback into Lua should succeed', async () => {
         const engine = await getEngine()
         const testEmitter = new EventEmitter()
         engine.global.set('yield', () => new Promise((resolve) => testEmitter.once('resolve', resolve)))
@@ -729,13 +726,11 @@ describe('Engine', () => {
             coroutine.yield()
             return 15
         end)
-        print("res", res:await())
+        return res:await()
       `)
 
         testEmitter.emit('resolve')
-        await expect(resPromise).to.eventually.be.rejectedWith('Error: attempt to yield across a C-call boundary')
-
-        expect(await engine.doString(`return 42`)).to.equal(42)
+        expect(await resPromise).to.equal(15)
     })
 
     it('forced yield within JS callback from Lua doesnt cause vm to crash', async () => {

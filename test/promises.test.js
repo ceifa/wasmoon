@@ -1,3 +1,4 @@
+import { EventEmitter } from 'events'
 import { expect } from 'chai'
 import { getEngine, tick } from './utils.js'
 import { mock } from 'node:test'
@@ -144,6 +145,26 @@ describe('Promises', () => {
 
         const asyncFunctionPromise = asyncThread.run()
         expect(await asyncFunctionPromise).to.be.eql([50])
+    })
+
+    it('await in a Lua function called from a JS callback should succeed', async () => {
+        const engine = await getEngine()
+        const testEmitter = new EventEmitter()
+        const promiseEmitter = new EventEmitter()
+        engine.global.set('promise', new Promise((resolve) => promiseEmitter.once('resolve', resolve)))
+        engine.global.set('yield', () => new Promise((resolve) => testEmitter.once('resolve', resolve)))
+        const resPromise = engine.doString(`
+        local res = yield():next(function ()
+            promise:await()
+            return 20
+        end)
+        return res:await()
+      `)
+
+        testEmitter.emit('resolve')
+        setTimeout(() => promiseEmitter.emit('resolve'), 50)
+
+        expect(await resPromise).to.equal(20)
     })
 
     it('run thread with async calls and yields should succeed', async () => {
