@@ -4,7 +4,7 @@ import MultiReturn from '../multireturn'
 import RawResult from '../raw-result'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from '../types'
+import { LUA_REGISTRYINDEX, LuaResumeResult, LuaReturn, LuaState, LuaType, PointerSize } from '../types'
 
 export interface FunctionDecoration extends BaseDecorationOptions {
     receiveArgsQuantity?: boolean
@@ -211,11 +211,22 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                     callThread.setTimeout(Date.now() + this.options.functionTimeout)
                 }
 
-                const status: LuaReturn = callThread.lua.lua_pcallk(callThread.address, args.length, 1, 0, 0, null)
-                if (status === LuaReturn.Yield) {
-                    throw new Error('cannot yield in callbacks from javascript')
+                const resumeResult: LuaResumeResult = callThread.resume(args.length)
+                if (resumeResult.result === LuaReturn.Yield) {
+                    return new Promise((r, c) => {
+                        callThread
+                            .run(0)
+                            .then(() => {
+                                if (callThread.getTop() > 0) {
+                                    r(callThread.getValue(-1))
+                                    return
+                                }
+                                r(undefined)
+                            })
+                            .catch(c)
+                    })
                 }
-                callThread.assertOk(status)
+                callThread.assertOk(resumeResult.result)
 
                 if (callThread.getTop() > 0) {
                     return callThread.getValue(-1)

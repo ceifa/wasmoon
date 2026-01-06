@@ -190,7 +190,7 @@ npm test # ensure everything it's working fine
 
 ### Promises
 
-Promises can be await'd from Lua with some caveats detailed in the below section. To await a Promise call `:await()` on it which will yield the Lua execution until the promise completes.
+Promises can be await'd from Lua. To await a Promise call `:await()` on it which will yield the Lua execution until the promise completes.
 
 ```js
 const { LuaFactory } = require('wasmoon')
@@ -205,62 +205,4 @@ try {
 } finally {
     lua.global.close()
 }
-```
-
-### Async/Await
-
-It's not possible to await in a callback from JS into Lua. This is a limitation of Lua but there are some workarounds. It can also be encountered when yielding at the top-level of a file. An example where you might encounter this is a snippet like this:
-
-```js
-local res = sleep(1):next(function ()
-    sleep(10):await()
-    return 15
-end)
-print("res", res:await())
-```
-
-Which will throw an error like this:
-
-```
-Error: Lua Error(ErrorRun/2): cannot resume dead coroutine
-    at Thread.assertOk (/home/tstableford/projects/wasmoon/dist/index.js:409:23)
-    at Thread.<anonymous> (/home/tstableford/projects/wasmoon/dist/index.js:142:22)
-    at Generator.throw (<anonymous>)
-    at rejected (/home/tstableford/projects/wasmoon/dist/index.js:26:69)
-```
-
-Or like this:
-
-```
-attempt to yield across a C-call boundary
-```
-
-You can workaround this by doing something like below:
-
-```lua
-function async(callback)
-    return function(...)
-        local co = coroutine.create(callback)
-        local safe, result = coroutine.resume(co, ...)
-
-        return Promise.create(function(resolve, reject)
-            local function step()
-                if coroutine.status(co) == "dead" then
-                    local send = safe and resolve or reject
-                    return send(result)
-                end
-
-                safe, result = coroutine.resume(co)
-
-                if safe and result == Promise.resolve(result) then
-                    result:finally(step)
-                else
-                    step()
-                end
-            end
-
-            result:finally(step)
-        end)
-    end
-end
 ```
