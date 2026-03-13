@@ -28,7 +28,7 @@ class TableTypeExtension extends TypeExtension<TableType> {
         if (!table) {
             const keys = this.readTableKeys(thread, index)
 
-            const isSequential = keys.length > 0 && keys.every((key, index) => key === String(index + 1))
+            const isSequential = keys.length > 0 && keys.every((key, keyIndex) => key === String(keyIndex + 1))
             table = isSequential ? [] : {}
 
             seenMap.set(pointer, table)

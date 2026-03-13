@@ -1,0 +1,13 @@
+{
+    "plugins": ["import", "promise", "node"],
+    "rules": {
+        "no-shadow": "off",
+        "no-extend-native": "off",
+        "consistent-function-scoping": "off",
+        "promise/always-return": "off"
+    },
+    "ignorePatterns": ["dist/**", "build/**", "rolldown.config.ts", "rolldown.config.*.js", "utils/**"],
+    "env": {
+        "builtin": true
+    }
+}

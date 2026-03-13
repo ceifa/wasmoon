@@ -12,11 +12,11 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     setValue: typeof setValue
     getValue: typeof getValue
     FS: typeof FS & {
-        mkdirTree: (path: string) => void
         filesystems: {
             NODEFS: Emscripten.FileSystemType
             MEMFS: Emscripten.FileSystemType
         }
+        mkdirTree: (path: string) => void
     }
     PATH: {
         dirname: (typeof import('node:path'))['dirname']
@@ -56,8 +56,6 @@ export default class LuaModule {
         const child_process = !isBrowser && opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:child_process') : null
 
         const module: LuaEmscriptenModule = await initWasmModule({
-            print: opts.stdout,
-            printErr: opts.stderr,
             locateFile: (path: string, scriptDirectory: string) => {
                 return opts.wasmFile || scriptDirectory + path
             },
@@ -69,7 +67,9 @@ export default class LuaModule {
                 if (fs && child_process) {
                     let rootdirs: string[]
                     if (process.platform === 'win32') {
-                        const stdout = child_process.execSync('wmic logicaldisk get name', { encoding: 'utf8' })
+                        const stdout = child_process.execSync('wmic logicaldisk get name', {
+                            encoding: 'utf8',
+                        })
                         const drives = stdout
                             .split('\n')
                             .map((line) => line.trim())
@@ -105,33 +105,31 @@ export default class LuaModule {
                     initializedModule.FS.chdir(process.cwd().replace(/\\|\\\\/g, '/'))
                 }
 
-                if (opts.stdin) {
+                if (opts.stdin || opts.stdout || opts.stderr) {
                     let bufferedInput: number[] | undefined
                     initializedModule.FS.init(
-                        () => {
-                            if (!opts.stdin) {
-                                throw new Error('stdin is not defined, it was probably mutated from original options')
-                            }
+                        opts.stdin
+                            ? () => {
+                                  if (!bufferedInput) {
+                                      const input = opts.stdin?.()
+                                      if (typeof input === 'string') {
+                                          bufferedInput = initializedModule.intArrayFromString(input, true).concat([0])
+                                      } else {
+                                          throw new Error('stdin must return a string')
+                                      }
+                                  }
 
-                            if (!bufferedInput) {
-                                const stdin = opts.stdin()
-                                if (typeof stdin === 'string') {
-                                    bufferedInput = initializedModule.intArrayFromString(stdin, true).concat([0])
-                                } else {
-                                    throw new Error('stdin must return a string')
-                                }
-                            }
+                                  if (bufferedInput.length === 0) {
+                                      bufferedInput = undefined
+                                      return null
+                                  }
 
-                            if (bufferedInput.length === 0) {
-                                bufferedInput = undefined
-                                return null
-                            }
-
-                            const item = bufferedInput.shift()
-                            return !item || item === 0 ? null : item
-                        },
-                        null,
-                        null,
+                                  const item = bufferedInput.shift()
+                                  return !item || item === 0 ? null : item
+                              }
+                            : null,
+                        createOutputWriter(opts.stdout),
+                        createOutputWriter(opts.stderr),
                     )
                 }
             },
@@ -571,6 +569,25 @@ export default class LuaModule {
                     this._emscripten._free(pointer)
                 }
             }
+        }
+    }
+}
+
+function createOutputWriter(writer?: (content: string) => void): ((charCode: number | null) => void) | null {
+    if (!writer) {
+        return null
+    }
+
+    let buffer = ''
+    return (charCode: number | null): void => {
+        if (charCode === null || charCode === 10) {
+            writer(buffer)
+            buffer = ''
+            return
+        }
+
+        if (charCode !== 13) {
+            buffer += String.fromCharCode(charCode)
         }
     }
 }

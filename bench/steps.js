@@ -47,8 +47,8 @@ const runInteropedHeapsort = async () => {
     const state = lua.createState()
 
     console.time('Run interoped heapsort')
-    const runHeapsort = await state.doString(heapsort)
-    assert(runHeapsort() === 10)
+    const executeHeapsort = await state.doString(heapsort)
+    assert(executeHeapsort() === 10)
     console.timeEnd('Run interoped heapsort')
 }
 

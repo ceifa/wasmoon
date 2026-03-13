@@ -31,6 +31,11 @@ emcc \
         'UTF8ToString', \
         'HEAPU32'
     ]" \
+    -s DEFAULT_LIBRARY_FUNCS_TO_INCLUDE="[
+        '\$FS_mkdirTree', \
+        '\$PATH', \
+        '\$PATH_FS'
+    ]" \
     -s INCOMING_MODULE_JS_API="[
         'locateFile', \
         'preRun', \
@@ -44,8 +49,6 @@ emcc \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s STRICT=1 \
     -s EXPORT_ES6=1 \
-    -s NODEJS_CATCH_EXIT=0 \
-    -s NODEJS_CATCH_REJECTION=0 \
     -s MALLOC=emmalloc \
     -s STACK_SIZE=1MB \
     -s WASM_BIGINT \

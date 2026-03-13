@@ -13,8 +13,8 @@
         "luatests": "node --experimental-import-meta-resolve test/luatests.js",
         "build": "rolldown -c && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",
         "clean": "rm -rf dist build",
-        "lint": "prettier --write . && eslint . --fix --cache",
-        "lint:nofix": "eslint ."
+        "lint": "oxfmt --write . && oxlint --config .oxlintrc.json -D suspicious --import-plugin --node-plugin --promise-plugin --fix .",
+        "lint:nofix": "oxfmt --check . && oxlint --config .oxlintrc.json -D suspicious --import-plugin --node-plugin --promise-plugin ."
     },
     "files": [
         "bin/*",
@@ -40,25 +40,19 @@
         "webassembly"
     ],
     "devDependencies": {
-        "@eslint/js": "9.20.0",
-        "@types/node": "22.13.4",
-        "@typescript-eslint/parser": "8.24.1",
-        "chai": "5.2.0",
-        "chai-as-promised": "8.0.1",
-        "eslint": "9.20.1",
-        "eslint-config-prettier": "10.0.1",
-        "eslint-plugin-prettier": "5.2.3",
-        "eslint-plugin-simple-import-sort": "12.1.1",
-        "fengari": "0.1.4",
-        "mocha": "11.1.0",
-        "prettier": "3.5.1",
-        "rolldown": "1.0.0-beta.3",
+        "@types/node": "25.5.0",
+        "chai": "6.2.2",
+        "chai-as-promised": "8.0.2",
+        "fengari": "0.1.5",
+        "mocha": "11.7.5",
+        "oxfmt": "0.40.0",
+        "oxlint": "1.55.0",
+        "rolldown": "1.0.0-rc.9",
         "rollup-plugin-copy": "3.5.0",
         "tslib": "2.8.1",
-        "typescript": "5.7.3",
-        "typescript-eslint": "8.24.1"
+        "typescript": "5.9.3"
     },
     "dependencies": {
-        "@types/emscripten": "1.40.0"
+        "@types/emscripten": "1.41.5"
     }
 }

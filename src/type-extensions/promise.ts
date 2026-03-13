@@ -58,6 +58,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                         const awaitPromise = self
                             .then((res) => {
                                 promiseResult = { status: 'fulfilled', value: res }
+                                return res
                             })
                             .catch((err) => {
                                 promiseResult = { status: 'rejected', value: err }

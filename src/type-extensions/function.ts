@@ -79,28 +79,28 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
 
             const refUserdata = thread.lua.luaL_checkudata(calledL, thread.lua.lua_upvalueindex(1), this.name)
             const refPointer = thread.lua._emscripten.getValue(refUserdata, '*')
-            const { target, options } = thread.lua.getRef(refPointer) as Decoration<FunctionType, FunctionDecoration>
+            const { target, options: decorationOptions } = thread.lua.getRef(refPointer) as Decoration<FunctionType, FunctionDecoration>
 
             const argsQuantity = calledThread.getTop()
             const args = []
 
-            if (options.receiveThread) {
+            if (decorationOptions.receiveThread) {
                 args.push(calledThread)
             }
 
-            if (options.receiveArgsQuantity) {
+            if (decorationOptions.receiveArgsQuantity) {
                 args.push(argsQuantity)
             } else {
                 for (let i = 1; i <= argsQuantity; i++) {
                     const value = calledThread.getValue(i)
-                    if (i !== 1 || !options?.self || value !== options.self) {
+                    if (i !== 1 || !decorationOptions?.self || value !== decorationOptions.self) {
                         args.push(value)
                     }
                 }
             }
 
             try {
-                const result = target.apply(options?.self, args)
+                const result = target.apply(decorationOptions?.self, args)
 
                 if (result === undefined) {
                     return 0
