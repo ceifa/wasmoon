@@ -28,6 +28,8 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     UTF8ToString: typeof UTF8ToString
     ENV: EnvironmentVariables
     _realloc: (pointer: number, size: number) => number
+    _lua_callk?: (L: LuaState, nargs: number, nresults: number, ctx: number, k: number) => void
+    _lua_pcallk?: (L: LuaState, nargs: number, nresults: number, errfunc: number, ctx: number, k: number) => number
 }
 
 interface ReferenceMetadata {
@@ -330,7 +332,25 @@ export default class LuaModule {
         this.luaL_unref = this.cwrap('luaL_unref', null, ['number', 'number', 'number'])
         this.luaL_loadfilex = this.cwrap('luaL_loadfilex', 'number', ['number', 'string', 'string'])
         this.luaL_loadbufferx = this.cwrap('luaL_loadbufferx', 'number', ['number', 'string|number', 'number', 'string|number', 'string'])
-        this.luaL_loadstring = this.cwrap('luaL_loadstring', 'number', ['number', 'string|number'])
+        const luaLLoadString = this.cwrap('luaL_loadstring', 'number', ['number', 'string|number'])
+        this.luaL_loadstring = (L, s) => {
+            if (typeof s === 'number' || s === null) {
+                return luaLLoadString(L, s)
+            }
+
+            const size = this._emscripten.lengthBytesUTF8(s)
+            if (size <= 1024) {
+                return luaLLoadString(L, s)
+            }
+
+            const bufferPointer = this._emscripten._malloc(size + 1)
+            try {
+                this._emscripten.stringToUTF8(s, bufferPointer, size + 1)
+                return this.luaL_loadbufferx(L, bufferPointer, size, bufferPointer, null)
+            } finally {
+                this._emscripten._free(bufferPointer)
+            }
+        }
         this.luaL_newstate = this.cwrap('luaL_newstate', 'number', [])
         this.luaL_len = this.cwrap('luaL_len', 'number', ['number', 'number'])
         this.luaL_addgsub = this.cwrap('luaL_addgsub', null, ['number', 'string', 'string', 'string'])
@@ -411,8 +431,12 @@ export default class LuaModule {
         this.lua_rawsetp = this.cwrap('lua_rawsetp', null, ['number', 'number', 'number'])
         this.lua_setmetatable = this.cwrap('lua_setmetatable', 'number', ['number', 'number'])
         this.lua_setiuservalue = this.cwrap('lua_setiuservalue', 'number', ['number', 'number', 'number'])
-        this.lua_callk = this.cwrap('lua_callk', null, ['number', 'number', 'number', 'number', 'number'])
-        this.lua_pcallk = this.cwrap('lua_pcallk', 'number', ['number', 'number', 'number', 'number', 'number', 'number'])
+        this.lua_callk = module._lua_callk
+            ? (L, nargs, nresults, ctx, k) => module._lua_callk!(L, nargs, nresults, ctx, k ?? 0)
+            : this.cwrap('lua_callk', null, ['number', 'number', 'number', 'number', 'number'])
+        this.lua_pcallk = module._lua_pcallk
+            ? (L, nargs, nresults, errfunc, ctx, k) => module._lua_pcallk!(L, nargs, nresults, errfunc, ctx, k ?? 0)
+            : this.cwrap('lua_pcallk', 'number', ['number', 'number', 'number', 'number', 'number', 'number'])
         this.lua_load = this.cwrap('lua_load', 'number', ['number', 'number', 'number', 'string', 'string'])
         this.lua_dump = this.cwrap('lua_dump', 'number', ['number', 'number', 'number', 'number'])
         this.lua_yieldk = this.cwrap('lua_yieldk', 'number', ['number', 'number', 'number', 'number'])

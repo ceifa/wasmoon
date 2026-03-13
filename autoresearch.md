@@ -33,4 +33,6 @@ Optimize the Wasmoon runtime path used by the plain heapsort benchmark: load the
 - Avoid benchmark-only cheats that would not help real users
 
 ## What's Been Tried
-- Initial setup only. No experiments yet.
+- Baseline from `./autoresearch.sh`: `14.775872ms` average over 60 iterations / 8 warmup.
+- `src/module.ts`: changed `luaL_loadstring` binding from `['number', 'string']` to `['number', 'string|number']` so large chunks can use the optimized direct-buffer path in `cwrap`. This improved the benchmark to `13.135759ms` (~11.1% faster).
+- Quick profiling notes: state creation cost exists but warmed `createState()` overhead looks much smaller than total benchmark time, so the hottest path appears closer to chunk loading / execution than to engine construction alone.
