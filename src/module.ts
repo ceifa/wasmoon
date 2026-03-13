@@ -330,7 +330,7 @@ export default class LuaModule {
         this.luaL_unref = this.cwrap('luaL_unref', null, ['number', 'number', 'number'])
         this.luaL_loadfilex = this.cwrap('luaL_loadfilex', 'number', ['number', 'string', 'string'])
         this.luaL_loadbufferx = this.cwrap('luaL_loadbufferx', 'number', ['number', 'string|number', 'number', 'string|number', 'string'])
-        this.luaL_loadstring = this.cwrap('luaL_loadstring', 'number', ['number', 'string'])
+        this.luaL_loadstring = this.cwrap('luaL_loadstring', 'number', ['number', 'string|number'])
         this.luaL_newstate = this.cwrap('luaL_newstate', 'number', [])
         this.luaL_len = this.cwrap('luaL_len', 'number', ['number', 'number'])
         this.luaL_addgsub = this.cwrap('luaL_addgsub', null, ['number', 'string', 'string', 'string'])

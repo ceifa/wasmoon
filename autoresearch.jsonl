@@ -1,1 +1,2 @@
 {"type":"config","name":"Reduce Wasmoon heapsort benchmark time","metricName":"wasmoon_heapsort_avg_ms","metricUnit":"ms","bestDirection":"lower"}
+{"run":1,"commit":"0411406","metric":14.775872,"metrics":{},"status":"keep","description":"Baseline: focused heapsort benchmark via autoresearch.sh (build + fresh state + loadstring + execute returned function)","timestamp":1773446121099,"segment":0}
