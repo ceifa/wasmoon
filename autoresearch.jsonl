@@ -1,0 +1,1 @@
+{"type":"config","name":"Reduce Wasmoon heapsort benchmark time","metricName":"wasmoon_heapsort_avg_ms","metricUnit":"ms","bestDirection":"lower"}
