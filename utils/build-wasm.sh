@@ -102,7 +102,7 @@ emcc \
         '_lua_newstate', \
         '_lua_close', \
         '_lua_newthread', \
-        '_lua_resetthread', \
+        '_lua_closethread', \
         '_lua_atpanic', \
         '_lua_version', \
         '_lua_absindex', \
@@ -192,7 +192,6 @@ emcc \
         '_lua_gethook', \
         '_lua_gethookmask', \
         '_lua_gethookcount', \
-        '_lua_setcstacklimit', \
         '_luaopen_base', \
         '_luaopen_coroutine', \
         '_luaopen_table', \
@@ -203,6 +202,6 @@ emcc \
         '_luaopen_math', \
         '_luaopen_debug', \
         '_luaopen_package', \
-        '_luaL_openlibs' \
+        '_luaL_openselectedlibs' \
     ]" \
     ${LUA_SRC}

@@ -36,7 +36,11 @@ export default class Global extends Thread {
                     const endMemoryDelta = pointer ? newSize - oldSize : newSize
                     const endMemory = memoryStats.memoryUsed + endMemoryDelta
 
-                    if (newSize > oldSize && memoryStats.memoryMax && endMemory > memoryStats.memoryMax) {
+                    if (
+                        newSize > oldSize &&
+                        memoryStats.memoryMax &&
+                        endMemory > memoryStats.memoryMax
+                    ) {
                         return 0
                     }
 
@@ -49,7 +53,11 @@ export default class Global extends Thread {
                 'iiiii',
             )
 
-            const address = cmodule.lua_newstate(allocatorFunctionPointer, null)
+            const address = cmodule.lua_newstate(
+                allocatorFunctionPointer,
+                null,
+                ((Date.now() >>> 0) ^ Math.floor(Math.random() * 0x100000000)) >>> 0,
+            )
             if (!address) {
                 cmodule._emscripten.removeFunction(allocatorFunctionPointer)
                 throw new Error('lua_newstate returned a null pointer')
@@ -171,13 +179,17 @@ export default class Global extends Thread {
         const type = this.lua.lua_getglobal(this.address, name)
         try {
             if (type !== LuaType.Table) {
-                throw new TypeError(`Unexpected type in ${name}. Expected ${LuaType[LuaType.Table]}. Got ${LuaType[type]}.`)
+                throw new TypeError(
+                    `Unexpected type in ${name}. Expected ${LuaType[LuaType.Table]}. Got ${LuaType[type]}.`,
+                )
             }
             callback(startStackTop + 1)
         } finally {
             // +1 for the table
             if (this.getTop() !== startStackTop + 1) {
-                console.warn(`getTable: expected stack size ${startStackTop + 1} got ${this.getTop()}`)
+                console.warn(
+                    `getTable: expected stack size ${startStackTop + 1} got ${this.getTop()}`,
+                )
             }
             this.setTop(startStackTop)
         }
@@ -209,7 +221,9 @@ export default class Global extends Thread {
 
     private getMemoryStatsRef(): LuaMemoryStats {
         if (!this.memoryStats) {
-            throw new Error('Memory allocations is not being traced, please build engine with { traceAllocations: true }')
+            throw new Error(
+                'Memory allocations is not being traced, please build engine with { traceAllocations: true }',
+            )
         }
 
         return this.memoryStats

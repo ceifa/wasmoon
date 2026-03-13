@@ -180,6 +180,7 @@ export default class LuaModule {
     public luaL_getsubtable: (L: LuaState, idx: number, fname: string | null) => number
     public luaL_traceback: (L: LuaState, L1: LuaState, msg: string | null, level: number) => void
     public luaL_requiref: (L: LuaState, modname: string | null, openf: number, glb: number) => void
+    public luaL_openselectedlibs: (L: LuaState, load: number, preload: number) => void
     public luaL_buffinit: (L: LuaState, B: number | null) => void
     public luaL_prepbuffsize: (B: number | null, sz: number) => string
     public luaL_addlstring: (B: number | null, s: string | null, l: number) => void
@@ -188,9 +189,10 @@ export default class LuaModule {
     public luaL_pushresult: (B: number | null) => void
     public luaL_pushresultsize: (B: number | null, sz: number) => void
     public luaL_buffinitsize: (L: LuaState, B: number | null, sz: number) => string
-    public lua_newstate: (f: number | null, ud: number | null) => LuaState
+    public lua_newstate: (f: number | null, ud: number | null, seed: number) => LuaState
     public lua_close: (L: LuaState) => void
     public lua_newthread: (L: LuaState) => LuaState
+    public lua_closethread: (L: LuaState, from: LuaState | null) => LuaReturn
     public lua_resetthread: (L: LuaState) => LuaReturn
     public lua_atpanic: (L: LuaState, panicf: number) => number
     public lua_version: (L: LuaState) => number
@@ -281,7 +283,7 @@ export default class LuaModule {
     public lua_gethook: (L: LuaState) => number
     public lua_gethookmask: (L: LuaState) => number
     public lua_gethookcount: (L: LuaState) => number
-    public lua_setcstacklimit: (L: LuaState, limit: number) => number
+    public lua_setcstacklimit: (_L: LuaState, _limit: number) => number
     public luaopen_base: (L: LuaState) => number
     public luaopen_coroutine: (L: LuaState) => number
     public luaopen_table: (L: LuaState) => number
@@ -337,6 +339,7 @@ export default class LuaModule {
         this.luaL_getsubtable = this.cwrap('luaL_getsubtable', 'number', ['number', 'number', 'string'])
         this.luaL_traceback = this.cwrap('luaL_traceback', null, ['number', 'number', 'string', 'number'])
         this.luaL_requiref = this.cwrap('luaL_requiref', null, ['number', 'string', 'number', 'number'])
+        this.luaL_openselectedlibs = this.cwrap('luaL_openselectedlibs', null, ['number', 'number', 'number'])
         this.luaL_buffinit = this.cwrap('luaL_buffinit', null, ['number', 'number'])
         this.luaL_prepbuffsize = this.cwrap('luaL_prepbuffsize', 'string', ['number', 'number'])
         this.luaL_addlstring = this.cwrap('luaL_addlstring', null, ['number', 'string', 'number'])
@@ -345,10 +348,11 @@ export default class LuaModule {
         this.luaL_pushresult = this.cwrap('luaL_pushresult', null, ['number'])
         this.luaL_pushresultsize = this.cwrap('luaL_pushresultsize', null, ['number', 'number'])
         this.luaL_buffinitsize = this.cwrap('luaL_buffinitsize', 'string', ['number', 'number', 'number'])
-        this.lua_newstate = this.cwrap('lua_newstate', 'number', ['number', 'number'])
+        this.lua_newstate = this.cwrap('lua_newstate', 'number', ['number', 'number', 'number'])
         this.lua_close = this.cwrap('lua_close', null, ['number'])
         this.lua_newthread = this.cwrap('lua_newthread', 'number', ['number'])
-        this.lua_resetthread = this.cwrap('lua_resetthread', 'number', ['number'])
+        this.lua_closethread = this.cwrap('lua_closethread', 'number', ['number', 'number'])
+        this.lua_resetthread = (L) => this.lua_closethread(L, null)
         this.lua_atpanic = this.cwrap('lua_atpanic', 'number', ['number', 'number'])
         this.lua_version = this.cwrap('lua_version', 'number', ['number'])
         this.lua_absindex = this.cwrap('lua_absindex', 'number', ['number', 'number'])
@@ -438,7 +442,8 @@ export default class LuaModule {
         this.lua_gethook = this.cwrap('lua_gethook', 'number', ['number'])
         this.lua_gethookmask = this.cwrap('lua_gethookmask', 'number', ['number'])
         this.lua_gethookcount = this.cwrap('lua_gethookcount', 'number', ['number'])
-        this.lua_setcstacklimit = this.cwrap('lua_setcstacklimit', 'number', ['number', 'number'])
+        // Deprecated in Lua 5.5; keep the JS API surface as a no-op compatibility shim.
+        this.lua_setcstacklimit = () => 0
         this.luaopen_base = this.cwrap('luaopen_base', 'number', ['number'])
         this.luaopen_coroutine = this.cwrap('luaopen_coroutine', 'number', ['number'])
         this.luaopen_table = this.cwrap('luaopen_table', 'number', ['number'])
@@ -449,7 +454,7 @@ export default class LuaModule {
         this.luaopen_math = this.cwrap('luaopen_math', 'number', ['number'])
         this.luaopen_debug = this.cwrap('luaopen_debug', 'number', ['number'])
         this.luaopen_package = this.cwrap('luaopen_package', 'number', ['number'])
-        this.luaL_openlibs = this.cwrap('luaL_openlibs', null, ['number'])
+        this.luaL_openlibs = (L) => this.luaL_openselectedlibs(L, -1, 0)
     }
 
     public lua_remove(luaState: LuaState, index: number): void {

@@ -36,7 +36,7 @@ export const PointerSize = 4
 
 export const LUA_MULTRET = -1
 export const LUAI_MAXSTACK = 1000000
-export const LUA_REGISTRYINDEX = -LUAI_MAXSTACK - 1000
+export const LUA_REGISTRYINDEX = -(Math.trunc(0x7fffffff / 2) + 1000)
 
 export enum LuaType {
     None = -1,
