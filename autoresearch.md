@@ -48,4 +48,6 @@ The main user-visible size target is the npm package payload produced by `npm pa
 - Shortening parameter names in public declaration-heavy surfaces (especially `src/module.ts`) produces real tarball wins because those names survive into `.d.ts` files.
 - README swapping did not help; the original README compresses surprisingly well.
 - WASM rebuild experiments are currently noisy/non-comparable in this environment because rebuilding changes `glue.wasm` far more than the checked-in artifact; avoid spending much more loop time there unless the toolchain baseline is reset intentionally.
-- Next likely areas: continue pruning the public TypeScript surface (`module.d.ts`, `thread.d.ts`, `global.d.ts`) without breaking consumers, or find safe additional rolldown output reductions in the main JS bundle.
+- Recent wins continued to come from declaration trimming: shortened public parameter names in `Thread`, `Global`, `Lua`, `LuaEngine`, `LuaTypeExtension`, several published type-extension helpers, and the remaining public `LuaModule` helpers.
+- The declaration-trimming path still works, but gains are now small; keep validating packed-package TypeScript usability because it is easy to create invalid-but-smaller outputs.
+- Next likely areas: safe main-JS bundle reductions in `src/module.ts` / entry exports, or only very targeted additional `.d.ts` trimming where consumer compatibility is clearly preserved.

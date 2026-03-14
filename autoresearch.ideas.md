@@ -1,3 +1,3 @@
-- Continue shrinking the published TypeScript surface now that `@types/emscripten` is gone: target `dist/thread.d.ts`, `dist/global.d.ts`, and the remaining verbose multi-line signatures in `dist/module.d.ts` by shortening parameter names or simplifying non-essential public type detail.
-- Revisit the main JS bundle for safe size reductions in `src/module.ts` / entry exports without changing behavior; focus on code that survives rolldown minification rather than manifest tweaks.
+- Revisit the main JS bundle for safe size reductions in `src/module.ts` / entry exports without changing behavior; declaration-surface wins are still working, but they are now getting quite small.
+- Continue declaration trimming only where it preserves packed-package TypeScript usability; good remaining targets are `dist/module.d.ts` and `dist/thread.d.ts`, but expect diminishing returns.
 - If JS/declaration wins dry up, do a deliberate clean-baseline WASM experiment with a controlled toolchain so wasm-level output-size work becomes comparable again.
