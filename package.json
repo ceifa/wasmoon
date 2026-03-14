@@ -20,9 +20,7 @@
     },
     "files": [
         "bin/*",
-        "dist/index.js",
-        "dist/cli.js",
-        "dist/glue.wasm",
+        "dist/*.{js,wasm}",
         "dist/{decoration,engine,global,index,lua,module,multireturn,pointer,raw-result,thread,type-extension,types}.d.ts",
         "dist/type-extensions/{function,proxy,userdata}.d.ts"
     ],
