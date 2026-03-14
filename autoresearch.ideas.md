@@ -1,0 +1,2 @@
+- Investigate a dedicated internal fast path that batches `luaL_loadstring` + first `lua_callk` into one exported helper on the wasm side. This could remove a JS↔wasm roundtrip, but it touches off-limits C/wasm internals for this session.
+- Investigate Lua/emscripten build-level optimizations (compile flags, LTO, allocator choices) for state creation and bytecode execution. Promising, but also off-limits for this session.

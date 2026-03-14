@@ -1,38 +1,37 @@
-# Autoresearch: reduce Wasmoon heapsort benchmark time
+# Autoresearch: optimize compiled Lua/wasm runtime for Wasmoon heapsort
 
 ## Objective
-Optimize the Wasmoon runtime path used by the plain heapsort benchmark: load the Lua module once, create a fresh state per iteration, load `bench/heapsort.lua`, execute it, and call the returned function. The goal is to reduce average runtime for this benchmark on the current machine.
+Optimize the runtime performance of the compiled Lua WebAssembly build used by Wasmoon on the focused heapsort benchmark. The workload is: build the wasm, bundle the JS bridge, load the Lua module once, create a fresh state per iteration, load `bench/heapsort.lua`, execute it, and call the returned function. The goal is to reduce benchmark runtime without cheating by changing benchmark semantics.
 
 ## Metrics
 - **Primary**: wasmoon_heapsort_avg_ms (ms, lower is better)
-- **Secondary**: wasmoon_heapsort_stddev_ms, iterations, warmup
+- **Secondary**: wasmoon_heapsort_stddev_ms, wasm_build_seconds, glue_wasm_kb, iterations, warmup
 
 ## How to Run
-`./autoresearch.sh` — builds the project, runs a focused benchmark, and prints `METRIC name=value` lines.
+`./autoresearch.sh` — rebuilds the wasm/runtime, rebuilds JS, runs the focused benchmark, and prints `METRIC name=value` lines.
 
 ## Files in Scope
-- `src/module.ts` — JS↔C binding wrappers and helper utilities around `ccall`
-- `src/thread.ts` — stack operations, string loading, execution helpers
-- `src/global.ts` — state creation and global helpers
-- `src/engine.ts` — engine setup and state lifecycle
-- `src/type-extensions/*.ts` — only if profiling suggests extension registration / value conversion overhead matters
-- `bench/heapsort.lua` — benchmark workload, read-only unless a benchmark bug is found
-- `autoresearch.sh` — benchmark driver
-- `autoresearch.md` — session state and findings
-- `autoresearch.ideas.md` — backlog for promising ideas
+- `utils/build-wasm.sh` — emcc flags, exported symbols, runtime settings, allocator, optimization knobs
+- `utils/build-wasm.js` — wasm build launcher / Docker fallback
+- `lua/*.c` / `lua/*.h` — Lua runtime implementation, only for broadly justifiable runtime improvements
+- `rolldown.config.ts` — only if wasm packaging/bundling materially affects runtime loading behavior
+- `src/module.ts` / `src/*.ts` — only if needed to adapt to safe wasm-build changes
+- `autoresearch.sh` — benchmark driver for this session
+- `autoresearch.md` — session context
+- `autoresearch.ideas.md` — deferred ideas
 
 ## Off Limits
-- `lua/` C sources and wasm build artifacts for this session
-- public API behavior changes unless benchmark gains are substantial and correctness is preserved
-- new dependencies
+- Benchmark workload semantics in `bench/heapsort.lua`
+- Fake optimizations that skip work, cache results across iterations, or otherwise cheat the benchmark
+- New dependencies
 
 ## Constraints
 - Keep benchmark semantics the same: fresh state, load heapsort script, execute returned function
-- No new dependencies
-- Prefer simple changes with measurable wins
-- Avoid benchmark-only cheats that would not help real users
+- No benchmark-only cheating or semantic shortcuts
+- Prefer broadly useful speedups over highly workload-specific tricks
+- Avoid changing public API behavior unless clearly safe
 
 ## What's Been Tried
-- Baseline from `./autoresearch.sh`: `14.775872ms` average over 60 iterations / 8 warmup.
-- `src/module.ts`: changed `luaL_loadstring` binding from `['number', 'string']` to `['number', 'string|number']` so large chunks can use the optimized direct-buffer path in `cwrap`. This improved the benchmark to `13.135759ms` (~11.1% faster).
-- Quick profiling notes: state creation cost exists but warmed `createState()` overhead looks much smaller than total benchmark time, so the hottest path appears closer to chunk loading / execution than to engine construction alone.
+- Previous JS-glue-focused session got the benchmark from `14.775872ms` to `11.751988ms` by reducing JS↔wasm overhead (`lua_callk`/`lua_pcallk` raw exports and direct exported `luaL_loadstring`).
+- Profiling after those wins showed the remaining time is dominated by Lua execution itself, so wasm/compiler/runtime changes are now the most promising path.
+- Deferred ideas from the prior session: batched wasm-side helpers and build-level optimization tuning. This session focuses on the latter first.

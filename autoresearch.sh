@@ -1,13 +1,37 @@
 #!/bin/bash
 set -euo pipefail
 
+build_start=$(python3 - <<'PY'
+import time
+print(time.time())
+PY
+)
+
+npm run build:wasm >/dev/null
 npm run build >/dev/null
 
-node --input-type=module <<'EOF'
+build_end=$(python3 - <<'PY'
+import time
+print(time.time())
+PY
+)
+
+wasm_build_seconds=$(python3 - <<PY
+print(round(${build_end} - ${build_start}, 6))
+PY
+)
+
+glue_wasm_kb=$(python3 - <<'PY'
+from pathlib import Path
+print(round(Path('build/glue.wasm').stat().st_size / 1024, 3))
+PY
+)
+
+node --input-type=module <<EOF
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { pathToFileURL } from 'node:url'
 
 const root = process.cwd()
 const heapsort = readFileSync(path.join(root, 'bench', 'heapsort.lua'), 'utf8')
@@ -46,6 +70,8 @@ for (let i = 0; i < iterations; i++) {
 const { avg, stddev } = stats(times)
 console.log(`METRIC wasmoon_heapsort_avg_ms=${avg.toFixed(6)}`)
 console.log(`METRIC wasmoon_heapsort_stddev_ms=${stddev.toFixed(6)}`)
+console.log(`METRIC wasm_build_seconds=${Number(${wasm_build_seconds}).toFixed(6)}`)
+console.log(`METRIC glue_wasm_kb=${Number(${glue_wasm_kb}).toFixed(3)}`)
 console.log(`METRIC iterations=${iterations}`)
 console.log(`METRIC warmup=${warmup}`)
 EOF
