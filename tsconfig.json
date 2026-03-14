@@ -4,7 +4,7 @@
         "module": "ES2022",
         "moduleResolution": "Bundler",
         "inlineSources": false,
-        "removeComments": false,
+        "removeComments": true,
         "sourceMap": false,
         "target": "ES2022",
         "skipLibCheck": true,
