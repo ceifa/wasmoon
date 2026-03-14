@@ -1,1 +1,3 @@
 {"type":"config","name":"Reduce wasmoon wasm size without hurting features/startup/runtime/performance","metricName":"wasm_bytes","metricUnit":"","bestDirection":"lower"}
+{"run":1,"commit":"a6d7bd8","metric":284062,"metrics":{},"status":"keep","description":"Baseline: add autoresearch harness/checks and measure current wasm output size with startup/runtime guardrails","timestamp":1773495979965,"segment":0}
+{"run":2,"commit":"a6d7bd8","metric":375922,"metrics":{},"status":"discard","description":"Try release LTO (-flto) on the emcc build; it significantly increased wasm size despite neutral startup/runtime","timestamp":1773496009236,"segment":0}
