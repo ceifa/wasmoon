@@ -19,12 +19,12 @@
         "postpack": "node utils/restore-package-json.js"
     },
     "files": [
-        "bin/w",
+        "w",
         "dist/*.{js,wasm}",
         "dist/{decoration,engine,global,index,lua,module,multireturn,pointer,raw-result,thread,type-extension,types}.d.ts",
         "dist/type-extensions/{function,proxy,userdata}.d.ts"
     ],
-    "bin": "bin/w",
+    "bin": "w",
     "repository": {
         "type": "git",
         "url": "git+https://github.com/ceifa/wasmoon.git"
