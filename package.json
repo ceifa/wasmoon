@@ -23,21 +23,8 @@
         "dist/index.js",
         "dist/cli.js",
         "dist/glue.wasm",
-        "dist/decoration.d.ts",
-        "dist/engine.d.ts",
-        "dist/global.d.ts",
-        "dist/index.d.ts",
-        "dist/lua.d.ts",
-        "dist/module.d.ts",
-        "dist/multireturn.d.ts",
-        "dist/pointer.d.ts",
-        "dist/raw-result.d.ts",
-        "dist/thread.d.ts",
-        "dist/type-extension.d.ts",
-        "dist/types.d.ts",
-        "dist/type-extensions/function.d.ts",
-        "dist/type-extensions/proxy.d.ts",
-        "dist/type-extensions/userdata.d.ts"
+        "dist/{decoration,engine,global,index,lua,module,multireturn,pointer,raw-result,thread,type-extension,types}.d.ts",
+        "dist/type-extensions/{function,proxy,userdata}.d.ts"
     ],
     "bin": {
         "wasmoon": "bin/wasmoon"
