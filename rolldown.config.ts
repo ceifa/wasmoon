@@ -1,5 +1,6 @@
+import { copyFile } from 'node:fs/promises'
 import { defineConfig } from 'rolldown'
-import copy from 'rollup-plugin-copy'
+import { replacePlugin } from 'rolldown/plugins'
 import pkg from './package.json' with { type: 'json' }
 
 export default defineConfig({
@@ -9,12 +10,12 @@ export default defineConfig({
         format: 'esm',
         sourcemap: true,
     },
-    external: ['module', 'node:fs', 'node:child_process'],
-    define: {
-        // Webpack workaround: https://github.com/webpack/webpack/issues/16878
-        'import.meta': 'Object(import.meta)',
-    },
+    external: ['node:module', 'node:fs', 'node:child_process'],
     plugins: [
+        replacePlugin({
+            // Webpack workaround: https://github.com/webpack/webpack/issues/16878
+            'import.meta': 'Object(import.meta)',
+        }),
         {
             name: 'package-version',
             resolveId(source) {
@@ -28,8 +29,11 @@ export default defineConfig({
                 }
             },
         },
-        copy({
-            targets: [{ src: 'build/glue.wasm', dest: 'dist' }],
-        }),
+        {
+            name: 'copy-glue-wasm',
+            async writeBundle() {
+                await copyFile('build/glue.wasm', 'dist/glue.wasm')
+            },
+        },
     ],
 })

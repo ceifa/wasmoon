@@ -1,62 +1,52 @@
-import { readFileSync } from 'fs'
-import path from 'path'
-import { performance } from 'perf_hooks'
 import { Lua } from '../dist/index.js'
 import fengari from 'fengari'
+import { isMainModule, parseBenchOptions, readBenchAsset, runBenchmarks } from './utils.js'
 
-const heapsort = readFileSync(path.resolve(import.meta.dirname, 'heapsort.lua'), 'utf-8')
+const heapsort = readBenchAsset('heapsort.lua')
 
-function calculateStats(times) {
-    const n = times.length
-    const avg = times.reduce((sum, t) => sum + t, 0) / n
-    const stdDev = Math.sqrt(times.reduce((sum, t) => sum + (t - avg) ** 2, 0) / n)
-    return { avg, stdDev }
-}
-
-async function benchmark(name, iterations, warmup, fn) {
-    console.log(`\nBenchmarking ${name}...`)
-
-    for (let i = 0; i < warmup; i++) {
-        await fn()
-    }
-
-    const times = []
-    for (let i = 0; i < iterations; i++) {
-        const start = performance.now()
-        await fn()
-        const end = performance.now()
-        times.push(end - start)
-    }
-
-    const { avg, stdDev } = calculateStats(times)
-    console.log(`${name}: ${iterations} iterations | avg: ${avg.toFixed(3)} ms | std dev: ${stdDev.toFixed(3)} ms`)
-}
-
-async function benchmarkFengari(iterations, warmup) {
-    function runFengariIteration() {
-        const state = fengari.lauxlib.luaL_newstate()
+function runFengariIteration() {
+    const state = fengari.lauxlib.luaL_newstate()
+    try {
         fengari.lualib.luaL_openlibs(state)
-        fengari.lauxlib.luaL_loadstring(state, fengari.to_luastring(heapsort))
-        fengari.lua.lua_callk(state, 0, 1, 0, null)
-        fengari.lua.lua_callk(state, 0, 0, 0, null)
+        assertStatus(fengari.lauxlib.luaL_loadstring(state, fengari.to_luastring(heapsort)), 'Fengari load')
+        assertStatus(fengari.lua.lua_pcallk(state, 0, 1, 0, 0, null), 'Fengari compile')
+        assertStatus(fengari.lua.lua_pcallk(state, 0, 1, 0, 0, null), 'Fengari execute')
+    } finally {
+        fengari.lua.lua_close(state)
     }
-    await benchmark('Fengari', iterations, warmup, runFengariIteration)
 }
 
-async function benchmarkWasmoon(iterations, warmup) {
-    const lua = await Lua.load()
-
-    async function runWasmoonIteration() {
+function createWasmoonIteration(lua) {
+    return function runWasmoonIteration() {
         const state = lua.createState()
-        state.global.lua.luaL_loadstring(state.global.address, heapsort)
-        state.global.lua.lua_callk(state.global.address, 0, 1, 0, null)
-        state.global.lua.lua_callk(state.global.address, 0, 0, 0, null)
+        try {
+            assertStatus(state.global.lua.luaL_loadstring(state.global.address, heapsort), 'Wasmoon load')
+            assertStatus(state.global.lua.lua_pcallk(state.global.address, 0, 1, 0, 0, null), 'Wasmoon compile')
+            assertStatus(state.global.lua.lua_pcallk(state.global.address, 0, 1, 0, 0, null), 'Wasmoon execute')
+        } finally {
+            state.global.close()
+        }
     }
-    await benchmark('Wasmoon', iterations, warmup, runWasmoonIteration)
 }
 
-const iterations = 100
-const warmup = 10
+function assertStatus(status, label) {
+    if (status !== 0) {
+        throw new Error(`${label} failed with status ${status}`)
+    }
+}
 
-await benchmarkFengari(iterations, warmup)
-await benchmarkWasmoon(iterations, warmup)
+export async function runComparisonBench(options = {}) {
+    const lua = await Lua.load()
+    return runBenchmarks({
+        title: 'Comparison benchmarks',
+        benches: [
+            { name: 'Fengari heapsort', run: runFengariIteration },
+            { name: 'Wasmoon heapsort', run: createWasmoonIteration(lua) },
+        ],
+        options,
+    })
+}
+
+if (isMainModule(import.meta.url)) {
+    await runComparisonBench(parseBenchOptions())
+}

@@ -1,133 +1,133 @@
-import { readFileSync } from 'fs'
-import path from 'path'
 import { Lua } from '../dist/index.js'
-import assert from 'node:assert'
+import assert from 'node:assert/strict'
+import { isMainModule, parseBenchOptions, readBenchAsset, runBenchmarks } from './utils.js'
 
-const heapsort = readFileSync(path.resolve(import.meta.dirname, 'heapsort.lua'), 'utf-8')
+const heapsort = readBenchAsset('heapsort.lua')
+const luaObjectFixture = `
+    local obj1 = {
+        hello = 'world',
+    }
+    obj1.self = obj1
+    local obj2 = {
+        5,
+        hello = 'everybody',
+        array = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
+        fn = function()
+            return 'hello'
+        end,
+    }
+    obj2.self = obj2
+    obj = { obj1, obj2 }
+`
 
-const createFactory = async () => {
-    console.time('Create factory')
-    await Lua.load()
-    console.timeEnd('Create factory')
-}
-
-const createState = async () => {
-    const lua = await Lua.load()
-
-    console.time('Create state')
-    lua.createState()
-    console.timeEnd('Create state')
-}
-
-const createStateWithoutSuperpowers = async () => {
-    const lua = await Lua.load()
-
-    console.time('Create state without superpowers')
-    lua.createState({
-        injectObjects: false,
-        enableProxy: false,
-        openStandardLibs: false,
-    })
-    console.timeEnd('Create state without superpowers')
-}
-
-const runHeapsort = async () => {
-    const lua = await Lua.load()
-    const state = lua.createState()
-
-    console.time('Run plain heapsort')
-    state.global.lua.luaL_loadstring(state.global.address, heapsort)
-    state.global.lua.lua_pcallk(state.global.address, 0, 1, 0, 0, null)
-    state.global.lua.lua_pcallk(state.global.address, 0, 0, 0, 0, null)
-    console.timeEnd('Run plain heapsort')
-}
-
-const runInteropedHeapsort = async () => {
-    const lua = await Lua.load()
-    const state = lua.createState()
-
-    console.time('Run interoped heapsort')
-    const executeHeapsort = await state.doString(heapsort)
-    assert(executeHeapsort() === 10)
-    console.timeEnd('Run interoped heapsort')
-}
-
-const insertComplexObjects = async () => {
-    const lua = await Lua.load()
-    const state = lua.createState()
+function createComplexObjects() {
     const obj1 = {
         hello: 'world',
     }
     obj1.self = obj1
+
     const obj2 = {
         hello: 'everybody',
         array: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        fn: () => {
-            return 'hello'
-        },
+        fn: () => 'hello',
     }
     obj2.self = obj2
 
-    console.time('Insert complex objects')
-    state.global.set('obj', { obj1, obj2 })
-    console.timeEnd('Insert complex objects')
+    return { obj1, obj2 }
 }
 
-const insertComplexObjectsWithoutProxy = async () => {
+function createStateBenchmark(lua, stateOptions = {}) {
+    return function runCreateState() {
+        const state = lua.createState(stateOptions)
+        state.global.close()
+    }
+}
+
+function createRawHeapsortBenchmark(lua) {
+    return function runRawHeapsort() {
+        const state = lua.createState()
+        try {
+            assertStatus(state.global.lua.luaL_loadstring(state.global.address, heapsort), 'Load raw heapsort')
+            assertStatus(state.global.lua.lua_pcallk(state.global.address, 0, 1, 0, 0, null), 'Compile raw heapsort')
+            assertStatus(state.global.lua.lua_pcallk(state.global.address, 0, 1, 0, 0, null), 'Execute raw heapsort')
+        } finally {
+            state.global.close()
+        }
+    }
+}
+
+function createInteropHeapsortBenchmark(lua) {
+    return async function runInteropHeapsort() {
+        const state = lua.createState()
+        try {
+            const executeHeapsort = await state.doString(heapsort)
+            assert.equal(executeHeapsort(), 10)
+        } finally {
+            state.global.close()
+        }
+    }
+}
+
+function createInsertObjectsBenchmark(lua, stateOptions = {}) {
+    return function runInsertObjects() {
+        const state = lua.createState(stateOptions)
+        try {
+            state.global.set('obj', createComplexObjects())
+        } finally {
+            state.global.close()
+        }
+    }
+}
+
+function createGetObjectsBenchmark(lua) {
+    return async function runGetObjects() {
+        const state = lua.createState()
+        try {
+            await state.doString(luaObjectFixture)
+            state.global.get('obj')
+        } finally {
+            state.global.close()
+        }
+    }
+}
+
+function assertStatus(status, label) {
+    if (status !== 0) {
+        throw new Error(`${label} failed with status ${status}`)
+    }
+}
+
+export async function runStepBench(options = {}) {
     const lua = await Lua.load()
-    const state = lua.createState({
-        enableProxy: false,
+
+    return runBenchmarks({
+        title: 'Operation benchmarks',
+        benches: [
+            { name: 'Create factory', run: () => Lua.load() },
+            { name: 'Create state', run: createStateBenchmark(lua) },
+            {
+                name: 'Create state without superpowers',
+                run: createStateBenchmark(lua, {
+                    enableProxy: false,
+                    injectObjects: false,
+                    openStandardLibs: false,
+                }),
+            },
+            { name: 'Run raw heapsort', run: createRawHeapsortBenchmark(lua) },
+            { name: 'Run interoped heapsort', run: createInteropHeapsortBenchmark(lua) },
+            { name: 'Insert complex objects', run: createInsertObjectsBenchmark(lua) },
+            {
+                name: 'Insert complex objects without proxy',
+                run: createInsertObjectsBenchmark(lua, {
+                    enableProxy: false,
+                }),
+            },
+            { name: 'Get complex objects', run: createGetObjectsBenchmark(lua) },
+        ],
+        options,
     })
-    const obj1 = {
-        hello: 'world',
-    }
-    obj1.self = obj1
-    const obj2 = {
-        hello: 'everybody',
-        array: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        fn: () => {
-            return 'hello'
-        },
-    }
-    obj2.self = obj2
-
-    console.time('Insert complex objects without proxy')
-    state.global.set('obj', { obj1, obj2 })
-    console.timeEnd('Insert complex objects without proxy')
 }
 
-const getComplexObjects = async () => {
-    const lua = await Lua.load()
-    const state = lua.createState()
-    await state.doString(`
-        local obj1 = {
-            hello = 'world',
-        }
-        obj1.self = obj1
-        local obj2 = {
-            5,
-            hello = 'everybody',
-            array = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
-            fn = function()
-                return 'hello'
-            end
-        }
-        obj2.self = obj2
-        obj = { obj1, obj2 }
-    `)
-
-    console.time('Get complex objects')
-    state.global.get('obj')
-    console.timeEnd('Get complex objects')
+if (isMainModule(import.meta.url)) {
+    await runStepBench(parseBenchOptions())
 }
-
-Promise.resolve()
-    .then(createFactory)
-    .then(createState)
-    .then(createStateWithoutSuperpowers)
-    .then(runHeapsort)
-    .then(runInteropedHeapsort)
-    .then(insertComplexObjects)
-    .then(insertComplexObjectsWithoutProxy)
-    .then(getComplexObjects)
-    .catch(console.error)
