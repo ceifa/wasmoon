@@ -11,12 +11,20 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     removeFunction: typeof removeFunction
     setValue: typeof setValue
     getValue: typeof getValue
-    FS: typeof FS & {
+    FS: {
         filesystems: {
             NODEFS: Emscripten.FileSystemType
             MEMFS: Emscripten.FileSystemType
         }
         mkdirTree: (path: string) => void
+        mount: (type: Emscripten.FileSystemType, opts: { root: string }, mountpoint: string) => void
+        chdir: (path: string) => void
+        init: (
+            input: (() => number | null) | null,
+            output: ((charCode: number | null) => void) | null,
+            error: ((charCode: number | null) => void) | null,
+        ) => void
+        writeFile: (path: string, content: string | ArrayBufferView) => void
     }
     PATH: {
         dirname: (path: string) => string
