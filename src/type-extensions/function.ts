@@ -14,8 +14,8 @@ export interface FunctionDecoration extends BaseDecorationOptions {
 
 export type FunctionType = (...args: any[]) => Promise<any> | any
 
-export function decorateFunction(target: FunctionType, options: FunctionDecoration): Decoration<FunctionType, FunctionDecoration> {
-    return new Decoration<FunctionType, FunctionDecoration>(target, options)
+export function decorateFunction(t: FunctionType, o: FunctionDecoration): Decoration<FunctionType, FunctionDecoration> {
+    return new Decoration<FunctionType, FunctionDecoration>(t, o)
 }
 
 export interface FunctionTypeExtensionOptions {
@@ -35,51 +35,51 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
     private callbackContextIndex: number
     private options?: FunctionTypeExtensionOptions
 
-    public constructor(thread: Global, options?: FunctionTypeExtensionOptions) {
-        super(thread, 'js_function')
+    public constructor(t: Global, o?: FunctionTypeExtensionOptions) {
+        super(t, 'js_function')
 
-        this.options = options
+        this.options = o
         // Create a thread off of the global thread to be used to create function call threads without
         // interfering with the global context. This creates a callback context that will always exist
         // even if the thread that called getValue() has been destroyed.
-        this.callbackContext = thread.newThread()
+        this.callbackContext = t.newThread()
         // Pops it from the global stack but keeps it alive
-        this.callbackContextIndex = this.thread.lua.luaL_ref(thread.address, LUA_REGISTRYINDEX)
+        this.callbackContextIndex = this.thread.lua.luaL_ref(t.address, LUA_REGISTRYINDEX)
 
         if (!this.functionRegistry) {
             console.warn('FunctionTypeExtension: FinalizationRegistry not found. Memory leaks likely.')
         }
 
-        this.gcPointer = thread.lua._emscripten.addFunction((calledL: LuaState) => {
+        this.gcPointer = t.lua._emscripten.addFunction((calledL: LuaState) => {
             // Throws a lua error which does a jump if it does not match.
-            thread.lua.luaL_checkudata(calledL, 1, this.name)
+            t.lua.luaL_checkudata(calledL, 1, this.name)
 
-            const userDataPointer = thread.lua.luaL_checkudata(calledL, 1, this.name)
-            const referencePointer = thread.lua._emscripten.getValue(userDataPointer, '*')
-            thread.lua.unref(referencePointer)
+            const userDataPointer = t.lua.luaL_checkudata(calledL, 1, this.name)
+            const referencePointer = t.lua._emscripten.getValue(userDataPointer, '*')
+            t.lua.unref(referencePointer)
 
             return LuaReturn.Ok
         }, 'ii')
 
         // Creates metatable if it doesn't exist, always pushes it onto the stack.
-        if (thread.lua.luaL_newmetatable(thread.address, this.name)) {
-            thread.lua.lua_pushstring(thread.address, '__gc')
-            thread.lua.lua_pushcclosure(thread.address, this.gcPointer, 0)
-            thread.lua.lua_settable(thread.address, -3)
+        if (t.lua.luaL_newmetatable(t.address, this.name)) {
+            t.lua.lua_pushstring(t.address, '__gc')
+            t.lua.lua_pushcclosure(t.address, this.gcPointer, 0)
+            t.lua.lua_settable(t.address, -3)
 
-            thread.lua.lua_pushstring(thread.address, '__metatable')
-            thread.lua.lua_pushstring(thread.address, 'protected metatable')
-            thread.lua.lua_settable(thread.address, -3)
+            t.lua.lua_pushstring(t.address, '__metatable')
+            t.lua.lua_pushstring(t.address, 'protected metatable')
+            t.lua.lua_settable(t.address, -3)
         }
         // Pop the metatable from the stack.
-        thread.lua.lua_pop(thread.address, 1)
+        t.lua.lua_pop(t.address, 1)
 
-        this.functionWrapper = thread.lua._emscripten.addFunction((calledL: LuaState) => {
-            const calledThread = thread.stateToThread(calledL)
+        this.functionWrapper = t.lua._emscripten.addFunction((calledL: LuaState) => {
+            const calledThread = t.stateToThread(calledL)
 
-            const refUserdata = thread.lua.luaL_checkudata(calledL, thread.lua.lua_upvalueindex(1), this.name)
-            const refPointer = thread.lua._emscripten.getValue(refUserdata, '*')
-            const { target, options: decorationOptions } = thread.lua.getRef(refPointer) as Decoration<FunctionType, FunctionDecoration>
+            const refUserdata = t.lua.luaL_checkudata(calledL, t.lua.lua_upvalueindex(1), this.name)
+            const refPointer = t.lua._emscripten.getValue(refUserdata, '*')
+            const { target, options: decorationOptions } = t.lua.getRef(refPointer) as Decoration<FunctionType, FunctionDecoration>
 
             const argsQuantity = calledThread.getTop()
             const args = []
@@ -135,12 +135,12 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
         this.callbackContext.lua.luaL_unref(this.callbackContext.address, LUA_REGISTRYINDEX, this.callbackContextIndex)
     }
 
-    public isType(_thread: Thread, _index: number, type: LuaType): boolean {
-        return type === LuaType.Function
+    public isType(_t: Thread, _i: number, t: LuaType): boolean {
+        return t === LuaType.Function
     }
 
-    public pushValue(thread: Thread, decoration: Decoration<FunctionType, FunctionDecoration>): boolean {
-        if (typeof decoration.target !== 'function') {
+    public pushValue(t: Thread, d: Decoration<FunctionType, FunctionDecoration>): boolean {
+        if (typeof d.target !== 'function') {
             return false
         }
 
@@ -148,33 +148,33 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
         // function which stays solely in JS. The cfunction called from Lua is created at the top of the class
         // and it accesses the JS data through an upvalue.
 
-        const pointer = thread.lua.ref(decoration)
+        const pointer = t.lua.ref(d)
         // 4 = size of pointer in wasm.
-        const userDataPointer = thread.lua.lua_newuserdatauv(thread.address, PointerSize, 0)
-        thread.lua._emscripten.setValue(userDataPointer, pointer, '*')
+        const userDataPointer = t.lua.lua_newuserdatauv(t.address, PointerSize, 0)
+        t.lua._emscripten.setValue(userDataPointer, pointer, '*')
 
-        if (LuaType.Nil === thread.lua.luaL_getmetatable(thread.address, this.name)) {
+        if (LuaType.Nil === t.lua.luaL_getmetatable(t.address, this.name)) {
             // Pop the pushed userdata.
-            thread.pop(1)
-            thread.lua.unref(pointer)
+            t.pop(1)
+            t.lua.unref(pointer)
             throw new Error(`metatable not found: ${this.name}`)
         }
 
         // Set as the metatable for the function.
         // -1 is the metatable, -2 is the userdata
-        thread.lua.lua_setmetatable(thread.address, -2)
+        t.lua.lua_setmetatable(t.address, -2)
 
         // Pass 1 to associate the closure with the userdata, pops the userdata.
-        thread.lua.lua_pushcclosure(thread.address, this.functionWrapper, 1)
+        t.lua.lua_pushcclosure(t.address, this.functionWrapper, 1)
 
         return true
     }
 
-    public getValue(thread: Thread, index: number): FunctionType {
+    public getValue(t: Thread, i: number): FunctionType {
         // Create a copy of the function
-        thread.lua.lua_pushvalue(thread.address, index)
+        t.lua.lua_pushvalue(t.address, i)
         // Create a reference to the function which pops it from the stack
-        const func = thread.lua.luaL_ref(thread.address, LUA_REGISTRYINDEX)
+        const func = t.lua.luaL_ref(t.address, LUA_REGISTRYINDEX)
 
         const jsFunc = (...args: any[]): any => {
             // Calling a function would ideally be in the Lua context that's calling it. For example if the JS function
@@ -232,8 +232,8 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
 }
 
 export default function createTypeExtension(
-    thread: Global,
-    options?: FunctionTypeExtensionOptions,
+    t: Global,
+    o?: FunctionTypeExtensionOptions,
 ): TypeExtension<FunctionType, FunctionDecoration> {
-    return new FunctionTypeExtension(thread, options)
+    return new FunctionTypeExtension(t, o)
 }

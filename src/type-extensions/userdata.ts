@@ -8,57 +8,57 @@ export interface UserdataDecorationOptions extends BaseDecorationOptions {
     reference?: boolean
 }
 
-export function decorateUserdata(target: unknown): Decoration<any, UserdataDecorationOptions> {
-    return new Decoration<any, UserdataDecorationOptions>(target, { reference: true })
+export function decorateUserdata(t: unknown): Decoration<any, UserdataDecorationOptions> {
+    return new Decoration<any, UserdataDecorationOptions>(t, { reference: true })
 }
 
 class UserdataTypeExtension extends TypeExtension<any, UserdataDecorationOptions> {
     private readonly gcPointer: number
 
-    public constructor(thread: Global) {
-        super(thread, 'js_userdata')
+    public constructor(t: Global) {
+        super(t, 'js_userdata')
 
-        this.gcPointer = thread.lua._emscripten.addFunction((functionStateAddress: LuaState) => {
+        this.gcPointer = t.lua._emscripten.addFunction((s: LuaState) => {
             // Throws a lua error which does a jump if it does not match.
-            const userDataPointer = thread.lua.luaL_checkudata(functionStateAddress, 1, this.name)
-            const referencePointer = thread.lua._emscripten.getValue(userDataPointer, '*')
-            thread.lua.unref(referencePointer)
+            const userDataPointer = t.lua.luaL_checkudata(s, 1, this.name)
+            const referencePointer = t.lua._emscripten.getValue(userDataPointer, '*')
+            t.lua.unref(referencePointer)
 
             return LuaReturn.Ok
         }, 'ii')
 
-        if (thread.lua.luaL_newmetatable(thread.address, this.name)) {
-            const metatableIndex = thread.lua.lua_gettop(thread.address)
+        if (t.lua.luaL_newmetatable(t.address, this.name)) {
+            const metatableIndex = t.lua.lua_gettop(t.address)
 
             // Mark it as uneditable
-            thread.lua.lua_pushstring(thread.address, 'protected metatable')
-            thread.lua.lua_setfield(thread.address, metatableIndex, '__metatable')
+            t.lua.lua_pushstring(t.address, 'protected metatable')
+            t.lua.lua_setfield(t.address, metatableIndex, '__metatable')
 
             // Add the gc function
-            thread.lua.lua_pushcclosure(thread.address, this.gcPointer, 0)
-            thread.lua.lua_setfield(thread.address, metatableIndex, '__gc')
+            t.lua.lua_pushcclosure(t.address, this.gcPointer, 0)
+            t.lua.lua_setfield(t.address, metatableIndex, '__gc')
         }
 
         // Pop the metatable from the stack.
-        thread.lua.lua_pop(thread.address, 1)
+        t.lua.lua_pop(t.address, 1)
     }
 
-    public isType(_thread: Thread, _index: number, type: LuaType, name?: string): boolean {
-        return type === LuaType.Userdata && name === this.name
+    public isType(_t: Thread, _i: number, t: LuaType, n?: string): boolean {
+        return t === LuaType.Userdata && n === this.name
     }
 
-    public getValue(thread: Thread, index: number): any {
-        const refUserdata = thread.lua.lua_touserdata(thread.address, index)
-        const referencePointer = thread.lua._emscripten.getValue(refUserdata, '*')
-        return thread.lua.getRef(referencePointer)
+    public getValue(t: Thread, i: number): any {
+        const refUserdata = t.lua.lua_touserdata(t.address, i)
+        const referencePointer = t.lua._emscripten.getValue(refUserdata, '*')
+        return t.lua.getRef(referencePointer)
     }
 
-    public pushValue(thread: Thread, decoratedValue: Decoration<any, UserdataDecorationOptions>): boolean {
-        if (!decoratedValue.options.reference) {
+    public pushValue(t: Thread, d: Decoration<any, UserdataDecorationOptions>): boolean {
+        if (!d.options.reference) {
             return false
         }
 
-        return super.pushValue(thread, decoratedValue)
+        return super.pushValue(t, d)
     }
 
     public close(): void {
@@ -66,6 +66,6 @@ class UserdataTypeExtension extends TypeExtension<any, UserdataDecorationOptions
     }
 }
 
-export default function createTypeExtension(thread: Global): TypeExtension<Error> {
-    return new UserdataTypeExtension(thread)
+export default function createTypeExtension(t: Global): TypeExtension<Error> {
+    return new UserdataTypeExtension(t)
 }
