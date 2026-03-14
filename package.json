@@ -20,7 +20,7 @@
     },
     "files": [
         "w",
-        "dist/**/*"
+        "dist/**"
     ],
     "bin": "w",
     "repository": {
