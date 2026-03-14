@@ -13,8 +13,7 @@ writeFileSync(
         main: pkg.main,
         types: pkg.types,
         bin: pkg.bin,
-        license: pkg.license,
         dependencies: pkg.dependencies,
         files: pkg.files,
-    }) + '\n',
+    }),
 )
