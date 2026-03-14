@@ -44,6 +44,8 @@ The main user-visible size target is the npm package payload produced by `npm pa
 - The CLI now ships as a tiny launcher plus a separately minified bundled asset (`w` -> `dist/w.js`), which was materially smaller than shipping the raw CLI source.
 - Publishing a trimmed runtime-only `package.json` via `prepack`/`postpack` is a valid win; minifying that generated manifest and shortening internal paths helped a little more.
 - Best recent path: delete non-public declaration artifacts after build, then simplify `package.json` to publish just `w` and `dist`.
+- Replaced the published `@types/emscripten` dependency with a tiny local ambient declaration file. Important caveat discovered during the loop: declaration-size wins can silently break packed TypeScript consumers, so `autoresearch.checks.sh` now includes a packed-package typecheck smoke test.
+- Shortening parameter names in public declaration-heavy surfaces (especially `src/module.ts`) produces real tarball wins because those names survive into `.d.ts` files.
 - README swapping did not help; the original README compresses surprisingly well.
 - WASM rebuild experiments are currently noisy/non-comparable in this environment because rebuilding changes `glue.wasm` far more than the checked-in artifact; avoid spending much more loop time there unless the toolchain baseline is reset intentionally.
-- Next likely areas: carefully pruning the public TypeScript surface (especially `module.d.ts`) without breaking consumers, or finding safe additional rolldown output reductions in the main JS bundle.
+- Next likely areas: continue pruning the public TypeScript surface (`module.d.ts`, `thread.d.ts`, `global.d.ts`) without breaking consumers, or find safe additional rolldown output reductions in the main JS bundle.

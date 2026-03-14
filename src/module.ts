@@ -3,9 +3,9 @@ import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType } from './types.js'
 // A rolldown plugin will resolve this to the current version on package.json
 import version from 'package-version'
 
-type EnvironmentVariables = Record<string, string | undefined>
+type E = Record<string, string | undefined>
 
-interface LuaEmscriptenModule extends EmscriptenModule {
+interface M extends EmscriptenModule {
     ccall: typeof ccall
     addFunction: typeof addFunction
     removeFunction: typeof removeFunction
@@ -34,7 +34,7 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     stringToUTF8: typeof stringToUTF8
     intArrayFromString: typeof intArrayFromString
     UTF8ToString: typeof UTF8ToString
-    ENV: EnvironmentVariables
+    ENV: E
     _realloc: (pointer: number, size: number) => number
 }
 
@@ -46,7 +46,7 @@ interface ReferenceMetadata {
 export default class LuaModule {
     public static async initialize(opts: {
         wasmFile?: string
-        env?: EnvironmentVariables
+        env?: E
         fs?: 'node' | 'memory'
         stdin?: () => string
         stdout?: (content: string) => void
@@ -63,11 +63,11 @@ export default class LuaModule {
         const fs = !isBrowser && opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:fs') : null
         const child_process = !isBrowser && opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:child_process') : null
 
-        const module: LuaEmscriptenModule = await initWasmModule({
+        const module: M = await initWasmModule({
             locateFile: (path: string, scriptDirectory: string) => {
                 return opts.wasmFile || scriptDirectory + path
             },
-            preRun: (initializedModule: LuaEmscriptenModule) => {
+            preRun: (initializedModule: M) => {
                 if (typeof opts?.env === 'object') {
                     Object.assign(initializedModule.ENV, opts.env)
                 }
@@ -145,7 +145,7 @@ export default class LuaModule {
         return new LuaModule(module)
     }
 
-    public _emscripten: LuaEmscriptenModule
+    public _emscripten: M
 
     public luaL_checkversion_: (a: LuaState, b: number, c: number) => void
     public luaL_getmetafield: (a: LuaState, b: number, c: string | null) => LuaType
@@ -309,7 +309,7 @@ export default class LuaModule {
     private availableReferences: number[] = []
     private lastRefIndex?: number
 
-    public constructor(module: LuaEmscriptenModule) {
+    public constructor(module: M) {
         this._emscripten = module
 
         this.luaL_checkversion_ = this.cwrap('luaL_checkversion_', null, ['number', 'number', 'number'])
