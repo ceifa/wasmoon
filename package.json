@@ -11,7 +11,7 @@
         "start": "rolldown -w -c",
         "test": "mocha --parallel --require ./test/boot.js test/*.test.js",
         "luatests": "node --experimental-import-meta-resolve test/luatests.js",
-        "build": "rolldown -c --minify && rolldown src/cli.js --file dist/cli.js --format esm --platform node --minify --external ./index.js --external ../package.json --external node:fs --external node:readline && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",
+        "build": "rolldown -c --minify && rolldown -c rolldown.cli.config.ts --minify && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",
         "clean": "rm -rf dist build",
         "lint": "oxfmt --write . && oxlint --config .oxlintrc.json -D suspicious --import-plugin --node-plugin --promise-plugin --fix .",
         "lint:nofix": "oxfmt --check . && oxlint --config .oxlintrc.json -D suspicious --import-plugin --node-plugin --promise-plugin .",

@@ -1,5 +1,5 @@
 import { Lua, LuaReturn, LuaType, LUA_MULTRET, decorate } from './index.js'
-import pkg from '../package.json' with { type: 'json' }
+import version from 'package-version'
 import fs from 'node:fs'
 import readline from 'node:readline'
 
@@ -97,7 +97,7 @@ const lua = await Lua.load({
 const state = lua.createState()
 const global = state.global
 if (showVersion) {
-    console.log(`wasmoon ${pkg.version} (${global.get('_VERSION')})`)
+    console.log(`wasmoon ${version} (${global.get('_VERSION')})`)
     process.exit(0)
 }
 if (warnings) lua.module.lua_warning(global.address, '@on', 0)
@@ -120,7 +120,7 @@ if (process.stdin.isTTY && (forceInteractive || (!scriptFile && executeSnippets.
         return lua.module.luaL_loadstring(global.address, code) === LuaReturn.Ok
     }
 
-    console.log(`Welcome to Wasmoon ${pkg.version} (${global.get('_VERSION')})`)
+    console.log(`Welcome to Wasmoon ${version} (${global.get('_VERSION')})`)
     console.log('Type Lua code and press Enter to execute. Ctrl+C to exit.\n')
     rl.prompt()
 
