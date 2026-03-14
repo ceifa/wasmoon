@@ -30,6 +30,7 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     _realloc: (pointer: number, size: number) => number
     _lua_callk?: (L: LuaState, nargs: number, nresults: number, ctx: number, k: number) => void
     _lua_pcallk?: (L: LuaState, nargs: number, nresults: number, errfunc: number, ctx: number, k: number) => number
+    _luaL_loadstring?: (L: LuaState, s: number) => LuaReturn
 }
 
 interface ReferenceMetadata {
@@ -332,25 +333,21 @@ export default class LuaModule {
         this.luaL_unref = this.cwrap('luaL_unref', null, ['number', 'number', 'number'])
         this.luaL_loadfilex = this.cwrap('luaL_loadfilex', 'number', ['number', 'string', 'string'])
         this.luaL_loadbufferx = this.cwrap('luaL_loadbufferx', 'number', ['number', 'string|number', 'number', 'string|number', 'string'])
-        const luaLLoadString = this.cwrap('luaL_loadstring', 'number', ['number', 'string|number'])
-        this.luaL_loadstring = (L, s) => {
-            if (typeof s === 'number' || s === null) {
-                return luaLLoadString(L, s)
-            }
+        const luaLLoadString = module._luaL_loadstring
+            ? (L: LuaState, s: string | number | null) => {
+                  if (typeof s === 'number' || s === null) {
+                      return module._luaL_loadstring!(L, s ?? 0)
+                  }
 
-            const size = this._emscripten.lengthBytesUTF8(s)
-            if (size <= 1024) {
-                return luaLLoadString(L, s)
-            }
-
-            const bufferPointer = this._emscripten._malloc(size + 1)
-            try {
-                this._emscripten.stringToUTF8(s, bufferPointer, size + 1)
-                return this.luaL_loadbufferx(L, bufferPointer, size, bufferPointer, null)
-            } finally {
-                this._emscripten._free(bufferPointer)
-            }
-        }
+                  const bufferPointer = this._emscripten.stringToNewUTF8(s)
+                  try {
+                      return module._luaL_loadstring!(L, bufferPointer)
+                  } finally {
+                      this._emscripten._free(bufferPointer)
+                  }
+              }
+            : this.cwrap('luaL_loadstring', 'number', ['number', 'string|number'])
+        this.luaL_loadstring = (L, s) => luaLLoadString(L, s)
         this.luaL_newstate = this.cwrap('luaL_newstate', 'number', [])
         this.luaL_len = this.cwrap('luaL_len', 'number', ['number', 'number'])
         this.luaL_addgsub = this.cwrap('luaL_addgsub', null, ['number', 'string', 'string', 'string'])
