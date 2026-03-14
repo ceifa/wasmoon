@@ -27,7 +27,7 @@ print(round(Path('build/glue.wasm').stat().st_size / 1024, 3))
 PY
 )
 
-node --input-type=module <<EOF
+WASMOON_WASM_BUILD_SECONDS="$wasm_build_seconds" WASMOON_GLUE_WASM_KB="$glue_wasm_kb" node --input-type=module <<'EOF'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
@@ -70,8 +70,8 @@ for (let i = 0; i < iterations; i++) {
 const { avg, stddev } = stats(times)
 console.log(`METRIC wasmoon_heapsort_avg_ms=${avg.toFixed(6)}`)
 console.log(`METRIC wasmoon_heapsort_stddev_ms=${stddev.toFixed(6)}`)
-console.log(`METRIC wasm_build_seconds=${Number(${wasm_build_seconds}).toFixed(6)}`)
-console.log(`METRIC glue_wasm_kb=${Number(${glue_wasm_kb}).toFixed(3)}`)
+console.log(`METRIC wasm_build_seconds=${Number(process.env.WASMOON_WASM_BUILD_SECONDS).toFixed(6)}`)
+console.log(`METRIC glue_wasm_kb=${Number(process.env.WASMOON_GLUE_WASM_KB).toFixed(3)}`)
 console.log(`METRIC iterations=${iterations}`)
 console.log(`METRIC warmup=${warmup}`)
 EOF
