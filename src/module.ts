@@ -19,7 +19,7 @@ interface LuaEmscriptenModule extends EmscriptenModule {
         mkdirTree: (path: string) => void
     }
     PATH: {
-        dirname: (typeof import('node:path'))['dirname']
+        dirname: (path: string) => string
     }
     stringToNewUTF8: typeof allocateUTF8
     lengthBytesUTF8: typeof lengthBytesUTF8
