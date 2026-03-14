@@ -40,6 +40,8 @@ The working assumption is that build-time/link-time/compiler flags and packaging
 - Switching the release wasm build from `-O3` to `-Oz` was a strong win: `wasm_bytes=198273` and `wasm_gzip_bytes=95031`, while startup improved and representative runtime stayed effectively flat in the current harness.
 - Adding `-fno-inline-functions` on top of `-Oz` produced another small win: `wasm_bytes=197352`, `wasm_gzip_bytes=95007`, with startup and heapsort still within noise in the current harness.
 - A structurally different follow-up also paid off: running Binaryen `wasm-opt --all-features -Oz` as an explicit post-link pass reduced the kept build further to `wasm_bytes=197058`, `wasm_gzip_bytes=94893`, while checks passed and secondary metrics stayed acceptable.
+- Refining that post-link step to `wasm-opt --all-features -Oz --gufa-optimizing` shaved off a bit more, reaching `wasm_bytes=196984`, `wasm_gzip_bytes=94796`, again with checks passing and secondary metrics staying acceptable.
 - `-Os` was re-checked after the inlining change and remained clearly worse than `-Oz`.
+- Additional post-link Binaryen refinements (strip metadata sections; duplicate-function/merge-similar/vacuum passes) did not improve on the kept Binaryen result.
 - Most small compiler toggles tried after the `-Oz` switch (`ASSERTIONS=0`, visibility/vectorization/constant-merging/auto-library toggles) were neutral on wasm size.
-- Next likely levers: safe post-link Binaryen pass refinements and, separately, any explicit decision about whether the very broad exported Lua C API surface is all contractual.
+- Next likely levers: only larger-scope decisions, especially whether the very broad exported Lua C API surface is all contractual, or whether packaging can diverge by environment without hurting users.

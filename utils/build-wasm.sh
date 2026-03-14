@@ -209,5 +209,5 @@ emcc \
     ${LUA_SRC}
 
 if [ -x "$WASM_OPT" ] && [ "$1" != "dev" ]; then
-    "$WASM_OPT" --all-features -Oz ../build/glue.wasm -o ../build/glue.wasm
+    "$WASM_OPT" --all-features -Oz --gufa-optimizing ../build/glue.wasm -o ../build/glue.wasm
 fi
