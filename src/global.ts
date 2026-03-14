@@ -20,15 +20,15 @@ export default class Global extends Thread {
      * @param cmodule - The Lua module.
      * @param shouldTraceAllocations - Whether to trace memory allocations.
      */
-    public constructor(cmodule: LuaModule, shouldTraceAllocations: boolean) {
-        if (shouldTraceAllocations) {
+    public constructor(m: LuaModule, t: boolean) {
+        if (t) {
             const memoryStats: LuaMemoryStats = { memoryUsed: 0 }
-            const allocatorFunctionPointer = cmodule._emscripten.addFunction(
+            const allocatorFunctionPointer = m._emscripten.addFunction(
                 (_userData: number, pointer: number, oldSize: number, newSize: number): number => {
                     if (newSize === 0) {
                         if (pointer) {
                             memoryStats.memoryUsed -= oldSize
-                            cmodule._emscripten._free(pointer)
+                            m._emscripten._free(pointer)
                         }
                         return 0
                     }
@@ -44,7 +44,7 @@ export default class Global extends Thread {
                         return 0
                     }
 
-                    const reallocated = cmodule._emscripten._realloc(pointer, newSize)
+                    const reallocated = m._emscripten._realloc(pointer, newSize)
                     if (reallocated) {
                         memoryStats.memoryUsed = endMemory
                     }
@@ -53,21 +53,21 @@ export default class Global extends Thread {
                 'iiiii',
             )
 
-            const address = cmodule.lua_newstate(
+            const address = m.lua_newstate(
                 allocatorFunctionPointer,
                 null,
                 ((Date.now() >>> 0) ^ Math.floor(Math.random() * 0x100000000)) >>> 0,
             )
             if (!address) {
-                cmodule._emscripten.removeFunction(allocatorFunctionPointer)
+                m._emscripten.removeFunction(allocatorFunctionPointer)
                 throw new Error('lua_newstate returned a null pointer')
             }
-            super(cmodule, [], address)
+            super(m, [], address)
 
             this.memoryStats = memoryStats
             this.allocatorFunctionPointer = allocatorFunctionPointer
         } else {
-            super(cmodule, [], cmodule.luaL_newstate())
+            super(m, [], m.luaL_newstate())
         }
 
         if (this.isClosed()) {
@@ -107,8 +107,8 @@ export default class Global extends Thread {
      * @param priority - Priority of the type extension.
      * @param extension - The type extension to register.
      */
-    public registerTypeExtension(priority: number, extension: LuaTypeExtension<unknown>): void {
-        this.typeExtensions.push({ extension, priority })
+    public registerTypeExtension(p: number, e: LuaTypeExtension<unknown>): void {
+        this.typeExtensions.push({ extension: e, priority: p })
         this.typeExtensions.sort((a, b) => b.priority - a.priority)
     }
 
@@ -116,8 +116,8 @@ export default class Global extends Thread {
      * Loads a default Lua library.
      * @param library - The Lua library to load.
      */
-    public loadLibrary(library: LuaLibraries): void {
-        switch (library) {
+    public loadLibrary(l: LuaLibraries): void {
+        switch (l) {
             case LuaLibraries.Base:
                 this.lua.luaopen_base(this.address)
                 break
@@ -149,7 +149,7 @@ export default class Global extends Thread {
                 this.lua.luaopen_package(this.address)
                 break
         }
-        this.lua.lua_setglobal(this.address, library)
+        this.lua.lua_setglobal(this.address, l)
     }
 
     /**
@@ -157,8 +157,8 @@ export default class Global extends Thread {
      * @param name - The name of the global variable.
      * @returns - The value of the global variable.
      */
-    public get(name: string): any {
-        const type = this.lua.lua_getglobal(this.address, name)
+    public get(n: string): any {
+        const type = this.lua.lua_getglobal(this.address, n)
         const value = this.getValue(-1, type)
         this.pop()
         return value
@@ -169,21 +169,21 @@ export default class Global extends Thread {
      * @param name - The name of the global variable.
      * @param value - The value to set for the global variable.
      */
-    public set(name: string, value: unknown): void {
-        this.pushValue(value)
-        this.lua.lua_setglobal(this.address, name)
+    public set(n: string, v: unknown): void {
+        this.pushValue(v)
+        this.lua.lua_setglobal(this.address, n)
     }
 
-    public getTable(name: string, callback: (index: number) => void): void {
+    public getTable(n: string, c: (i: number) => void): void {
         const startStackTop = this.getTop()
-        const type = this.lua.lua_getglobal(this.address, name)
+        const type = this.lua.lua_getglobal(this.address, n)
         try {
             if (type !== LuaType.Table) {
                 throw new TypeError(
-                    `Unexpected type in ${name}. Expected ${LuaType[LuaType.Table]}. Got ${LuaType[type]}.`,
+                    `Unexpected type in ${n}. Expected ${LuaType[LuaType.Table]}. Got ${LuaType[type]}.`,
                 )
             }
-            callback(startStackTop + 1)
+            c(startStackTop + 1)
         } finally {
             // +1 for the table
             if (this.getTop() !== startStackTop + 1) {
@@ -215,8 +215,8 @@ export default class Global extends Thread {
      * Sets the maximum memory allowed for the Lua engine. Can only be used if the state was created with the `traceAllocations` option set to true.
      * @param max - The maximum memory allowed in bytes, or undefined for unlimited.
      */
-    public setMemoryMax(max: number | undefined): void {
-        this.getMemoryStatsRef().memoryMax = max
+    public setMemoryMax(m: number | undefined): void {
+        this.getMemoryStatsRef().memoryMax = m
     }
 
     private getMemoryStatsRef(): LuaMemoryStats {
