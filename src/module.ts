@@ -175,13 +175,7 @@ export default class LuaModule {
     public luaL_ref: (a: LuaState, b: number) => number
     public luaL_unref: (a: LuaState, b: number, c: number) => void
     public luaL_loadfilex: (a: LuaState, b: S, c: S) => LuaReturn
-    public luaL_loadbufferx: (
-        L: LuaState,
-        buff: SN,
-        sz: number,
-        name: SN,
-        mode: S,
-    ) => LuaReturn
+    public luaL_loadbufferx: (a: LuaState, b: SN, c: number, d: SN, e: S) => LuaReturn
     public luaL_loadstring: (a: LuaState, b: S) => LuaReturn
     public luaL_newstate: () => LuaState
     public luaL_len: (a: LuaState, b: number) => number
@@ -545,44 +539,40 @@ export default class LuaModule {
         }
     }
 
-    private cwrap(
-        name: string,
-        returnType: Emscripten.JSType | null,
-        argTypes: Array<Emscripten.JSType | 'string|number'>,
-    ): (...args: any[]) => any {
+    private cwrap(n: string, r: Emscripten.JSType | null, t: Array<Emscripten.JSType | 'string|number'>): (...a: any[]) => any {
         // optimization for common case
-        const hasStringOrNumber = argTypes.some((argType) => argType === 'string|number')
-        if (!hasStringOrNumber) {
-            return (...args: any[]) =>
-                this._emscripten.ccall(name, returnType, argTypes as Emscripten.JSType[], args as Emscripten.TypeCompatibleWithC[])
+        const s = t.some((x) => x === 'string|number')
+        if (!s) {
+            return (...a: any[]) =>
+                this._emscripten.ccall(n, r, t as Emscripten.JSType[], a as Emscripten.TypeCompatibleWithC[])
         }
 
-        return (...args: any[]) => {
-            const pointersToBeFreed: number[] = []
-            const resolvedArgTypes: Emscripten.JSType[] = argTypes.map((argType, i) => {
-                if (argType === 'string|number') {
-                    if (typeof args[i] === 'number') {
+        return (...a: any[]) => {
+            const f: number[] = []
+            const y: Emscripten.JSType[] = t.map((x, i) => {
+                if (x === 'string|number') {
+                    if (typeof a[i] === 'number') {
                         return 'number'
                     } else {
                         // because it will be freed later, this can only be used on functions that lua internally copies the string
-                        if (args[i]?.length > 1024) {
-                            const bufferPointer = this._emscripten.stringToNewUTF8(args[i] as string)
-                            args[i] = bufferPointer
-                            pointersToBeFreed.push(bufferPointer)
+                        if (a[i]?.length > 1024) {
+                            const p = this._emscripten.stringToNewUTF8(a[i] as string)
+                            a[i] = p
+                            f.push(p)
                             return 'number'
                         } else {
                             return 'string'
                         }
                     }
                 }
-                return argType
+                return x
             })
 
             try {
-                return this._emscripten.ccall(name, returnType, resolvedArgTypes, args as Emscripten.TypeCompatibleWithC[])
+                return this._emscripten.ccall(n, r, y, a as Emscripten.TypeCompatibleWithC[])
             } finally {
-                for (const pointer of pointersToBeFreed) {
-                    this._emscripten._free(pointer)
+                for (const p of f) {
+                    this._emscripten._free(p)
                 }
             }
         }
