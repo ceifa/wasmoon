@@ -717,6 +717,25 @@ describe('State', () => {
         expect(res).to.be.equal('1689031554550')
     })
 
+    it('64-bit integers pushed through the raw Lua API should keep integer semantics', async () => {
+        const state = await getState()
+        const value = 9223372036854775807n
+
+        state.global.lua.lua_pushinteger(state.global.address, value)
+        state.global.lua.lua_setglobal(state.global.address, 'value')
+
+        const asString = await state.doString(`return tostring(value)`)
+        const asFormatted = await state.doString(`return ("%d"):format(value)`)
+
+        state.global.lua.lua_getglobal(state.global.address, 'value')
+        const roundTrip = state.global.lua.lua_tointegerx(state.global.address, -1, null)
+        state.global.pop()
+
+        expect(asString).to.be.equal('9223372036854775807')
+        expect(asFormatted).to.be.equal('9223372036854775807')
+        expect(roundTrip).to.be.equal(value)
+    })
+
     it('yielding in a JS callback into Lua does not break lua state', async () => {
         // When yielding within a callback the error 'attempt to yield across a C-call boundary'.
         // This test just checks that throwing that error still allows the lua global to be
