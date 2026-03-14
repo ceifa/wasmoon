@@ -41,7 +41,9 @@ The main user-visible size target is the npm package payload produced by `npm pa
 - Keep only declaration files reachable from the public API; internal unreferenced `.d.ts` files were safe to drop.
 - `tsconfig.json` with `removeComments: true` shrank published declarations further.
 - `rolldown -c --minify` is a strong win for `dist/index.js` size; extra rolldown flags tried so far were neutral or unsupported in this version.
-- Compacting `bin/wasmoon` yields small but real tarball wins with no benchmark regressions.
-- Publishing a trimmed runtime-only `package.json` via `prepack`/`postpack` is a valid win.
+- The CLI now ships as a tiny launcher plus a separately minified bundled asset (`w` -> `dist/w.js`), which was materially smaller than shipping the raw CLI source.
+- Publishing a trimmed runtime-only `package.json` via `prepack`/`postpack` is a valid win; minifying that generated manifest and shortening internal paths helped a little more.
+- Best recent path: delete non-public declaration artifacts after build, then simplify `package.json` to publish just `w` and `dist`.
+- README swapping did not help; the original README compresses surprisingly well.
 - WASM rebuild experiments are currently noisy/non-comparable in this environment because rebuilding changes `glue.wasm` far more than the checked-in artifact; avoid spending much more loop time there unless the toolchain baseline is reset intentionally.
-- Next likely areas: publish-time README reduction, further declaration-surface cleanup that preserves the public API, or JS bundle reductions in `src/module.ts` / entry exports.
+- Next likely areas: carefully pruning the public TypeScript surface (especially `module.d.ts`) without breaking consumers, or finding safe additional rolldown output reductions in the main JS bundle.

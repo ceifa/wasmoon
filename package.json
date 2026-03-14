@@ -52,7 +52,5 @@
         "tslib": "2.8.1",
         "typescript": "5.9.3"
     },
-    "dependencies": {
-        "@types/emscripten": "1.41.5"
-    }
+    "dependencies": {}
 }
