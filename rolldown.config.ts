@@ -7,7 +7,7 @@ export default defineConfig({
     output: {
         file: 'dist/index.js',
         format: 'esm',
-        sourcemap: true,
+        sourcemap: false,
     },
     external: ['module', 'node:fs', 'node:child_process'],
     define: {

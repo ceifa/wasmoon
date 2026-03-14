@@ -1,1 +1,2 @@
 {"type":"config","name":"Reduce wasmoon published output size while preserving runtime","metricName":"tarball_kb","metricUnit":"kb","bestDirection":"lower"}
+{"run":1,"commit":"7f24521","metric":220.513,"metrics":{},"status":"keep","description":"Baseline: package tarball size from npm pack dry-run after build, with heapsort runtime guard and npm test checks","timestamp":1773452209987,"segment":1}
