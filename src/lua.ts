@@ -15,14 +15,14 @@ export default class Lua {
      * @param opts.stdout - Standard output for the Lua engine.
      * @param opts.stderr - Standard error for the Lua engine.
      */
-    public static async load(luaModuleOpts: Parameters<typeof LuaModule.initialize>[0] = {}): Promise<Lua> {
-        return new Lua(await LuaModule.initialize(luaModuleOpts))
+    public static async load(o: Parameters<typeof LuaModule.initialize>[0] = {}): Promise<Lua> {
+        return new Lua(await LuaModule.initialize(o))
     }
 
     public constructor(public readonly module: LuaModule) {}
 
-    public createState(stateOpts: CreateEngineOptions = {}): LuaEngine {
-        return new LuaEngine(this.module, stateOpts)
+    public createState(o: CreateEngineOptions = {}): LuaEngine {
+        return new LuaEngine(this.module, o)
     }
 
     /**
@@ -30,10 +30,10 @@ export default class Lua {
      * @param path - Path to the file in the Lua environment.
      * @param content - Content of the file to be mounted.
      */
-    public mountFile(path: string, content: string | ArrayBufferView): void {
-        const dirname = this.module._emscripten.PATH.dirname(path)
-        this.module._emscripten.FS.mkdirTree(dirname)
-        this.module._emscripten.FS.writeFile(path, content)
+    public mountFile(p: string, c: string | ArrayBufferView): void {
+        const d = this.module._emscripten.PATH.dirname(p)
+        this.module._emscripten.FS.mkdirTree(d)
+        this.module._emscripten.FS.writeFile(p, c)
     }
 
     public get filesystem(): typeof this.module._emscripten.FS {

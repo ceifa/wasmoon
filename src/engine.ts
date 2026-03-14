@@ -61,8 +61,8 @@ export default class LuaEngine {
      * @param script - Lua script to execute.
      * @returns A Promise that resolves to the result returned by the Lua script execution.
      */
-    public doString(script: string): Promise<any> {
-        return this.callByteCode((thread) => thread.loadString(script))
+    public doString(s: string): Promise<any> {
+        return this.callByteCode((t) => t.loadString(s))
     }
 
     /**
@@ -70,8 +70,8 @@ export default class LuaEngine {
      * @param filename - Path to the Lua script file.
      * @returns - A Promise that resolves to the result returned by the Lua script execution.
      */
-    public doFile(filename: string): Promise<any> {
-        return this.callByteCode((thread) => thread.loadFile(filename))
+    public doFile(f: string): Promise<any> {
+        return this.callByteCode((t) => t.loadFile(f))
     }
 
     /**
@@ -79,8 +79,8 @@ export default class LuaEngine {
      * @param script - Lua script to execute.
      * @returns - The result returned by the Lua script.
      */
-    public doStringSync(script: string): any {
-        this.global.loadString(script)
+    public doStringSync(s: string): any {
+        this.global.loadString(s)
         const result = this.global.runSync()
         return result[0]
     }
@@ -90,29 +90,29 @@ export default class LuaEngine {
      * @param filename - Path to the Lua script file.
      * @returns - The result returned by the Lua script.
      */
-    public doFileSync(filename: string): any {
-        this.global.loadFile(filename)
+    public doFileSync(f: string): any {
+        this.global.loadFile(f)
         const result = this.global.runSync()
         return result[0]
     }
 
     // WARNING: It will not wait for open handles and can potentially cause bugs if JS code tries to reference Lua after executed
-    private async callByteCode(loader: (thread: Thread) => void): Promise<any> {
-        const thread = this.global.newThread()
-        const threadIndex = this.global.getTop()
+    private async callByteCode(l: (t: Thread) => void): Promise<any> {
+        const t = this.global.newThread()
+        const i = this.global.getTop()
         try {
-            loader(thread)
-            const result = await thread.run(0)
-            if (result.length > 0) {
+            l(t)
+            const r = await t.run(0)
+            if (r.length > 0) {
                 // The shenanigans here are to return the first result value on the stack.
                 // Say there's 2 values at stack indexes 1 and 2. Then top is 2, result.length is 2.
                 // That's why there's a + 1 sitting at the end.
-                return thread.getValue(thread.getTop() - result.length + 1)
+                return t.getValue(t.getTop() - r.length + 1)
             }
             return undefined
         } finally {
             // Pop the read on success or failure
-            this.global.remove(threadIndex)
+            this.global.remove(i)
         }
     }
 }
