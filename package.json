@@ -14,7 +14,9 @@
         "build": "rolldown -c --minify && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",
         "clean": "rm -rf dist build",
         "lint": "oxfmt --write . && oxlint --config .oxlintrc.json -D suspicious --import-plugin --node-plugin --promise-plugin --fix .",
-        "lint:nofix": "oxfmt --check . && oxlint --config .oxlintrc.json -D suspicious --import-plugin --node-plugin --promise-plugin ."
+        "lint:nofix": "oxfmt --check . && oxlint --config .oxlintrc.json -D suspicious --import-plugin --node-plugin --promise-plugin .",
+        "prepack": "node utils/prepare-package-json.js",
+        "postpack": "node utils/restore-package-json.js"
     },
     "files": [
         "bin/*",
