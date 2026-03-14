@@ -1,0 +1,1 @@
+{"type":"config","name":"Reduce wasmoon wasm size without hurting features/startup/runtime/performance","metricName":"wasm_bytes","metricUnit":"","bestDirection":"lower"}
