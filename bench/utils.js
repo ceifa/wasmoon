@@ -166,13 +166,16 @@ function printResults(results) {
     ])
 
     const headers = ['benchmark', 'avg', 'median', 'min', 'max', 'stddev', 'relative']
-    const widths = headers.map((header, columnIndex) =>
-        Math.max(header.length, ...rows.map((row) => row[columnIndex].length)),
-    )
+    const widths = headers.map((header, columnIndex) => Math.max(header.length, ...rows.map((row) => row[columnIndex].length)))
 
     console.log('')
     console.log(formatRow(headers, widths))
-    console.log(formatRow(widths.map((width) => '-'.repeat(width)), widths))
+    console.log(
+        formatRow(
+            widths.map((width) => '-'.repeat(width)),
+            widths,
+        ),
+    )
     for (const row of rows) {
         console.log(formatRow(row, widths))
     }

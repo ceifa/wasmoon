@@ -9,19 +9,19 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v4
+              uses: actions/checkout@v6
               with:
                   submodules: recursive
 
             - name: Setup EMSDK
               uses: mymindstorm/setup-emsdk@v14
               with:
-                  version: 4.0.1
+                  version: 5.0.2
 
-            - name: Use Node.js 22.x
-              uses: actions/setup-node@v4
+            - name: Use Node.js 24.x
+              uses: actions/setup-node@v6
               with:
-                  node-version: 22.x
+                  node-version: 24.x
 
             - name: Install dependencies
               run: npm ci
@@ -42,7 +42,7 @@ jobs:
               run: npm run luatests
 
             - name: Upload build artifact
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: build-artifact
                   path: |
@@ -57,10 +57,10 @@ jobs:
         needs: build
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v4
+              uses: actions/checkout@v6
 
             - name: Download build artifact
-              uses: actions/download-artifact@v4
+              uses: actions/download-artifact@v8
               with:
                   name: build-artifact
                   path: build-artifact

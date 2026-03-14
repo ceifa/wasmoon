@@ -74,17 +74,18 @@ $: ./sum.lua 10 30
 
 ## When to use wasmoon and fengari
 
-Wasmoon compiles the [official Lua code](https://github.com/lua/lua) to webassembly and creates an abstraction layer to interop between Lua and JS, instead of [fengari](https://github.com/fengari-lua/fengari), that is an entire Lua VM rewritten in JS.
+Wasmoon compiles the [official Lua code](https://github.com/lua/lua) to WebAssembly and creates an abstraction layer to interop between Lua and JS, instead of [fengari](https://github.com/fengari-lua/fengari), which is an entire Lua VM rewritten in JS.
 
 ### Performance
 
-Because of wasm, wasmoon will run Lua code much faster than fengari, but if you are going to interop a lot between JS and Lua, this may be not be true anymore, you probably should test on you specific use case to take the prove.
+Because of WebAssembly, wasmoon runs Lua code significantly faster than fengari. The table below shows results from a [heap sort benchmark](https://github.com/ceifa/wasmoon/blob/main/bench/heapsort.lua) sorting a list of 2,000 numbers (100 iterations, 5 warmup):
 
-This is the results running a [heap sort code](https://github.com/ceifa/wasmoon/blob/main/bench/heapsort.lua) in a list of 2k numbers 10x(less is better):
+|                  | avg        | median     | min        | max        | stddev    | relative |
+| ---------------- | ---------- | ---------- | ---------- | ---------- | --------- | -------- |
+| **Wasmoon**      | 13.41 ms   | 13.07 ms   | 12.20 ms   | 16.23 ms   | 1.12 ms   | 1.00x    |
+| **Fengari**      | 137.36 ms  | 138.51 ms  | 119.70 ms  | 165.54 ms  | 11.16 ms  | 10.24x   |
 
-| wasmoon  | fengari   |
-| -------- | --------- |
-| 15.267ms | 389.923ms |
+Wasmoon is **~10x faster** than fengari for pure Lua execution. If your use case involves heavy interop between JS and Lua, the difference may be smaller, benchmark your specific scenario.
 
 ### Size
 
@@ -92,8 +93,8 @@ Fengari is smaller than wasmoon, which can improve the user experience if in web
 
 |             | wasmoon | fengari |
 | ----------- | ------- | ------- |
-| **plain**   | 393kB   | 214kB   |
-| **gzipped** | 130kB   | 69kB    |
+| **plain**   | 357kB   | 211kB   |
+| **gzipped** | 123kB   | 69kB    |
 
 ## Fixing common errors on web environment
 
