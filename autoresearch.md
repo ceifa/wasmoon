@@ -36,6 +36,12 @@ The main user-visible size target is the npm package payload produced by `npm pa
 - Generated `dist/**` files may change as a consequence of build changes, but source-of-truth edits should stay in source/config files
 
 ## What's Been Tried
-- Baseline not yet recorded.
-- First likely win to validate: avoid publishing source maps if they are not required for runtime and dominate package size.
-- Also inspect whether browser/node split code or export surface can reduce shipped JS without changing behavior.
+- Baseline started around 220.5 kB tarball, then re-baselined at 168.5 kB after a local WASM artifact drift changed the package payload used by the harness.
+- Big win: stop publishing sourcemaps and make the `files` list explicit in `package.json`.
+- Keep only declaration files reachable from the public API; internal unreferenced `.d.ts` files were safe to drop.
+- `tsconfig.json` with `removeComments: true` shrank published declarations further.
+- `rolldown -c --minify` is a strong win for `dist/index.js` size; extra rolldown flags tried so far were neutral or unsupported in this version.
+- Compacting `bin/wasmoon` yields small but real tarball wins with no benchmark regressions.
+- Publishing a trimmed runtime-only `package.json` via `prepack`/`postpack` is a valid win.
+- WASM rebuild experiments are currently noisy/non-comparable in this environment because rebuilding changes `glue.wasm` far more than the checked-in artifact; avoid spending much more loop time there unless the toolchain baseline is reset intentionally.
+- Next likely areas: publish-time README reduction, further declaration-surface cleanup that preserves the public API, or JS bundle reductions in `src/module.ts` / entry exports.

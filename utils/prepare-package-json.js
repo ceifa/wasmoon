@@ -6,20 +6,15 @@ const pkg = JSON.parse(readFileSync(packagePath, 'utf8'))
 copyFileSync(packagePath, backupPath)
 writeFileSync(
     packagePath,
-    JSON.stringify(
-        {
-            name: pkg.name,
-            version: pkg.version,
-            description: pkg.description,
-            type: pkg.type,
-            main: pkg.main,
-            types: pkg.types,
-            bin: pkg.bin,
-            license: pkg.license,
-            dependencies: pkg.dependencies,
-            files: pkg.files,
-        },
-        null,
-        4,
-    ) + '\n',
+    JSON.stringify({
+        name: pkg.name,
+        version: pkg.version,
+        type: pkg.type,
+        main: pkg.main,
+        types: pkg.types,
+        bin: pkg.bin,
+        license: pkg.license,
+        dependencies: pkg.dependencies,
+        files: pkg.files,
+    }) + '\n',
 )
