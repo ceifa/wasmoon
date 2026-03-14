@@ -38,5 +38,8 @@ The working assumption is that build-time/link-time/compiler flags and packaging
 - Baseline: release build with `-O3` produced `wasm_bytes=284062`, `wasm_gzip_bytes=121522`, `startup_ms=4.489`, `create_state_ms=0.546`, `heapsort_ms=15.168`.
 - `-O3 -flto` was a dead end: wasm grew sharply to `375922` bytes with no compensating runtime gain.
 - Switching the release wasm build from `-O3` to `-Oz` was a strong win: `wasm_bytes=198273` and `wasm_gzip_bytes=95031`, while startup improved and representative runtime stayed effectively flat in the current harness.
-- Adding `-fno-inline-functions` on top of `-Oz` appears promising: `wasm_bytes=197352`, `wasm_gzip_bytes=95007`, with startup and heapsort still within noise in the current harness. Keep, but continue validating with structurally different ideas to avoid overfitting.
-- Next likely levers: targeted Emscripten/linker flags that trim JS loader/runtime overhead without disabling filesystem or other required capabilities.
+- Adding `-fno-inline-functions` on top of `-Oz` produced another small win: `wasm_bytes=197352`, `wasm_gzip_bytes=95007`, with startup and heapsort still within noise in the current harness.
+- A structurally different follow-up also paid off: running Binaryen `wasm-opt --all-features -Oz` as an explicit post-link pass reduced the kept build further to `wasm_bytes=197058`, `wasm_gzip_bytes=94893`, while checks passed and secondary metrics stayed acceptable.
+- `-Os` was re-checked after the inlining change and remained clearly worse than `-Oz`.
+- Most small compiler toggles tried after the `-Oz` switch (`ASSERTIONS=0`, visibility/vectorization/constant-merging/auto-library toggles) were neutral on wasm size.
+- Next likely levers: safe post-link Binaryen pass refinements and, separately, any explicit decision about whether the very broad exported Lua C API surface is all contractual.

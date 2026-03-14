@@ -1,0 +1,3 @@
+- Audit whether any low-level exported Lua C API surface is effectively frozen public API versus accidental exposure. If some exports are not contractual, pruning them could materially shrink the wasm, but this needs an explicit API decision first.
+- Explore a dual-artifact strategy (browser-focused wasm/package path vs node-focused path) only if product constraints allow it; `NODEFS` support and multi-environment glue likely limit current size wins, but this is a broader packaging change rather than a safe local tweak.
+- Investigate more targeted Binaryen post-link passes beyond `wasm-opt --all-features -Oz` only if they produce reproducible wins without runtime regressions; generic post-link optimization is no longer just an idea because a basic pass is now kept.

@@ -2,6 +2,8 @@
 cd $(dirname $0)
 mkdir -p ../build
 
+WASM_OPT=/opt/homebrew/Cellar/emscripten/5.0.2/libexec/binaryen/bin/wasm-opt
+
 LUA_SRC=$(ls ../lua/*.c | grep -v "luac.c" | grep -v "lua.c" | tr "\n" " ")
 
 extension=""
@@ -205,3 +207,7 @@ emcc \
         '_luaL_openselectedlibs' \
     ]" \
     ${LUA_SRC}
+
+if [ -x "$WASM_OPT" ] && [ "$1" != "dev" ]; then
+    "$WASM_OPT" --all-features -Oz ../build/glue.wasm -o ../build/glue.wasm
+fi
