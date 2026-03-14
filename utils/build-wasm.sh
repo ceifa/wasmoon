@@ -9,7 +9,7 @@ if [ "$1" == "dev" ];
 then
     extension="-O0 -g3 -s ASSERTIONS=1 -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2"
 else
-    extension="-O3"
+    extension="-O2"
 fi
 
 emcc \
