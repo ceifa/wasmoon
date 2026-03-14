@@ -4,7 +4,7 @@ import pkg from './package.json' with { type: 'json' }
 export default defineConfig({
     input: './src/cli.js',
     output: {
-        file: 'dist/cli.js',
+        file: 'dist/w.js',
         format: 'esm',
         sourcemap: false,
     },
