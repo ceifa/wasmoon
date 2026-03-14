@@ -6,7 +6,7 @@ import version from 'package-version'
 type E = Record<string, string | undefined>
 type N = number | null
 type S = string | null
-type SN = string | number | null
+type U = string | number | null
 
 interface M extends EmscriptenModule {
     ccall: typeof ccall
@@ -175,7 +175,7 @@ export default class LuaModule {
     public luaL_ref: (a: LuaState, b: number) => number
     public luaL_unref: (a: LuaState, b: number, c: number) => void
     public luaL_loadfilex: (a: LuaState, b: S, c: S) => LuaReturn
-    public luaL_loadbufferx: (a: LuaState, b: SN, c: number, d: SN, e: S) => LuaReturn
+    public luaL_loadbufferx: (a: LuaState, b: U, c: number, d: U, e: S) => LuaReturn
     public luaL_loadstring: (a: LuaState, b: S) => LuaReturn
     public luaL_newstate: () => LuaState
     public luaL_len: (a: LuaState, b: number) => number
@@ -231,8 +231,8 @@ export default class LuaModule {
     public lua_pushnil: (a: LuaState) => void
     public lua_pushnumber: (a: LuaState, b: number) => void
     public lua_pushinteger: (a: LuaState, b: bigint) => void
-    public lua_pushlstring: (a: LuaState, b: SN, c: number) => string
-    public lua_pushstring: (a: LuaState, b: SN) => string
+    public lua_pushlstring: (a: LuaState, b: U, c: number) => string
+    public lua_pushstring: (a: LuaState, b: U) => string
     public lua_pushcclosure: (a: LuaState, b: number, c: number) => void
     public lua_pushboolean: (a: LuaState, b: number) => void
     public lua_pushlightuserdata: (a: LuaState, b: N) => void
