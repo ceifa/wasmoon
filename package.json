@@ -32,7 +32,9 @@
         "dist/thread.d.ts",
         "dist/type-extension.d.ts",
         "dist/types.d.ts",
-        "dist/type-extensions/*.d.ts"
+        "dist/type-extensions/function.d.ts",
+        "dist/type-extensions/proxy.d.ts",
+        "dist/type-extensions/userdata.d.ts"
     ],
     "bin": {
         "wasmoon": "bin/wasmoon"
