@@ -44,7 +44,7 @@ interface ReferenceMetadata {
 }
 
 export default class LuaModule {
-    public static async initialize(opts: {
+    public static async initialize(o: {
         wasmFile?: string
         env?: E
         fs?: 'node' | 'memory'
@@ -56,20 +56,20 @@ export default class LuaModule {
             (typeof window === 'object' && typeof window.document !== 'undefined') ||
             (typeof self === 'object' && self?.constructor?.name === 'DedicatedWorkerGlobalScope')
 
-        if (opts.wasmFile === undefined && isBrowser) {
-            opts.wasmFile = `https://unpkg.com/wasmoon@${version}/dist/glue.wasm`
+        if (o.wasmFile === undefined && isBrowser) {
+            o.wasmFile = `https://unpkg.com/wasmoon@${version}/dist/glue.wasm`
         }
 
-        const fs = !isBrowser && opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:fs') : null
-        const child_process = !isBrowser && opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:child_process') : null
+        const fs = !isBrowser && o.fs === 'node' && typeof process !== 'undefined' ? await import('node:fs') : null
+        const child_process = !isBrowser && o.fs === 'node' && typeof process !== 'undefined' ? await import('node:child_process') : null
 
         const module: M = await initWasmModule({
             locateFile: (path: string, scriptDirectory: string) => {
-                return opts.wasmFile || scriptDirectory + path
+                return o.wasmFile || scriptDirectory + path
             },
             preRun: (initializedModule: M) => {
-                if (typeof opts?.env === 'object') {
-                    Object.assign(initializedModule.ENV, opts.env)
+                if (typeof o?.env === 'object') {
+                    Object.assign(initializedModule.ENV, o.env)
                 }
 
                 if (fs && child_process) {
@@ -113,13 +113,13 @@ export default class LuaModule {
                     initializedModule.FS.chdir(process.cwd().replace(/\\|\\\\/g, '/'))
                 }
 
-                if (opts.stdin || opts.stdout || opts.stderr) {
+                if (o.stdin || o.stdout || o.stderr) {
                     let bufferedInput: number[] | undefined
                     initializedModule.FS.init(
-                        opts.stdin
+                        o.stdin
                             ? () => {
                                   if (!bufferedInput) {
-                                      const input = opts.stdin?.()
+                                      const input = o.stdin?.()
                                       if (typeof input === 'string') {
                                           bufferedInput = initializedModule.intArrayFromString(input, true).concat([0])
                                       } else {
@@ -136,8 +136,8 @@ export default class LuaModule {
                                   return !item || item === 0 ? null : item
                               }
                             : null,
-                        createOutputWriter(opts.stdout),
-                        createOutputWriter(opts.stderr),
+                        createOutputWriter(o.stdout),
+                        createOutputWriter(o.stderr),
                     )
                 }
             },
@@ -309,8 +309,8 @@ export default class LuaModule {
     private availableReferences: number[] = []
     private lastRefIndex?: number
 
-    public constructor(module: M) {
-        this._emscripten = module
+    public constructor(m: M) {
+        this._emscripten = m
 
         this.luaL_checkversion_ = this.cwrap('luaL_checkversion_', null, ['number', 'number', 'number'])
         this.luaL_getmetafield = this.cwrap('luaL_getmetafield', 'number', ['number', 'number', 'string'])
