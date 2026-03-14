@@ -20,7 +20,19 @@
         "bin/*",
         "dist/index.js",
         "dist/glue.wasm",
-        "dist/**/*.d.ts"
+        "dist/decoration.d.ts",
+        "dist/engine.d.ts",
+        "dist/global.d.ts",
+        "dist/index.d.ts",
+        "dist/lua.d.ts",
+        "dist/module.d.ts",
+        "dist/multireturn.d.ts",
+        "dist/pointer.d.ts",
+        "dist/raw-result.d.ts",
+        "dist/thread.d.ts",
+        "dist/type-extension.d.ts",
+        "dist/types.d.ts",
+        "dist/type-extensions/*.d.ts"
     ],
     "bin": {
         "wasmoon": "bin/wasmoon"
