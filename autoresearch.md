@@ -34,4 +34,9 @@ Optimize the runtime performance of the compiled Lua WebAssembly build used by W
 ## What's Been Tried
 - Previous JS-glue-focused session got the benchmark from `14.775872ms` to `11.751988ms` by reducing JS↔wasm overhead (`lua_callk`/`lua_pcallk` raw exports and direct exported `luaL_loadstring`).
 - Profiling after those wins showed the remaining time is dominated by Lua execution itself, so wasm/compiler/runtime changes are now the most promising path.
-- Deferred ideas from the prior session: batched wasm-side helpers and build-level optimization tuning. This session focuses on the latter first.
+- For the rebuilt-from-scratch wasm session, default release build (`-O3`) baseline was `12.639066ms`, `7.585s` wasm build time, `277.404kb` wasm.
+- Best wasm-build improvement so far: changing release build from `-O3` to `-O2` improved runtime to `11.794092ms`, while also reducing build time to `6.413s` and wasm size to `274.129kb`.
+- Cross-checking outside the primary metric suggests some overfitting risk: on an exploratory numeric-heavy script `-O2` slightly beat `-O3`, but on an exploratory string-heavy script `-O3` beat `-O2`. So `-O2` is a strong win for the heapsort/numeric path, not yet a universally proven default.
+- Discarded build-flag experiments: `-flto`, `-Os`, `-O1`, `-DNDEBUG`, `-fno-exceptions`/unwind stripping, `-fno-inline-functions`, `INITIAL_MEMORY=32MB`, `SUPPORT_LONGJMP=wasm`, and fixed 64MB memory without growth. All regressed runtime, and some hurt size/build time or semantics.
+- Discarded runtime/source experiments: disabling Lua VM jump tables, adding no-continuation C helpers for `lua_call`/`lua_pcall`, adding likely() hints to array fast paths, and reordering `luaH_fastseti` fast-path checks. All regressed on the benchmark.
+- Deferred ideas from the prior session: batched wasm-side helpers and build-level optimization tuning. Build-level tuning found a real win (`-O2`), but the remaining promising paths now look more invasive and should be validated against more than one workload to avoid overfitting.
