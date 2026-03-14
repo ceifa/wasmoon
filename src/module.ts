@@ -4,6 +4,9 @@ import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType } from './types.js'
 import version from 'package-version'
 
 type E = Record<string, string | undefined>
+type N = number | null
+type S = string | null
+type SN = string | number | null
 
 interface M extends EmscriptenModule {
     ccall: typeof ccall
@@ -20,9 +23,9 @@ interface M extends EmscriptenModule {
         mount: (t: Emscripten.FileSystemType, o: { root: string }, m: string) => void
         chdir: (p: string) => void
         init: (
-            input: (() => number | null) | null,
-            output: ((charCode: number | null) => void) | null,
-            error: ((charCode: number | null) => void) | null,
+            input: (() => N) | null,
+            output: ((charCode: N) => void) | null,
+            error: ((charCode: N) => void) | null,
         ) => void
         writeFile: (p: string, c: string | ArrayBufferView) => void
     }
@@ -148,56 +151,56 @@ export default class LuaModule {
     public _emscripten: M
 
     public luaL_checkversion_: (a: LuaState, b: number, c: number) => void
-    public luaL_getmetafield: (a: LuaState, b: number, c: string | null) => LuaType
-    public luaL_callmeta: (a: LuaState, b: number, c: string | null) => number
-    public luaL_tolstring: (a: LuaState, b: number, c: number | null) => string
-    public luaL_argerror: (a: LuaState, b: number, c: string | null) => number
-    public luaL_typeerror: (a: LuaState, b: number, c: string | null) => number
-    public luaL_checklstring: (a: LuaState, b: number, c: number | null) => string
-    public luaL_optlstring: (a: LuaState, b: number, c: string | null, d: number | null) => string
+    public luaL_getmetafield: (a: LuaState, b: number, c: S) => LuaType
+    public luaL_callmeta: (a: LuaState, b: number, c: S) => number
+    public luaL_tolstring: (a: LuaState, b: number, c: N) => string
+    public luaL_argerror: (a: LuaState, b: number, c: S) => number
+    public luaL_typeerror: (a: LuaState, b: number, c: S) => number
+    public luaL_checklstring: (a: LuaState, b: number, c: N) => string
+    public luaL_optlstring: (a: LuaState, b: number, c: S, d: N) => string
     public luaL_checknumber: (a: LuaState, b: number) => number
     public luaL_optnumber: (a: LuaState, b: number, c: number) => number
     public luaL_checkinteger: (a: LuaState, b: number) => number
     public luaL_optinteger: (a: LuaState, b: number, c: number) => number
-    public luaL_checkstack: (a: LuaState, b: number, c: string | null) => void
+    public luaL_checkstack: (a: LuaState, b: number, c: S) => void
     public luaL_checktype: (a: LuaState, b: number, c: number) => void
     public luaL_checkany: (a: LuaState, b: number) => void
-    public luaL_newmetatable: (a: LuaState, b: string | null) => number
-    public luaL_setmetatable: (a: LuaState, b: string | null) => void
-    public luaL_testudata: (a: LuaState, b: number, c: string | null) => number
-    public luaL_checkudata: (a: LuaState, b: number, c: string | null) => number
+    public luaL_newmetatable: (a: LuaState, b: S) => number
+    public luaL_setmetatable: (a: LuaState, b: S) => void
+    public luaL_testudata: (a: LuaState, b: number, c: S) => number
+    public luaL_checkudata: (a: LuaState, b: number, c: S) => number
     public luaL_where: (a: LuaState, b: number) => void
-    public luaL_fileresult: (a: LuaState, b: number, c: string | null) => number
+    public luaL_fileresult: (a: LuaState, b: number, c: S) => number
     public luaL_execresult: (a: LuaState, b: number) => number
     public luaL_ref: (a: LuaState, b: number) => number
     public luaL_unref: (a: LuaState, b: number, c: number) => void
-    public luaL_loadfilex: (a: LuaState, b: string | null, c: string | null) => LuaReturn
+    public luaL_loadfilex: (a: LuaState, b: S, c: S) => LuaReturn
     public luaL_loadbufferx: (
         L: LuaState,
-        buff: string | number | null,
+        buff: SN,
         sz: number,
-        name: string | number | null,
-        mode: string | null,
+        name: SN,
+        mode: S,
     ) => LuaReturn
-    public luaL_loadstring: (a: LuaState, b: string | null) => LuaReturn
+    public luaL_loadstring: (a: LuaState, b: S) => LuaReturn
     public luaL_newstate: () => LuaState
     public luaL_len: (a: LuaState, b: number) => number
-    public luaL_addgsub: (a: number | null, b: string | null, c: string | null, d: string | null) => void
-    public luaL_gsub: (a: LuaState, b: string | null, c: string | null, d: string | null) => string
-    public luaL_setfuncs: (a: LuaState, b: number | null, c: number) => void
-    public luaL_getsubtable: (a: LuaState, b: number, c: string | null) => number
-    public luaL_traceback: (a: LuaState, b: LuaState, c: string | null, d: number) => void
-    public luaL_requiref: (a: LuaState, b: string | null, c: number, d: number) => void
+    public luaL_addgsub: (a: N, b: S, c: S, d: S) => void
+    public luaL_gsub: (a: LuaState, b: S, c: S, d: S) => string
+    public luaL_setfuncs: (a: LuaState, b: N, c: number) => void
+    public luaL_getsubtable: (a: LuaState, b: number, c: S) => number
+    public luaL_traceback: (a: LuaState, b: LuaState, c: S, d: number) => void
+    public luaL_requiref: (a: LuaState, b: S, c: number, d: number) => void
     public luaL_openselectedlibs: (a: LuaState, b: number, c: number) => void
-    public luaL_buffinit: (a: LuaState, b: number | null) => void
-    public luaL_prepbuffsize: (a: number | null, b: number) => string
-    public luaL_addlstring: (a: number | null, b: string | null, c: number) => void
-    public luaL_addstring: (a: number | null, b: string | null) => void
-    public luaL_addvalue: (a: number | null) => void
-    public luaL_pushresult: (a: number | null) => void
-    public luaL_pushresultsize: (a: number | null, b: number) => void
-    public luaL_buffinitsize: (a: LuaState, b: number | null, c: number) => string
-    public lua_newstate: (a: number | null, b: number | null, c: number) => LuaState
+    public luaL_buffinit: (a: LuaState, b: N) => void
+    public luaL_prepbuffsize: (a: N, b: number) => string
+    public luaL_addlstring: (a: N, b: S, c: number) => void
+    public luaL_addstring: (a: N, b: S) => void
+    public luaL_addvalue: (a: N) => void
+    public luaL_pushresult: (a: N) => void
+    public luaL_pushresultsize: (a: N, b: number) => void
+    public luaL_buffinitsize: (a: LuaState, b: N, c: number) => string
+    public lua_newstate: (a: N, b: N, c: number) => LuaState
     public lua_close: (a: LuaState) => void
     public lua_newthread: (a: LuaState) => LuaState
     public lua_closethread: (a: LuaState, b: LuaState | null) => LuaReturn
@@ -219,10 +222,10 @@ export default class LuaModule {
     public lua_isuserdata: (a: LuaState, b: number) => number
     public lua_type: (a: LuaState, b: number) => LuaType
     public lua_typename: (a: LuaState, b: number) => string
-    public lua_tonumberx: (a: LuaState, b: number, c: number | null) => number
-    public lua_tointegerx: (a: LuaState, b: number, c: number | null) => bigint
+    public lua_tonumberx: (a: LuaState, b: number, c: N) => number
+    public lua_tointegerx: (a: LuaState, b: number, c: N) => bigint
     public lua_toboolean: (a: LuaState, b: number) => number
-    public lua_tolstring: (a: LuaState, b: number, c: number | null) => string
+    public lua_tolstring: (a: LuaState, b: number, c: N) => string
     public lua_rawlen: (a: LuaState, b: number) => bigint
     public lua_tocfunction: (a: LuaState, b: number) => number
     public lua_touserdata: (a: LuaState, b: number) => number
@@ -234,60 +237,60 @@ export default class LuaModule {
     public lua_pushnil: (a: LuaState) => void
     public lua_pushnumber: (a: LuaState, b: number) => void
     public lua_pushinteger: (a: LuaState, b: bigint) => void
-    public lua_pushlstring: (a: LuaState, b: string | number | null, c: number) => string
-    public lua_pushstring: (a: LuaState, b: string | number | null) => string
+    public lua_pushlstring: (a: LuaState, b: SN, c: number) => string
+    public lua_pushstring: (a: LuaState, b: SN) => string
     public lua_pushcclosure: (a: LuaState, b: number, c: number) => void
     public lua_pushboolean: (a: LuaState, b: number) => void
-    public lua_pushlightuserdata: (a: LuaState, b: number | null) => void
+    public lua_pushlightuserdata: (a: LuaState, b: N) => void
     public lua_pushthread: (a: LuaState) => number
-    public lua_getglobal: (a: LuaState, b: string | null) => LuaType
+    public lua_getglobal: (a: LuaState, b: S) => LuaType
     public lua_gettable: (a: LuaState, b: number) => LuaType
-    public lua_getfield: (a: LuaState, b: number, c: string | null) => LuaType
+    public lua_getfield: (a: LuaState, b: number, c: S) => LuaType
     public lua_geti: (a: LuaState, b: number, c: bigint) => LuaType
     public lua_rawget: (a: LuaState, b: number) => number
     public lua_rawgeti: (a: LuaState, b: number, c: bigint) => LuaType
-    public lua_rawgetp: (a: LuaState, b: number, c: number | null) => LuaType
+    public lua_rawgetp: (a: LuaState, b: number, c: N) => LuaType
     public lua_createtable: (a: LuaState, b: number, c: number) => void
     public lua_newuserdatauv: (a: LuaState, b: number, c: number) => number
     public lua_getmetatable: (a: LuaState, b: number) => number
     public lua_getiuservalue: (a: LuaState, b: number, c: number) => LuaType
-    public lua_setglobal: (a: LuaState, b: string | null) => void
+    public lua_setglobal: (a: LuaState, b: S) => void
     public lua_settable: (a: LuaState, b: number) => void
-    public lua_setfield: (a: LuaState, b: number, c: string | null) => void
+    public lua_setfield: (a: LuaState, b: number, c: S) => void
     public lua_seti: (a: LuaState, b: number, c: bigint) => void
     public lua_rawset: (a: LuaState, b: number) => void
     public lua_rawseti: (a: LuaState, b: number, c: bigint) => void
-    public lua_rawsetp: (a: LuaState, b: number, c: number | null) => void
+    public lua_rawsetp: (a: LuaState, b: number, c: N) => void
     public lua_setmetatable: (a: LuaState, b: number) => number
     public lua_setiuservalue: (a: LuaState, b: number, c: number) => number
-    public lua_callk: (a: LuaState, b: number, c: number, d: number, e: number | null) => void
-    public lua_pcallk: (a: LuaState, b: number, c: number, d: number, e: number, f: number | null) => number
-    public lua_load: (a: LuaState, b: number | null, c: number | null, d: string | null, e: string | null) => LuaReturn
-    public lua_dump: (a: LuaState, b: number | null, c: number | null, d: number) => number
-    public lua_yieldk: (a: LuaState, b: number, c: number, d: number | null) => number
-    public lua_resume: (a: LuaState, b: LuaState | null, c: number, d: number | null) => LuaReturn
+    public lua_callk: (a: LuaState, b: number, c: number, d: number, e: N) => void
+    public lua_pcallk: (a: LuaState, b: number, c: number, d: number, e: number, f: N) => number
+    public lua_load: (a: LuaState, b: N, c: N, d: S, e: S) => LuaReturn
+    public lua_dump: (a: LuaState, b: N, c: N, d: number) => number
+    public lua_yieldk: (a: LuaState, b: number, c: number, d: N) => number
+    public lua_resume: (a: LuaState, b: LuaState | null, c: number, d: N) => LuaReturn
     public lua_status: (a: LuaState) => LuaReturn
     public lua_isyieldable: (a: LuaState) => number
-    public lua_setwarnf: (a: LuaState, b: number | null, c: number | null) => void
-    public lua_warning: (a: LuaState, b: string | null, c: number) => void
+    public lua_setwarnf: (a: LuaState, b: N, c: N) => void
+    public lua_warning: (a: LuaState, b: S, c: number) => void
     public lua_error: (a: LuaState) => number
     public lua_next: (a: LuaState, b: number) => number
     public lua_concat: (a: LuaState, b: number) => void
     public lua_len: (a: LuaState, b: number) => void
-    public lua_stringtonumber: (a: LuaState, b: string | null) => number
-    public lua_getallocf: (a: LuaState, b: number | null) => number
-    public lua_setallocf: (a: LuaState, b: number | null, c: number | null) => void
+    public lua_stringtonumber: (a: LuaState, b: S) => number
+    public lua_getallocf: (a: LuaState, b: N) => number
+    public lua_setallocf: (a: LuaState, b: N, c: N) => void
     public lua_toclose: (a: LuaState, b: number) => void
     public lua_closeslot: (a: LuaState, b: number) => void
-    public lua_getstack: (a: LuaState, b: number, c: number | null) => number
-    public lua_getinfo: (a: LuaState, b: string | null, c: number | null) => number
-    public lua_getlocal: (a: LuaState, b: number | null, c: number) => string
-    public lua_setlocal: (a: LuaState, b: number | null, c: number) => string
+    public lua_getstack: (a: LuaState, b: number, c: N) => number
+    public lua_getinfo: (a: LuaState, b: S, c: N) => number
+    public lua_getlocal: (a: LuaState, b: N, c: number) => string
+    public lua_setlocal: (a: LuaState, b: N, c: number) => string
     public lua_getupvalue: (a: LuaState, b: number, c: number) => string
     public lua_setupvalue: (a: LuaState, b: number, c: number) => string
     public lua_upvalueid: (a: LuaState, b: number, c: number) => number
     public lua_upvaluejoin: (a: LuaState, b: number, c: number, d: number, e: number) => void
-    public lua_sethook: (a: LuaState, b: number | null, c: number, d: number) => void
+    public lua_sethook: (a: LuaState, b: N, c: number, d: number) => void
     public lua_gethook: (a: LuaState) => number
     public lua_gethookmask: (a: LuaState) => number
     public lua_gethookcount: (a: LuaState) => number
@@ -586,13 +589,13 @@ export default class LuaModule {
     }
 }
 
-function createOutputWriter(w?: (c: string) => void): ((n: number | null) => void) | null {
+function createOutputWriter(w?: (c: string) => void): ((n: N) => void) | null {
     if (!w) {
         return null
     }
 
     let buffer = ''
-    return (n: number | null): void => {
+    return (n: N): void => {
         if (n === null || n === 10) {
             w(buffer)
             buffer = ''
