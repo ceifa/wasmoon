@@ -18,29 +18,18 @@ Available options are:
   -           stop handling options and execute stdin
 `.trim()
 
-function printUsage() {
+const failUsage = (message) => {
+    if (message) {
+        console.error(message)
+    }
     console.log(usage)
     process.exit(1)
 }
 
 function parseArgs(args) {
-    const executeSnippets = []
-    const includeModules = []
-    let forceInteractive = false
-    let warnings = false
-    let ignoreEnv = false
-    let showVersion = false
-    let scriptFile = null
+    const out = { executeSnippets: [], includeModules: [], forceInteractive: false, warnings: false, ignoreEnv: false, showVersion: false, scriptFile: null }
     let i = 0
-
-    const needValue = (flag) => {
-        i++
-        if (i >= args.length) {
-            console.error(`Missing argument after ${flag}`)
-            printUsage()
-        }
-        return args[i]
-    }
+    const next = (flag) => args[++i] ?? failUsage(`Missing argument after ${flag}`)
 
     for (; i < args.length; i++) {
         const arg = args[i]
@@ -49,59 +38,29 @@ function parseArgs(args) {
             break
         }
         if (!arg.startsWith('-') || arg.length === 1) {
-            scriptFile = arg
+            out.scriptFile = arg
             i++
             break
         }
-
         switch (arg) {
-            case '-v':
-                showVersion = true
-                break
-            case '-W':
-                warnings = true
-                break
-            case '-E':
-                ignoreEnv = true
-                break
-            case '-i':
-                forceInteractive = true
-                break
-            case '-e':
-                executeSnippets.push(needValue('-e'))
-                break
-            case '-l':
-                includeModules.push(needValue('-l'))
-                break
-            case '-':
-                scriptFile = '-'
-                i++
-                break
-            default:
-                console.log(`unrecognized option: '${arg}'`)
-                printUsage()
+            case '-v': out.showVersion = true; break
+            case '-W': out.warnings = true; break
+            case '-E': out.ignoreEnv = true; break
+            case '-i': out.forceInteractive = true; break
+            case '-e': out.executeSnippets.push(next('-e')); break
+            case '-l': out.includeModules.push(next('-l')); break
+            case '-': out.scriptFile = '-'; i++; break
+            default: failUsage(`unrecognized option: '${arg}'`)
         }
-
-        if (scriptFile === '-') {
+        if (out.scriptFile === '-') {
             break
         }
     }
 
-    return {
-        executeSnippets,
-        includeModules,
-        forceInteractive,
-        warnings,
-        showVersion,
-        scriptFile,
-        scriptArgs: args.slice(i),
-        ignoreEnv,
-    }
+    return { ...out, scriptArgs: args.slice(i) }
 }
 
-const { executeSnippets, includeModules, ignoreEnv, forceInteractive, warnings, showVersion, scriptFile, scriptArgs } = parseArgs(
-    process.argv.slice(2),
-)
+const { executeSnippets, includeModules, ignoreEnv, forceInteractive, warnings, showVersion, scriptFile, scriptArgs } = parseArgs(process.argv.slice(2))
 
 let inputFD = 0
 if (process.stdin.isTTY) {
@@ -112,14 +71,7 @@ if (process.stdin.isTTY) {
     }
 }
 
-const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: true,
-    removeHistoryDuplicates: true,
-    prompt: '> ',
-})
-
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true, removeHistoryDuplicates: true, prompt: '> ' })
 const lua = await Lua.load({
     env: ignoreEnv ? undefined : process.env,
     fs: 'node',
@@ -129,25 +81,16 @@ const lua = await Lua.load({
             const buffer = Buffer.alloc(0xff)
             let content = ''
             let current = 0
-
             while (true) {
                 const bytesRead = fs.readSync(inputFD, buffer, current, buffer.length - current)
-                if (bytesRead <= 0) {
-                    break
-                }
-
+                if (bytesRead <= 0) break
                 const charcode = buffer[current++]
-                if (charcode === 127) {
-                    current = Math.max(0, current - 2)
-                } else if (charcode === 13) {
-                    break
-                }
-
+                if (charcode === 127) current = Math.max(0, current - 2)
+                else if (charcode === 13) break
                 content = buffer.subarray(0, current).toString('utf8')
                 process.stdout.write('\x1b[2K\x1b[0G')
                 process.stdout.write(content)
             }
-
             rl.resume()
             return content
         } catch (error) {
@@ -157,65 +100,53 @@ const lua = await Lua.load({
 })
 
 const state = lua.createState()
+const global = state.global
 if (showVersion) {
-    console.log(`wasmoon ${pkg.version} (${state.global.get('_VERSION')})`)
+    console.log(`wasmoon ${pkg.version} (${global.get('_VERSION')})`)
     process.exit(0)
 }
-if (warnings) {
-    lua.module.lua_warning(state.global.address, '@on', 0)
-}
+if (warnings) lua.module.lua_warning(global.address, '@on', 0)
 
 for (const module of includeModules) {
-    let [global, mod] = module.split('=')
-    mod ||= global
-    const require = state.global.get('require')
-    state.global.set(global, require(mod))
+    let [name, target] = module.split('=')
+    target ||= name
+    const require = global.get('require')
+    global.set(name, require(target))
 }
-for (const snippet of executeSnippets) {
-    await state.doString(snippet)
-}
+for (const snippet of executeSnippets) await state.doString(snippet)
 
-state.global.set('arg', decorate(scriptArgs, { disableProxy: true }))
-const isTTY = process.stdin.isTTY
+global.set('arg', decorate(scriptArgs, { disableProxy: true }))
+if (scriptFile === '-') await state.doString(fs.readFileSync(0, 'utf-8'))
+else if (scriptFile) await state.doFile(scriptFile)
 
-if (scriptFile === '-') {
-    await state.doString(fs.readFileSync(0, 'utf-8'))
-} else if (scriptFile) {
-    await state.doFile(scriptFile)
-}
-
-if (isTTY && (forceInteractive || (!scriptFile && executeSnippets.length === 0))) {
-    const loadcode = (code) => {
-        state.global.setTop(0)
-        return lua.module.luaL_loadstring(state.global.address, code) === LuaReturn.Ok
+if (process.stdin.isTTY && (forceInteractive || (!scriptFile && executeSnippets.length === 0))) {
+    const load = (code) => {
+        global.setTop(0)
+        return lua.module.luaL_loadstring(global.address, code) === LuaReturn.Ok
     }
 
-    console.log(`Welcome to Wasmoon ${pkg.version} (${state.global.get('_VERSION')})`)
+    console.log(`Welcome to Wasmoon ${pkg.version} (${global.get('_VERSION')})`)
     console.log('Type Lua code and press Enter to execute. Ctrl+C to exit.\n')
     rl.prompt()
 
     for await (const line of rl) {
-        const loaded = loadcode(`return ${line}`) || loadcode(line)
-        if (!loaded) {
-            console.log(state.global.getValue(-1, LuaType.String))
+        if (!load(`return ${line}`) && !load(line)) {
+            console.log(global.getValue(-1, LuaType.String))
             rl.prompt()
             continue
         }
 
-        const result = lua.module.lua_pcallk(state.global.address, 0, LUA_MULTRET, 0, 0, null)
+        const result = lua.module.lua_pcallk(global.address, 0, LUA_MULTRET, 0, 0, null)
         if (result === LuaReturn.Ok) {
-            const count = state.global.getTop()
+            const count = global.getTop()
             if (count > 0) {
-                const returnValues = []
-                for (let i = 1; i <= count; i++) {
-                    returnValues.push(state.global.indexToString(i))
-                }
-                console.log(...returnValues)
+                const values = []
+                for (let i = 1; i <= count; i++) values.push(global.indexToString(i))
+                console.log(...values)
             }
         } else {
-            console.log(state.global.getValue(-1, LuaType.String))
+            console.log(global.getValue(-1, LuaType.String))
         }
-
         rl.prompt()
     }
 } else if (!scriptFile) {
