@@ -8,3 +8,4 @@
 {"type":"config","name":"Reduce wasmoon published output size while preserving runtime (post-wasm-rebuild baseline)","metricName":"tarball_kb","metricUnit":"kb","bestDirection":"lower"}
 {"run":1,"commit":"c0db33a","metric":168.471,"metrics":{},"status":"keep","description":"Rebased baseline after local wasm rebuild changed the checked-in artifact used by the package-size harness","timestamp":1773452525544,"segment":1}
 {"run":2,"commit":"5fc016a","metric":167.833,"metrics":{},"status":"keep","description":"Trim published declaration set to the files reachable from dist/index.d.ts, dropping unreferenced internal d.ts artifacts from the npm package","timestamp":1773452538569,"segment":1}
+{"run":3,"commit":"5134f8b","metric":167.14,"metrics":{},"status":"keep","description":"Enable TypeScript removeComments so published declaration files drop JSDoc/comment payload without changing runtime behavior","timestamp":1773452579114,"segment":1}
