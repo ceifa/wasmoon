@@ -16,24 +16,24 @@ interface M extends EmscriptenModule {
             NODEFS: Emscripten.FileSystemType
             MEMFS: Emscripten.FileSystemType
         }
-        mkdirTree: (path: string) => void
-        mount: (type: Emscripten.FileSystemType, opts: { root: string }, mountpoint: string) => void
-        chdir: (path: string) => void
+        mkdirTree: (p: string) => void
+        mount: (t: Emscripten.FileSystemType, o: { root: string }, m: string) => void
+        chdir: (p: string) => void
         init: (
             input: (() => number | null) | null,
             output: ((charCode: number | null) => void) | null,
             error: ((charCode: number | null) => void) | null,
         ) => void
-        writeFile: (path: string, content: string | ArrayBufferView) => void
+        writeFile: (p: string, c: string | ArrayBufferView) => void
     }
     PATH: {
-        dirname: (path: string) => string
+        dirname: (p: string) => string
     }
-    stringToNewUTF8: typeof allocateUTF8
-    lengthBytesUTF8: typeof lengthBytesUTF8
-    stringToUTF8: typeof stringToUTF8
-    intArrayFromString: typeof intArrayFromString
-    UTF8ToString: typeof UTF8ToString
+    stringToNewUTF8: (s: string) => number
+    lengthBytesUTF8: (s: string) => number
+    stringToUTF8: (s: string, p: number, n: number) => void
+    intArrayFromString: (s: string, n?: boolean) => number[]
+    UTF8ToString: (p: number) => string
     ENV: E
     _realloc: (pointer: number, size: number) => number
 }
@@ -49,8 +49,8 @@ export default class LuaModule {
         env?: E
         fs?: 'node' | 'memory'
         stdin?: () => string
-        stdout?: (content: string) => void
-        stderr?: (content: string) => void
+        stdout?: (c: string) => void
+        stderr?: (c: string) => void
     }): Promise<LuaModule> {
         const isBrowser =
             (typeof window === 'object' && typeof window.document !== 'undefined') ||
@@ -465,29 +465,29 @@ export default class LuaModule {
         this.luaL_openlibs = (L) => this.luaL_openselectedlibs(L, -1, 0)
     }
 
-    public lua_remove(luaState: LuaState, index: number): void {
-        this.lua_rotate(luaState, index, -1)
-        this.lua_pop(luaState, 1)
+    public lua_remove(s: LuaState, i: number): void {
+        this.lua_rotate(s, i, -1)
+        this.lua_pop(s, 1)
     }
 
-    public lua_pop(luaState: LuaState, count: number): void {
-        this.lua_settop(luaState, -count - 1)
+    public lua_pop(s: LuaState, n: number): void {
+        this.lua_settop(s, -n - 1)
     }
 
-    public luaL_getmetatable(luaState: LuaState, name: string): LuaType {
-        return this.lua_getfield(luaState, LUA_REGISTRYINDEX, name)
+    public luaL_getmetatable(s: LuaState, n: string): LuaType {
+        return this.lua_getfield(s, LUA_REGISTRYINDEX, n)
     }
 
-    public lua_yield(luaState: LuaState, count: number): number {
-        return this.lua_yieldk(luaState, count, 0, null)
+    public lua_yield(s: LuaState, n: number): number {
+        return this.lua_yieldk(s, n, 0, null)
     }
 
-    public lua_upvalueindex(index: number): number {
-        return LUA_REGISTRYINDEX - index
+    public lua_upvalueindex(i: number): number {
+        return LUA_REGISTRYINDEX - i
     }
 
-    public ref(data: unknown): number {
-        const existing = this.referenceTracker.get(data)
+    public ref(d: unknown): number {
+        const existing = this.referenceTracker.get(d)
         if (existing) {
             existing.refCount++
             return existing.index
@@ -496,8 +496,8 @@ export default class LuaModule {
         const availableIndex = this.availableReferences.pop()
         // +1 so the index is always truthy and not a "nullptr".
         const index = availableIndex === undefined ? this.referenceMap.size + 1 : availableIndex
-        this.referenceMap.set(index, data)
-        this.referenceTracker.set(data, {
+        this.referenceMap.set(index, d)
+        this.referenceTracker.set(d, {
             refCount: 1,
             index,
         })
@@ -507,28 +507,28 @@ export default class LuaModule {
         return index
     }
 
-    public unref(index: number): void {
-        const ref = this.referenceMap.get(index)
+    public unref(i: number): void {
+        const ref = this.referenceMap.get(i)
         if (ref === undefined) {
             return
         }
         const metadata = this.referenceTracker.get(ref)
         if (metadata === undefined) {
             this.referenceTracker.delete(ref)
-            this.availableReferences.push(index)
+            this.availableReferences.push(i)
             return
         }
 
         metadata.refCount--
         if (metadata.refCount <= 0) {
             this.referenceTracker.delete(ref)
-            this.referenceMap.delete(index)
-            this.availableReferences.push(index)
+            this.referenceMap.delete(i)
+            this.availableReferences.push(i)
         }
     }
 
-    public getRef(index: number): any | undefined {
-        return this.referenceMap.get(index)
+    public getRef(i: number): any | undefined {
+        return this.referenceMap.get(i)
     }
 
     // This is needed for some tests
@@ -586,21 +586,21 @@ export default class LuaModule {
     }
 }
 
-function createOutputWriter(writer?: (content: string) => void): ((charCode: number | null) => void) | null {
-    if (!writer) {
+function createOutputWriter(w?: (c: string) => void): ((n: number | null) => void) | null {
+    if (!w) {
         return null
     }
 
     let buffer = ''
-    return (charCode: number | null): void => {
-        if (charCode === null || charCode === 10) {
-            writer(buffer)
+    return (n: number | null): void => {
+        if (n === null || n === 10) {
+            w(buffer)
             buffer = ''
             return
         }
 
-        if (charCode !== 13) {
-            buffer += String.fromCharCode(charCode)
+        if (n !== 13) {
+            buffer += String.fromCharCode(n)
         }
     }
 }
