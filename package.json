@@ -24,9 +24,7 @@
         "dist/{decoration,engine,global,index,lua,module,multireturn,pointer,raw-result,thread,type-extension,types}.d.ts",
         "dist/type-extensions/{function,proxy,userdata}.d.ts"
     ],
-    "bin": {
-        "wasmoon": "bin/w"
-    },
+    "bin": "bin/w",
     "repository": {
         "type": "git",
         "url": "git+https://github.com/ceifa/wasmoon.git"

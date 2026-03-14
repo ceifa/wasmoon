@@ -1,0 +1,3 @@
+- Shrink `dist/module.d.ts` by hiding or simplifying the public Emscripten-facing type surface if that can be done without materially breaking TypeScript users; that could also allow dropping the published `@types/emscripten` dependency.
+- Investigate whether the main bundle can be built from a multi-entry rolldown config without size regressions, so the CLI and library share more build-time infrastructure while keeping the JS output minimal.
+- If package-size wins dry up, consider a deliberate clean-baseline experiment for the wasm artifact/toolchain so wasm-level output-size work becomes comparable again.
