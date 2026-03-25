@@ -17,6 +17,8 @@ jobs:
               with:
                   submodules: recursive
             - uses: mymindstorm/setup-emsdk@v14
+              with:
+                  version: 5.0.4
             - name: Use Node.js ${{ matrix.node-version }}
               uses: actions/setup-node@v6
               with:

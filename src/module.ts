@@ -40,6 +40,7 @@ export default class LuaModule {
         wasmFile?: string
         env?: EnvironmentVariables
         fs?: 'node' | 'memory'
+        fsMountPaths?: string[]
         stdin?: () => string
         stdout?: (content: string) => void
         stderr?: (content: string) => void
@@ -52,8 +53,8 @@ export default class LuaModule {
             opts.wasmFile = `https://unpkg.com/wasmoon@${version}/dist/glue.wasm`
         }
 
-        const fs = !isBrowser && opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:fs') : null
-        const child_process = !isBrowser && opts.fs === 'node' && typeof process !== 'undefined' ? await import('node:child_process') : null
+        const useNodeFS = !isBrowser && opts.fs === 'node' && typeof process !== 'undefined'
+        const fs = useNodeFS ? await import('node:fs') : null
 
         const module: LuaEmscriptenModule = await initWasmModule({
             locateFile: (path: string, scriptDirectory: string) => {
@@ -64,32 +65,44 @@ export default class LuaModule {
                     Object.assign(initializedModule.ENV, opts.env)
                 }
 
-                if (fs && child_process) {
+                if (fs) {
                     let rootdirs: string[]
-                    if (process.platform === 'win32') {
-                        const stdout = child_process.execSync('wmic logicaldisk get name', {
-                            encoding: 'utf8',
-                        })
-                        const drives = stdout
-                            .split('\n')
-                            .map((line) => line.trim())
-                            .filter((line) => line && line !== 'Name')
-                            .map((line) => `${line}\\`)
+                    if (opts.fsMountPaths) {
+                        rootdirs = opts.fsMountPaths
+                    } else if (process.platform === 'win32') {
+                        const drives: string[] = []
+                        for (let i = 65; i <= 90; i++) {
+                            const drive = `${String.fromCharCode(i)}:\\`
+                            try {
+                                fs.accessSync(drive)
+                                drives.push(drive)
+                            } catch {
+                                // drive does not exist
+                            }
+                        }
 
                         rootdirs = []
                         for (const drive of drives) {
-                            rootdirs.push(
-                                ...fs
-                                    .readdirSync(drive)
-                                    .filter((dir) => !['dev', 'lib', 'proc'].includes(dir))
-                                    .map((dir) => `${drive}${dir}`.replace(/\\|\\\\/g, '/')),
-                            )
+                            try {
+                                rootdirs.push(
+                                    ...fs
+                                        .readdirSync(drive)
+                                        .filter(dir => !['dev', 'lib', 'proc'].includes(dir))
+                                        .map(dir => `${drive}${dir}`.replace(/\\/g, '/')),
+                                )
+                            } catch {
+                                // drive not readable
+                            }
                         }
                     } else {
-                        rootdirs = fs
-                            .readdirSync('/')
-                            .filter((dir) => !['dev', 'lib', 'proc'].includes(dir))
-                            .map((dir) => `/${dir}`)
+                        try {
+                            rootdirs = fs
+                                .readdirSync('/')
+                                .filter(dir => !['dev', 'lib', 'proc'].includes(dir))
+                                .map(dir => `/${dir}`)
+                        } catch {
+                            rootdirs = []
+                        }
                     }
 
                     for (const dir of rootdirs) {
@@ -97,12 +110,20 @@ export default class LuaModule {
                             const moduleFS = initializedModule.FS
                             moduleFS.mkdirTree(dir)
                             moduleFS.mount(moduleFS.filesystems.NODEFS, { root: dir }, dir)
-                        } catch {
-                            // silently fail to mount (generally due to EPERM)
+                        } catch (err: any) {
+                            const isPermError =
+                                err?.code === 'EACCES' || err?.code === 'EPERM' || err?.errno === 2
+                            if (!isPermError) {
+                                console.warn(`Failed to mount ${dir}:`, err)
+                            }
                         }
                     }
 
-                    initializedModule.FS.chdir(process.cwd().replace(/\\|\\\\/g, '/'))
+                    try {
+                        initializedModule.FS.chdir(process.cwd().replace(/\\/g, '/'))
+                    } catch {
+                        // CWD may not be within mounted paths
+                    }
                 }
 
                 if (opts.stdin || opts.stdout || opts.stderr) {
@@ -113,7 +134,9 @@ export default class LuaModule {
                                   if (!bufferedInput) {
                                       const input = opts.stdin?.()
                                       if (typeof input === 'string') {
-                                          bufferedInput = initializedModule.intArrayFromString(input, true).concat([0])
+                                          bufferedInput = initializedModule
+                                              .intArrayFromString(input, true)
+                                              .concat([0])
                                       } else {
                                           throw new Error('stdin must return a string')
                                       }
@@ -146,7 +169,12 @@ export default class LuaModule {
     public luaL_argerror: (L: LuaState, arg: number, extramsg: string | null) => number
     public luaL_typeerror: (L: LuaState, arg: number, tname: string | null) => number
     public luaL_checklstring: (L: LuaState, arg: number, l: number | null) => string
-    public luaL_optlstring: (L: LuaState, arg: number, def: string | null, l: number | null) => string
+    public luaL_optlstring: (
+        L: LuaState,
+        arg: number,
+        def: string | null,
+        l: number | null,
+    ) => string
     public luaL_checknumber: (L: LuaState, arg: number) => number
     public luaL_optnumber: (L: LuaState, arg: number, def: number) => number
     public luaL_checkinteger: (L: LuaState, arg: number) => number
@@ -174,7 +202,12 @@ export default class LuaModule {
     public luaL_loadstring: (L: LuaState, s: string | null) => LuaReturn
     public luaL_newstate: () => LuaState
     public luaL_len: (L: LuaState, idx: number) => number
-    public luaL_addgsub: (b: number | null, s: string | null, p: string | null, r: string | null) => void
+    public luaL_addgsub: (
+        b: number | null,
+        s: string | null,
+        p: string | null,
+        r: string | null,
+    ) => void
     public luaL_gsub: (L: LuaState, s: string | null, p: string | null, r: string | null) => string
     public luaL_setfuncs: (L: LuaState, l: number | null, nup: number) => void
     public luaL_getsubtable: (L: LuaState, idx: number, fname: string | null) => number
@@ -252,12 +285,41 @@ export default class LuaModule {
     public lua_rawsetp: (L: LuaState, idx: number, p: number | null) => void
     public lua_setmetatable: (L: LuaState, objindex: number) => number
     public lua_setiuservalue: (L: LuaState, idx: number, n: number) => number
-    public lua_callk: (L: LuaState, nargs: number, nresults: number, ctx: number, k: number | null) => void
-    public lua_pcallk: (L: LuaState, nargs: number, nresults: number, errfunc: number, ctx: number, k: number | null) => number
-    public lua_load: (L: LuaState, reader: number | null, dt: number | null, chunkname: string | null, mode: string | null) => LuaReturn
-    public lua_dump: (L: LuaState, writer: number | null, data: number | null, strip: number) => number
+    public lua_callk: (
+        L: LuaState,
+        nargs: number,
+        nresults: number,
+        ctx: number,
+        k: number | null,
+    ) => void
+    public lua_pcallk: (
+        L: LuaState,
+        nargs: number,
+        nresults: number,
+        errfunc: number,
+        ctx: number,
+        k: number | null,
+    ) => number
+    public lua_load: (
+        L: LuaState,
+        reader: number | null,
+        dt: number | null,
+        chunkname: string | null,
+        mode: string | null,
+    ) => LuaReturn
+    public lua_dump: (
+        L: LuaState,
+        writer: number | null,
+        data: number | null,
+        strip: number,
+    ) => number
     public lua_yieldk: (L: LuaState, nresults: number, ctx: number, k: number | null) => number
-    public lua_resume: (L: LuaState, from: LuaState | null, narg: number, nres: number | null) => LuaReturn
+    public lua_resume: (
+        L: LuaState,
+        from: LuaState | null,
+        narg: number,
+        nres: number | null,
+    ) => LuaReturn
     public lua_status: (L: LuaState) => LuaReturn
     public lua_isyieldable: (L: LuaState) => number
     public lua_setwarnf: (L: LuaState, f: number | null, ud: number | null) => void
@@ -278,7 +340,13 @@ export default class LuaModule {
     public lua_getupvalue: (L: LuaState, funcindex: number, n: number) => string
     public lua_setupvalue: (L: LuaState, funcindex: number, n: number) => string
     public lua_upvalueid: (L: LuaState, fidx: number, n: number) => number
-    public lua_upvaluejoin: (L: LuaState, fidx1: number, n1: number, fidx2: number, n2: number) => void
+    public lua_upvaluejoin: (
+        L: LuaState,
+        fidx1: number,
+        n1: number,
+        fidx2: number,
+        n2: number,
+    ) => void
     public lua_sethook: (L: LuaState, func: number | null, mask: number, count: number) => void
     public lua_gethook: (L: LuaState) => number
     public lua_gethookmask: (L: LuaState) => number
@@ -304,42 +372,100 @@ export default class LuaModule {
     public constructor(module: LuaEmscriptenModule) {
         this._emscripten = module
 
-        this.luaL_checkversion_ = this.cwrap('luaL_checkversion_', null, ['number', 'number', 'number'])
-        this.luaL_getmetafield = this.cwrap('luaL_getmetafield', 'number', ['number', 'number', 'string'])
+        this.luaL_checkversion_ = this.cwrap('luaL_checkversion_', null, [
+            'number',
+            'number',
+            'number',
+        ])
+        this.luaL_getmetafield = this.cwrap('luaL_getmetafield', 'number', [
+            'number',
+            'number',
+            'string',
+        ])
         this.luaL_callmeta = this.cwrap('luaL_callmeta', 'number', ['number', 'number', 'string'])
         this.luaL_tolstring = this.cwrap('luaL_tolstring', 'string', ['number', 'number', 'number'])
         this.luaL_argerror = this.cwrap('luaL_argerror', 'number', ['number', 'number', 'string'])
         this.luaL_typeerror = this.cwrap('luaL_typeerror', 'number', ['number', 'number', 'string'])
-        this.luaL_checklstring = this.cwrap('luaL_checklstring', 'string', ['number', 'number', 'number'])
-        this.luaL_optlstring = this.cwrap('luaL_optlstring', 'string', ['number', 'number', 'string', 'number'])
+        this.luaL_checklstring = this.cwrap('luaL_checklstring', 'string', [
+            'number',
+            'number',
+            'number',
+        ])
+        this.luaL_optlstring = this.cwrap('luaL_optlstring', 'string', [
+            'number',
+            'number',
+            'string',
+            'number',
+        ])
         this.luaL_checknumber = this.cwrap('luaL_checknumber', 'number', ['number', 'number'])
         this.luaL_optnumber = this.cwrap('luaL_optnumber', 'number', ['number', 'number', 'number'])
         this.luaL_checkinteger = this.cwrap('luaL_checkinteger', 'number', ['number', 'number'])
-        this.luaL_optinteger = this.cwrap('luaL_optinteger', 'number', ['number', 'number', 'number'])
+        this.luaL_optinteger = this.cwrap('luaL_optinteger', 'number', [
+            'number',
+            'number',
+            'number',
+        ])
         this.luaL_checkstack = this.cwrap('luaL_checkstack', null, ['number', 'number', 'string'])
         this.luaL_checktype = this.cwrap('luaL_checktype', null, ['number', 'number', 'number'])
         this.luaL_checkany = this.cwrap('luaL_checkany', null, ['number', 'number'])
         this.luaL_newmetatable = this.cwrap('luaL_newmetatable', 'number', ['number', 'string'])
         this.luaL_setmetatable = this.cwrap('luaL_setmetatable', null, ['number', 'string'])
         this.luaL_testudata = this.cwrap('luaL_testudata', 'number', ['number', 'number', 'string'])
-        this.luaL_checkudata = this.cwrap('luaL_checkudata', 'number', ['number', 'number', 'string'])
+        this.luaL_checkudata = this.cwrap('luaL_checkudata', 'number', [
+            'number',
+            'number',
+            'string',
+        ])
         this.luaL_where = this.cwrap('luaL_where', null, ['number', 'number'])
-        this.luaL_fileresult = this.cwrap('luaL_fileresult', 'number', ['number', 'number', 'string'])
+        this.luaL_fileresult = this.cwrap('luaL_fileresult', 'number', [
+            'number',
+            'number',
+            'string',
+        ])
         this.luaL_execresult = this.cwrap('luaL_execresult', 'number', ['number', 'number'])
         this.luaL_ref = this.cwrap('luaL_ref', 'number', ['number', 'number'])
         this.luaL_unref = this.cwrap('luaL_unref', null, ['number', 'number', 'number'])
         this.luaL_loadfilex = this.cwrap('luaL_loadfilex', 'number', ['number', 'string', 'string'])
-        this.luaL_loadbufferx = this.cwrap('luaL_loadbufferx', 'number', ['number', 'string|number', 'number', 'string|number', 'string'])
+        this.luaL_loadbufferx = this.cwrap('luaL_loadbufferx', 'number', [
+            'number',
+            'string|number',
+            'number',
+            'string|number',
+            'string',
+        ])
         this.luaL_loadstring = this.cwrap('luaL_loadstring', 'number', ['number', 'string'])
         this.luaL_newstate = this.cwrap('luaL_newstate', 'number', [])
         this.luaL_len = this.cwrap('luaL_len', 'number', ['number', 'number'])
-        this.luaL_addgsub = this.cwrap('luaL_addgsub', null, ['number', 'string', 'string', 'string'])
+        this.luaL_addgsub = this.cwrap('luaL_addgsub', null, [
+            'number',
+            'string',
+            'string',
+            'string',
+        ])
         this.luaL_gsub = this.cwrap('luaL_gsub', 'string', ['number', 'string', 'string', 'string'])
         this.luaL_setfuncs = this.cwrap('luaL_setfuncs', null, ['number', 'number', 'number'])
-        this.luaL_getsubtable = this.cwrap('luaL_getsubtable', 'number', ['number', 'number', 'string'])
-        this.luaL_traceback = this.cwrap('luaL_traceback', null, ['number', 'number', 'string', 'number'])
-        this.luaL_requiref = this.cwrap('luaL_requiref', null, ['number', 'string', 'number', 'number'])
-        this.luaL_openselectedlibs = this.cwrap('luaL_openselectedlibs', null, ['number', 'number', 'number'])
+        this.luaL_getsubtable = this.cwrap('luaL_getsubtable', 'number', [
+            'number',
+            'number',
+            'string',
+        ])
+        this.luaL_traceback = this.cwrap('luaL_traceback', null, [
+            'number',
+            'number',
+            'string',
+            'number',
+        ])
+        this.luaL_requiref = this.cwrap('luaL_requiref', null, [
+            'number',
+            'string',
+            'number',
+            'number',
+        ])
+        this.luaL_openselectedlibs = this.cwrap('luaL_openselectedlibs', null, [
+            'number',
+            'number',
+            'number',
+        ])
         this.luaL_buffinit = this.cwrap('luaL_buffinit', null, ['number', 'number'])
         this.luaL_prepbuffsize = this.cwrap('luaL_prepbuffsize', 'string', ['number', 'number'])
         this.luaL_addlstring = this.cwrap('luaL_addlstring', null, ['number', 'string', 'number'])
@@ -347,12 +473,16 @@ export default class LuaModule {
         this.luaL_addvalue = this.cwrap('luaL_addvalue', null, ['number'])
         this.luaL_pushresult = this.cwrap('luaL_pushresult', null, ['number'])
         this.luaL_pushresultsize = this.cwrap('luaL_pushresultsize', null, ['number', 'number'])
-        this.luaL_buffinitsize = this.cwrap('luaL_buffinitsize', 'string', ['number', 'number', 'number'])
+        this.luaL_buffinitsize = this.cwrap('luaL_buffinitsize', 'string', [
+            'number',
+            'number',
+            'number',
+        ])
         this.lua_newstate = this.cwrap('lua_newstate', 'number', ['number', 'number', 'number'])
         this.lua_close = this.cwrap('lua_close', null, ['number'])
         this.lua_newthread = this.cwrap('lua_newthread', 'number', ['number'])
         this.lua_closethread = this.cwrap('lua_closethread', 'number', ['number', 'number'])
-        this.lua_resetthread = (L) => this.lua_closethread(L, null)
+        this.lua_resetthread = L => this.lua_closethread(L, null)
         this.lua_atpanic = this.cwrap('lua_atpanic', 'number', ['number', 'number'])
         this.lua_version = this.cwrap('lua_version', 'number', ['number'])
         this.lua_absindex = this.cwrap('lua_absindex', 'number', ['number', 'number'])
@@ -381,11 +511,20 @@ export default class LuaModule {
         this.lua_topointer = this.cwrap('lua_topointer', 'number', ['number', 'number'])
         this.lua_arith = this.cwrap('lua_arith', null, ['number', 'number'])
         this.lua_rawequal = this.cwrap('lua_rawequal', 'number', ['number', 'number', 'number'])
-        this.lua_compare = this.cwrap('lua_compare', 'number', ['number', 'number', 'number', 'number'])
+        this.lua_compare = this.cwrap('lua_compare', 'number', [
+            'number',
+            'number',
+            'number',
+            'number',
+        ])
         this.lua_pushnil = this.cwrap('lua_pushnil', null, ['number'])
         this.lua_pushnumber = this.cwrap('lua_pushnumber', null, ['number', 'number'])
         this.lua_pushinteger = this.cwrap('lua_pushinteger', null, ['number', 'number'])
-        this.lua_pushlstring = this.cwrap('lua_pushlstring', 'string', ['number', 'string|number', 'number'])
+        this.lua_pushlstring = this.cwrap('lua_pushlstring', 'string', [
+            'number',
+            'string|number',
+            'number',
+        ])
         this.lua_pushstring = this.cwrap('lua_pushstring', 'string', ['number', 'string|number'])
         this.lua_pushcclosure = this.cwrap('lua_pushcclosure', null, ['number', 'number', 'number'])
         this.lua_pushboolean = this.cwrap('lua_pushboolean', null, ['number', 'number'])
@@ -399,9 +538,17 @@ export default class LuaModule {
         this.lua_rawgeti = this.cwrap('lua_rawgeti', 'number', ['number', 'number', 'number'])
         this.lua_rawgetp = this.cwrap('lua_rawgetp', 'number', ['number', 'number', 'number'])
         this.lua_createtable = this.cwrap('lua_createtable', null, ['number', 'number', 'number'])
-        this.lua_newuserdatauv = this.cwrap('lua_newuserdatauv', 'number', ['number', 'number', 'number'])
+        this.lua_newuserdatauv = this.cwrap('lua_newuserdatauv', 'number', [
+            'number',
+            'number',
+            'number',
+        ])
         this.lua_getmetatable = this.cwrap('lua_getmetatable', 'number', ['number', 'number'])
-        this.lua_getiuservalue = this.cwrap('lua_getiuservalue', 'number', ['number', 'number', 'number'])
+        this.lua_getiuservalue = this.cwrap('lua_getiuservalue', 'number', [
+            'number',
+            'number',
+            'number',
+        ])
         this.lua_setglobal = this.cwrap('lua_setglobal', null, ['number', 'string'])
         this.lua_settable = this.cwrap('lua_settable', null, ['number', 'number'])
         this.lua_setfield = this.cwrap('lua_setfield', null, ['number', 'number', 'string'])
@@ -410,13 +557,46 @@ export default class LuaModule {
         this.lua_rawseti = this.cwrap('lua_rawseti', null, ['number', 'number', 'number'])
         this.lua_rawsetp = this.cwrap('lua_rawsetp', null, ['number', 'number', 'number'])
         this.lua_setmetatable = this.cwrap('lua_setmetatable', 'number', ['number', 'number'])
-        this.lua_setiuservalue = this.cwrap('lua_setiuservalue', 'number', ['number', 'number', 'number'])
-        this.lua_callk = this.cwrap('lua_callk', null, ['number', 'number', 'number', 'number', 'number'])
-        this.lua_pcallk = this.cwrap('lua_pcallk', 'number', ['number', 'number', 'number', 'number', 'number', 'number'])
-        this.lua_load = this.cwrap('lua_load', 'number', ['number', 'number', 'number', 'string', 'string'])
+        this.lua_setiuservalue = this.cwrap('lua_setiuservalue', 'number', [
+            'number',
+            'number',
+            'number',
+        ])
+        this.lua_callk = this.cwrap('lua_callk', null, [
+            'number',
+            'number',
+            'number',
+            'number',
+            'number',
+        ])
+        this.lua_pcallk = this.cwrap('lua_pcallk', 'number', [
+            'number',
+            'number',
+            'number',
+            'number',
+            'number',
+            'number',
+        ])
+        this.lua_load = this.cwrap('lua_load', 'number', [
+            'number',
+            'number',
+            'number',
+            'string',
+            'string',
+        ])
         this.lua_dump = this.cwrap('lua_dump', 'number', ['number', 'number', 'number', 'number'])
-        this.lua_yieldk = this.cwrap('lua_yieldk', 'number', ['number', 'number', 'number', 'number'])
-        this.lua_resume = this.cwrap('lua_resume', 'number', ['number', 'number', 'number', 'number'])
+        this.lua_yieldk = this.cwrap('lua_yieldk', 'number', [
+            'number',
+            'number',
+            'number',
+            'number',
+        ])
+        this.lua_resume = this.cwrap('lua_resume', 'number', [
+            'number',
+            'number',
+            'number',
+            'number',
+        ])
         this.lua_status = this.cwrap('lua_status', 'number', ['number'])
         this.lua_isyieldable = this.cwrap('lua_isyieldable', 'number', ['number'])
         this.lua_setwarnf = this.cwrap('lua_setwarnf', null, ['number', 'number', 'number'])
@@ -437,7 +617,13 @@ export default class LuaModule {
         this.lua_getupvalue = this.cwrap('lua_getupvalue', 'string', ['number', 'number', 'number'])
         this.lua_setupvalue = this.cwrap('lua_setupvalue', 'string', ['number', 'number', 'number'])
         this.lua_upvalueid = this.cwrap('lua_upvalueid', 'number', ['number', 'number', 'number'])
-        this.lua_upvaluejoin = this.cwrap('lua_upvaluejoin', null, ['number', 'number', 'number', 'number', 'number'])
+        this.lua_upvaluejoin = this.cwrap('lua_upvaluejoin', null, [
+            'number',
+            'number',
+            'number',
+            'number',
+            'number',
+        ])
         this.lua_sethook = this.cwrap('lua_sethook', null, ['number', 'number', 'number', 'number'])
         this.lua_gethook = this.cwrap('lua_gethook', 'number', ['number'])
         this.lua_gethookmask = this.cwrap('lua_gethookmask', 'number', ['number'])
@@ -454,7 +640,7 @@ export default class LuaModule {
         this.luaopen_math = this.cwrap('luaopen_math', 'number', ['number'])
         this.luaopen_debug = this.cwrap('luaopen_debug', 'number', ['number'])
         this.luaopen_package = this.cwrap('luaopen_package', 'number', ['number'])
-        this.luaL_openlibs = (L) => this.luaL_openselectedlibs(L, -1, 0)
+        this.luaL_openlibs = L => this.luaL_openselectedlibs(L, -1, 0)
     }
 
     public lua_remove(luaState: LuaState, index: number): void {
@@ -540,10 +726,15 @@ export default class LuaModule {
         argTypes: Array<Emscripten.JSType | 'string|number'>,
     ): (...args: any[]) => any {
         // optimization for common case
-        const hasStringOrNumber = argTypes.some((argType) => argType === 'string|number')
+        const hasStringOrNumber = argTypes.some(argType => argType === 'string|number')
         if (!hasStringOrNumber) {
             return (...args: any[]) =>
-                this._emscripten.ccall(name, returnType, argTypes as Emscripten.JSType[], args as Emscripten.TypeCompatibleWithC[])
+                this._emscripten.ccall(
+                    name,
+                    returnType,
+                    argTypes as Emscripten.JSType[],
+                    args as Emscripten.TypeCompatibleWithC[],
+                )
         }
 
         return (...args: any[]) => {
@@ -555,7 +746,9 @@ export default class LuaModule {
                     } else {
                         // because it will be freed later, this can only be used on functions that lua internally copies the string
                         if (args[i]?.length > 1024) {
-                            const bufferPointer = this._emscripten.stringToNewUTF8(args[i] as string)
+                            const bufferPointer = this._emscripten.stringToNewUTF8(
+                                args[i] as string,
+                            )
                             args[i] = bufferPointer
                             pointersToBeFreed.push(bufferPointer)
                             return 'number'
@@ -568,7 +761,12 @@ export default class LuaModule {
             })
 
             try {
-                return this._emscripten.ccall(name, returnType, resolvedArgTypes, args as Emscripten.TypeCompatibleWithC[])
+                return this._emscripten.ccall(
+                    name,
+                    returnType,
+                    resolvedArgTypes,
+                    args as Emscripten.TypeCompatibleWithC[],
+                )
             } finally {
                 for (const pointer of pointersToBeFreed) {
                     this._emscripten._free(pointer)
@@ -578,7 +776,9 @@ export default class LuaModule {
     }
 }
 
-function createOutputWriter(writer?: (content: string) => void): ((charCode: number | null) => void) | null {
+function createOutputWriter(
+    writer?: (content: string) => void,
+): ((charCode: number | null) => void) | null {
     if (!writer) {
         return null
     }
