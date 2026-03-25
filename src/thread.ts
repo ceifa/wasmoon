@@ -330,7 +330,7 @@ export default class Thread {
                 }, 'vii')
             }
 
-            this.lua.lua_sethook(this.address, this.hookFunctionPointer, LuaEventMasks.Count, INSTRUCTION_HOOK_COUNT)
+            this.lua.lua_sethook(this.address, this.hookFunctionPointer!, LuaEventMasks.Count, INSTRUCTION_HOOK_COUNT)
             this.timeout = timeout
         } else if (this.hookFunctionPointer) {
             this.hookFunctionPointer = undefined

@@ -62,7 +62,7 @@ describe('Browser environment', () => {
 
     before(async function () {
         this.timeout(30_000)
-            ; ({ server, port } = await startServer())
+        ;({ server, port } = await startServer())
         browser = await chromium.launch()
         context = await browser.newContext()
     })

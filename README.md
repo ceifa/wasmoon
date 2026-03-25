@@ -80,10 +80,10 @@ Wasmoon compiles the [official Lua code](https://github.com/lua/lua) to WebAssem
 
 Because of WebAssembly, wasmoon runs Lua code significantly faster than fengari. The table below shows results from a [heap sort benchmark](https://github.com/ceifa/wasmoon/blob/main/bench/heapsort.lua) sorting a list of 2,000 numbers (100 iterations, 5 warmup):
 
-|                  | avg        | median     | min        | max        | stddev    | relative |
-| ---------------- | ---------- | ---------- | ---------- | ---------- | --------- | -------- |
-| **Wasmoon**      | 13.41 ms   | 13.07 ms   | 12.20 ms   | 16.23 ms   | 1.12 ms   | 1.00x    |
-| **Fengari**      | 137.36 ms  | 138.51 ms  | 119.70 ms  | 165.54 ms  | 11.16 ms  | 10.24x   |
+|             | avg       | median    | min       | max       | stddev   | relative |
+| ----------- | --------- | --------- | --------- | --------- | -------- | -------- |
+| **Wasmoon** | 13.41 ms  | 13.07 ms  | 12.20 ms  | 16.23 ms  | 1.12 ms  | 1.00x    |
+| **Fengari** | 137.36 ms | 138.51 ms | 119.70 ms | 165.54 ms | 11.16 ms | 10.24x   |
 
 Wasmoon is **~10x faster** than fengari for pure Lua execution. If your use case involves heavy interop between JS and Lua, the difference may be smaller, benchmark your specific scenario.
 

@@ -21,7 +21,7 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     PATH: {
         dirname: (typeof import('node:path'))['dirname']
     }
-    stringToNewUTF8: typeof allocateUTF8
+    stringToNewUTF8: typeof stringToNewUTF8
     lengthBytesUTF8: typeof lengthBytesUTF8
     stringToUTF8: typeof stringToUTF8
     intArrayFromString: typeof intArrayFromString
@@ -66,61 +66,74 @@ export default class LuaModule {
                 }
 
                 if (fs) {
-                    let rootdirs: string[]
-                    if (opts.fsMountPaths) {
-                        rootdirs = opts.fsMountPaths
-                    } else if (process.platform === 'win32') {
-                        const drives: string[] = []
-                        for (let i = 65; i <= 90; i++) {
-                            const drive = `${String.fromCharCode(i)}:\\`
-                            try {
-                                fs.accessSync(drive)
-                                drives.push(drive)
-                            } catch {
-                                // drive does not exist
-                            }
-                        }
+                    const cwd = process.cwd().replace(/\\/g, '/')
+                    // Default to mounting the drive containing the CWD
+                    const cwdDrive = process.platform === 'win32' ? cwd.slice(0, 3) : '/'
+                    const mountPaths = opts.fsMountPaths ?? [cwdDrive]
 
-                        rootdirs = []
-                        for (const drive of drives) {
+                    // Deduplicate and remove paths that are children of other mount paths
+                    const normalized = [...new Set(mountPaths.map(p => p.replace(/\\/g, '/')))]
+                    const filtered = normalized.filter(
+                        path =>
+                            !normalized.some(
+                                other => other !== path && path.startsWith(other + '/'),
+                            ),
+                    )
+
+                    // Expand drive roots into their subdirectories, since
+                    // Emscripten's VFS already owns "/" and cannot be mounted over.
+                    // Skip virtual/system filesystems that cause issues with NODEFS.
+                    const skipDirs = [
+                        'dev',
+                        'proc',
+                        'sys',
+                        'run',
+                        'snap',
+                        'System Volume Information',
+                        '$Recycle.Bin',
+                        'Recovery',
+                    ]
+                    const expanded: string[] = []
+                    for (const dir of filtered) {
+                        const isDriveRoot = dir === '/' || /^[A-Za-z]:\/$/.test(dir)
+                        if (isDriveRoot) {
                             try {
-                                rootdirs.push(
-                                    ...fs
-                                        .readdirSync(drive)
-                                        .filter(dir => !['dev', 'lib', 'proc'].includes(dir))
-                                        .map(dir => `${drive}${dir}`.replace(/\\/g, '/')),
-                                )
+                                const children = fs
+                                    .readdirSync(dir)
+                                    .filter((child: string) => !skipDirs.includes(child))
+                                    .map((child: string) =>
+                                        dir === '/'
+                                            ? `/${child}`
+                                            : `${dir}${child}`.replace(/\\/g, '/'),
+                                    )
+                                expanded.push(...children)
                             } catch {
                                 // drive not readable
                             }
-                        }
-                    } else {
-                        try {
-                            rootdirs = fs
-                                .readdirSync('/')
-                                .filter(dir => !['dev', 'lib', 'proc'].includes(dir))
-                                .map(dir => `/${dir}`)
-                        } catch {
-                            rootdirs = []
+                        } else {
+                            expanded.push(dir)
                         }
                     }
 
-                    for (const dir of rootdirs) {
+                    for (const dir of expanded) {
                         try {
                             const moduleFS = initializedModule.FS
                             moduleFS.mkdirTree(dir)
                             moduleFS.mount(moduleFS.filesystems.NODEFS, { root: dir }, dir)
                         } catch (err: any) {
-                            const isPermError =
-                                err?.code === 'EACCES' || err?.code === 'EPERM' || err?.errno === 2
-                            if (!isPermError) {
+                            // Ignore permission/not-found errors from both Node.js
+                            // (string .code) and Emscripten ErrnoError (numeric .errno)
+                            const isIgnorableError =
+                                ['EACCES', 'EPERM', 'ENOENT'].includes(err?.code) ||
+                                err?.name === 'ErrnoError'
+                            if (!isIgnorableError) {
                                 console.warn(`Failed to mount ${dir}:`, err)
                             }
                         }
                     }
 
                     try {
-                        initializedModule.FS.chdir(process.cwd().replace(/\\/g, '/'))
+                        initializedModule.FS.chdir(cwd)
                     } catch {
                         // CWD may not be within mounted paths
                     }
@@ -142,12 +155,12 @@ export default class LuaModule {
                                       }
                                   }
 
-                                  if (bufferedInput.length === 0) {
+                                  if (bufferedInput!.length === 0) {
                                       bufferedInput = undefined
                                       return null
                                   }
 
-                                  const item = bufferedInput.shift()
+                                  const item = bufferedInput!.shift()
                                   return !item || item === 0 ? null : item
                               }
                             : null,
