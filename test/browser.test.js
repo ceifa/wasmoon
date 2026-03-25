@@ -82,8 +82,8 @@ describe('Browser environment', () => {
             await page.goto(`http://127.0.0.1:${port}/`)
             await page.waitForFunction(() => window.__ready === true, null, { timeout: 15_000 })
 
-            const result = await page.evaluate(async (code) => {
-                return await window.__runTest(code)
+            const result = await page.evaluate(async (c) => {
+                return await window.__runTest(c)
             }, code)
 
             if (errors.length > 0) {

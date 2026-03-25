@@ -9,5 +9,13 @@
     "ignorePatterns": ["dist/**", "build/**", "rolldown.config.ts", "rolldown.config.*.js", "utils/**"],
     "env": {
         "builtin": true
-    }
+    },
+    "overrides": [
+        {
+            "files": ["test/**"],
+            "rules": {
+                "no-unused-expressions": "off"
+            }
+        }
+    ]
 }

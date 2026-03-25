@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, symlinkSync, readdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { expect } from 'chai'
