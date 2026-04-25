@@ -1,4 +1,4 @@
-import { CreateEngineOptions } from './types'
+import { CreateEngineOptions, LUA_REGISTRYINDEX } from './types'
 import Global from './global'
 import type LuaModule from './module'
 import Thread from './thread'
@@ -62,7 +62,7 @@ export default class LuaEngine {
      * @returns A Promise that resolves to the result returned by the Lua script execution.
      */
     public doString(script: string): Promise<any> {
-        return this.callByteCode((thread) => thread.loadString(script))
+        return this.callByteCode(thread => thread.loadString(script))
     }
 
     /**
@@ -71,7 +71,7 @@ export default class LuaEngine {
      * @returns - A Promise that resolves to the result returned by the Lua script execution.
      */
     public doFile(filename: string): Promise<any> {
-        return this.callByteCode((thread) => thread.loadFile(filename))
+        return this.callByteCode(thread => thread.loadFile(filename))
     }
 
     /**
@@ -99,7 +99,8 @@ export default class LuaEngine {
     // WARNING: It will not wait for open handles and can potentially cause bugs if JS code tries to reference Lua after executed
     private async callByteCode(loader: (thread: Thread) => void): Promise<any> {
         const thread = this.global.newThread()
-        const threadIndex = this.global.getTop()
+        // Move the thread off the global stack and into the registry as a GC anchor so it doesn't pile threads up into the stack
+        const ref = this.module.luaL_ref(this.global.address, LUA_REGISTRYINDEX)
         try {
             loader(thread)
             const result = await thread.run(0)
@@ -111,8 +112,7 @@ export default class LuaEngine {
             }
             return undefined
         } finally {
-            // Pop the read on success or failure
-            this.global.remove(threadIndex)
+            this.module.luaL_unref(this.global.address, LUA_REGISTRYINDEX, ref)
         }
     }
 }

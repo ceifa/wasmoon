@@ -834,4 +834,20 @@ describe('State', () => {
             expect(result).to.equal(a + b)
         }
     })
+
+    it('many concurrent doString calls should succeed', async function () {
+        this.timeout(15000)
+        const state = await getState()
+        const length = 55
+
+        const promises = []
+        for (let i = 0; i < length; i++) {
+            promises.push(state.doString(`return ${i}`))
+        }
+        const results = await Promise.all(promises)
+
+        for (let i = 0; i < length; i++) {
+            expect(results[i]).to.equal(i)
+        }
+    })
 })
