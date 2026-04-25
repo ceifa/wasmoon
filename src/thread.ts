@@ -14,6 +14,7 @@ import {
     LuaType,
     PointerSize,
 } from './types'
+import { isPromise } from './utils'
 
 export interface OrderedExtension {
     // Bigger is more important
@@ -121,7 +122,7 @@ export default class Thread {
                     this.pop(resumeResult.resultCount)
 
                     // If there's a result and it's a promise, then wait for it.
-                    if (lastValue === Promise.resolve(lastValue)) {
+                    if (isPromise(lastValue)) {
                         await lastValue
                     } else {
                         // If it's a non-promise, then skip a tick to yield for promises, timers, etc.

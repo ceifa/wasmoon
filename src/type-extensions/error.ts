@@ -51,7 +51,7 @@ class ErrorTypeExtension extends TypeExtension<Error> {
         thread.lua.lua_pop(thread.address, 1)
 
         if (injectObject) {
-            // Lastly create a static Promise constructor.
+            // Lastly create a static Error constructor.
             thread.set('Error', {
                 create: (message: string | undefined) => {
                     if (message && typeof message !== 'string') {

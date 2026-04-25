@@ -22,7 +22,9 @@ class TestClass {
 describe('State', () => {
     let intervals = []
     const setIntervalSafe = (callback, interval) => {
-        intervals.push(setInterval(() => callback(), interval))
+        const handle = setInterval(() => callback(), interval)
+        intervals.push(handle)
+        return () => clearInterval(handle)
     }
 
     afterEach(() => {
@@ -187,16 +189,26 @@ describe('State', () => {
 
         await state.doString(`
             test = ""
-            setInterval(function()
+            done = false
+            local stop
+            stop = setInterval(function()
                 test = test .. "i"
+                if #test >= 5 then
+                    stop()
+                    done = true
+                end
             end, 1)
         `)
-        await setTimeout(20)
 
-        const test = state.global.get('test')
-        expect(test).length.above(3)
-        expect(test).length.below(21)
-        expect(test).to.be.equal(''.padEnd(test.length, 'i'))
+        const deadline = Date.now() + 1000
+        while (!state.global.get('done')) {
+            if (Date.now() > deadline) {
+                throw new Error('timed out waiting for scheduled lua calls')
+            }
+            await setTimeout(5)
+        }
+
+        expect(state.global.get('test')).to.be.equal('iiiii')
     })
 
     it('scheduled lua calls should fail silently if invalid', async () => {

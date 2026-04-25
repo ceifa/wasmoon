@@ -62,7 +62,7 @@ export default class LuaEngine {
      * @returns A Promise that resolves to the result returned by the Lua script execution.
      */
     public doString(script: string): Promise<any> {
-        return this.callByteCode(thread => thread.loadString(script))
+        return this.callByteCode((thread) => thread.loadString(script))
     }
 
     /**
@@ -71,7 +71,7 @@ export default class LuaEngine {
      * @returns - A Promise that resolves to the result returned by the Lua script execution.
      */
     public doFile(filename: string): Promise<any> {
-        return this.callByteCode(thread => thread.loadFile(filename))
+        return this.callByteCode((thread) => thread.loadFile(filename))
     }
 
     /**

@@ -52,8 +52,6 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
 
         this.gcPointer = thread.lua._emscripten.addFunction((calledL: LuaState) => {
             // Throws a lua error which does a jump if it does not match.
-            thread.lua.luaL_checkudata(calledL, 1, this.name)
-
             const userDataPointer = thread.lua.luaL_checkudata(calledL, 1, this.name)
             const referencePointer = thread.lua._emscripten.getValue(userDataPointer, '*')
             thread.lua.unref(referencePointer)

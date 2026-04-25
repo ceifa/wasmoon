@@ -58,19 +58,13 @@ window.__ready = true
 }
 
 describe('Browser environment', () => {
-    let server, port, browser, context
+    let port, browser, context
 
     before(async function () {
         this.timeout(30_000)
-        ;({ server, port } = await startServer())
+        ;({ port } = await startServer())
         browser = await chromium.launch()
         context = await browser.newContext()
-    })
-
-    after(async () => {
-        await context?.close()
-        await browser?.close()
-        server?.close()
     })
 
     async function runInBrowser(code) {
