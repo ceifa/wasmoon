@@ -1,5 +1,5 @@
 import initWasmModule from '../build/glue.js'
-import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType } from './types.js'
+import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from './types.js'
 // A rolldown plugin will resolve this to the current version on package.json
 import version from 'package-version'
 
@@ -29,6 +29,12 @@ interface LuaEmscriptenModule extends EmscriptenModule {
     ENV: EnvironmentVariables
     _realloc: (pointer: number, size: number) => number
 }
+
+// Above this a dedicated allocation is used, so one huge string cannot permanently retain the
+// scratch buffer.
+const REUSABLE_STRING_BUFFER_LIMIT = 64 * 1024
+// Worst case UTF-8 expansion for a JS (UTF-16) string.
+const MAX_UTF8_BYTES_PER_CHAR = 3
 
 interface ReferenceMetadata {
     index: number
@@ -158,7 +164,6 @@ export default class LuaModule {
     public luaL_checkversion_: (L: LuaState, ver: number, sz: number) => void
     public luaL_getmetafield: (L: LuaState, obj: number, e: string | null) => LuaType
     public luaL_callmeta: (L: LuaState, obj: number, e: string | null) => number
-    public luaL_tolstring: (L: LuaState, idx: number, len: number | null) => string
     public luaL_argerror: (L: LuaState, arg: number, extramsg: string | null) => number
     public luaL_typeerror: (L: LuaState, arg: number, tname: string | null) => number
     public luaL_checklstring: (L: LuaState, arg: number, l: number | null) => string
@@ -230,7 +235,6 @@ export default class LuaModule {
     public lua_tonumberx: (L: LuaState, idx: number, isnum: number | null) => number
     public lua_tointegerx: (L: LuaState, idx: number, isnum: number | null) => bigint
     public lua_toboolean: (L: LuaState, idx: number) => number
-    public lua_tolstring: (L: LuaState, idx: number, len: number | null) => string
     public lua_rawlen: (L: LuaState, idx: number) => bigint
     public lua_tocfunction: (L: LuaState, idx: number) => number
     public lua_touserdata: (L: LuaState, idx: number) => number
@@ -242,8 +246,7 @@ export default class LuaModule {
     public lua_pushnil: (L: LuaState) => void
     public lua_pushnumber: (L: LuaState, n: number) => void
     public lua_pushinteger: (L: LuaState, n: bigint) => void
-    public lua_pushlstring: (L: LuaState, s: string | number | null, len: number) => string
-    public lua_pushstring: (L: LuaState, s: string | number | null) => string
+    public lua_pushlstring: (L: LuaState, s: number, len: number) => void
     public lua_pushcclosure: (L: LuaState, fn: number, n: number) => void
     public lua_pushboolean: (L: LuaState, b: number) => void
     public lua_pushlightuserdata: (L: LuaState, p: number | null) => void
@@ -317,13 +320,25 @@ export default class LuaModule {
     private availableReferences: number[] = []
     private lastRefIndex?: number
 
+    // Lua strings are byte arrays that may contain NUL, so they cannot go through Emscripten's
+    // NUL-terminated string marshalling. These work on pointers and explicit lengths instead.
+    private readonly rawLuaToLString: (L: LuaState, idx: number, len: number) => number
+    private readonly rawLuaLToLString: (L: LuaState, idx: number, len: number) => number
+    private readonly rawLuaPushString: (L: LuaState, s: number) => number
+
+    private readonly textDecoder = new TextDecoder()
+    private readonly textEncoder = new TextEncoder()
+    // C writes it immediately before returning and we read it straight after with no interleaving
+    // await, so a single shared slot stays reentrancy safe.
+    private readonly sizeScratch: number
+    private stringBuffer = 0
+
     public constructor(module: LuaEmscriptenModule) {
         this._emscripten = module
 
         this.luaL_checkversion_ = this.cwrap('luaL_checkversion_', null, ['number', 'number', 'number'])
         this.luaL_getmetafield = this.cwrap('luaL_getmetafield', 'number', ['number', 'number', 'string'])
         this.luaL_callmeta = this.cwrap('luaL_callmeta', 'number', ['number', 'number', 'string'])
-        this.luaL_tolstring = this.cwrap('luaL_tolstring', 'string', ['number', 'number', 'number'])
         this.luaL_argerror = this.cwrap('luaL_argerror', 'number', ['number', 'number', 'string'])
         this.luaL_typeerror = this.cwrap('luaL_typeerror', 'number', ['number', 'number', 'string'])
         this.luaL_checklstring = this.cwrap('luaL_checklstring', 'string', ['number', 'number', 'number'])
@@ -389,7 +404,6 @@ export default class LuaModule {
         this.lua_tonumberx = this.cwrap('lua_tonumberx', 'number', ['number', 'number', 'number'])
         this.lua_tointegerx = this.cwrap('lua_tointegerx', 'number', ['number', 'number', 'number'])
         this.lua_toboolean = this.cwrap('lua_toboolean', 'number', ['number', 'number'])
-        this.lua_tolstring = this.cwrap('lua_tolstring', 'string', ['number', 'number', 'number'])
         this.lua_rawlen = this.cwrap('lua_rawlen', 'number', ['number', 'number'])
         this.lua_tocfunction = this.cwrap('lua_tocfunction', 'number', ['number', 'number'])
         this.lua_touserdata = this.cwrap('lua_touserdata', 'number', ['number', 'number'])
@@ -401,8 +415,6 @@ export default class LuaModule {
         this.lua_pushnil = this.cwrap('lua_pushnil', null, ['number'])
         this.lua_pushnumber = this.cwrap('lua_pushnumber', null, ['number', 'number'])
         this.lua_pushinteger = this.cwrap('lua_pushinteger', null, ['number', 'number'])
-        this.lua_pushlstring = this.cwrap('lua_pushlstring', 'string', ['number', 'string|number', 'number'])
-        this.lua_pushstring = this.cwrap('lua_pushstring', 'string', ['number', 'string|number'])
         this.lua_pushcclosure = this.cwrap('lua_pushcclosure', null, ['number', 'number', 'number'])
         this.lua_pushboolean = this.cwrap('lua_pushboolean', null, ['number', 'number'])
         this.lua_pushlightuserdata = this.cwrap('lua_pushlightuserdata', null, ['number', 'number'])
@@ -471,6 +483,82 @@ export default class LuaModule {
         this.luaopen_debug = this.cwrap('luaopen_debug', 'number', ['number'])
         this.luaopen_package = this.cwrap('luaopen_package', 'number', ['number'])
         this.luaL_openlibs = (L) => this.luaL_openselectedlibs(L, -1, 0)
+
+        this.rawLuaToLString = this.cwrap('lua_tolstring', 'number', ['number', 'number', 'number'])
+        this.rawLuaLToLString = this.cwrap('luaL_tolstring', 'number', ['number', 'number', 'number'])
+        this.rawLuaPushString = this.cwrap('lua_pushstring', 'number', ['number', 'number'])
+        this.lua_pushlstring = this.cwrap('lua_pushlstring', 'number', ['number', 'number', 'number'])
+
+        this.sizeScratch = module._malloc(PointerSize)
+        if (!this.sizeScratch) {
+            throw new Error('failed to allocate the scratch buffer for string lengths')
+        }
+    }
+
+    /**
+     * Bytes that aren't valid UTF-8 are replaced with U+FFFD. Use {@link lua_tobytes} when the
+     * value holds arbitrary binary data (`string.dump`, `string.pack`, ciphertext, ...).
+     */
+    public lua_tolstring(L: LuaState, idx: number, len: number | null = null): string {
+        return this.toLString(this.rawLuaToLString, L, idx, len)
+    }
+
+    /** Goes through the `__tostring` metamethod, which leaves the result on the stack. */
+    public luaL_tolstring(L: LuaState, idx: number, len: number | null = null): string {
+        return this.toLString(this.rawLuaLToLString, L, idx, len)
+    }
+
+    public lua_tobytes(L: LuaState, idx: number): Uint8Array | undefined {
+        const pointer = this.rawLuaToLString(L, idx, this.sizeScratch)
+        if (!pointer) {
+            return undefined
+        }
+        // Copied, because the caller may outlive the next heap growth.
+        return this.heap.slice(pointer, pointer + this.readSize(this.sizeScratch))
+    }
+
+    /** A number is a pointer to a NUL-terminated C string, and `null` pushes nil, as in C. */
+    public lua_pushstring(L: LuaState, s: string | number | null): void {
+        if (s === null || s === undefined) {
+            this.lua_pushnil(L)
+        } else if (typeof s === 'number') {
+            this.rawLuaPushString(L, s)
+        } else if (s.length === 0) {
+            this.lua_pushlstring(L, 0, 0)
+        } else {
+            const capacity = s.length * MAX_UTF8_BYTES_PER_CHAR
+            const pointer = this.acquireStringBuffer(capacity)
+            try {
+                // encodeInto avoids materialising an intermediate Uint8Array for the whole string.
+                const { written } = this.textEncoder.encodeInto(s, this.heap.subarray(pointer, pointer + capacity))
+                this.lua_pushlstring(L, pointer, written)
+            } finally {
+                this.releaseStringBuffer(pointer)
+            }
+        }
+    }
+
+    public lua_pushbytes(L: LuaState, bytes: Uint8Array): void {
+        const pointer = this.acquireStringBuffer(bytes.length)
+        try {
+            this.heap.set(bytes, pointer)
+            this.lua_pushlstring(L, pointer, bytes.length)
+        } finally {
+            this.releaseStringBuffer(pointer)
+        }
+    }
+
+    public readString(pointer: number, length: number): string {
+        if (!length) {
+            return ''
+        }
+        return this.textDecoder.decode(this.heap.subarray(pointer, pointer + length))
+    }
+
+    private toLString(raw: (L: LuaState, idx: number, len: number) => number, L: LuaState, idx: number, len: number | null): string {
+        const lengthPointer = len ?? this.sizeScratch
+        const pointer = raw(L, idx, lengthPointer)
+        return pointer ? this.readString(pointer, this.readSize(lengthPointer)) : ''
     }
 
     public lua_remove(luaState: LuaState, index: number): void {
@@ -547,6 +635,41 @@ export default class LuaModule {
     public printRefs(): void {
         for (const [key, value] of this.referenceMap.entries()) {
             console.log(key, value)
+        }
+    }
+
+    // Never cache this: ALLOW_MEMORY_GROWTH swaps the underlying buffer when the heap grows, and
+    // Emscripten reassigns HEAPU8 to match.
+    private get heap(): Uint8Array {
+        return this._emscripten.HEAPU8
+    }
+
+    private readSize(pointer: number): number {
+        return this._emscripten.HEAPU32[pointer >>> 2]
+    }
+
+    private acquireStringBuffer(size: number): number {
+        if (size > REUSABLE_STRING_BUFFER_LIMIT) {
+            const pointer = this._emscripten._malloc(size)
+            if (!pointer) {
+                throw new Error(`failed to allocate ${size} bytes for a string`)
+            }
+            return pointer
+        }
+
+        if (!this.stringBuffer) {
+            this.stringBuffer = this._emscripten._malloc(REUSABLE_STRING_BUFFER_LIMIT)
+            if (!this.stringBuffer) {
+                throw new Error(`failed to allocate ${REUSABLE_STRING_BUFFER_LIMIT} bytes for the string buffer`)
+            }
+        }
+
+        return this.stringBuffer
+    }
+
+    private releaseStringBuffer(pointer: number): void {
+        if (pointer !== this.stringBuffer) {
+            this._emscripten._free(pointer)
         }
     }
 

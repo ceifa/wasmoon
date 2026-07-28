@@ -5,6 +5,7 @@ import RawResult from '../raw-result'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
 import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from '../types'
+import { isEmscriptenUnwind } from '../utils'
 
 export interface FunctionDecoration extends BaseDecorationOptions {
     receiveArgsQuantity?: boolean
@@ -114,8 +115,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
                     return 1
                 }
             } catch (err) {
-                // Performs a longjmp
-                if (err === Infinity) {
+                if (isEmscriptenUnwind(err)) {
                     throw err
                 }
                 calledThread.pushValue(err)

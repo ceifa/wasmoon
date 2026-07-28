@@ -191,4 +191,15 @@ describe('Browser environment', () => {
         `)
         expect(result).to.be.equal(6)
     })
+
+    it('yielding at the top level in browser should succeed', async function () {
+        this.timeout(30_000)
+        // Browsers have no setImmediate, which the yield path used to depend on.
+        const result = await runInBrowser(`
+            const lua = await Lua.load({ wasmFile })
+            const state = lua.createState()
+            return await state.doString('coroutine.yield() return 7')
+        `)
+        expect(result).to.be.equal(7)
+    })
 })

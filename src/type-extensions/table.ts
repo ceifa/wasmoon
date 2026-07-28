@@ -65,19 +65,20 @@ class TableTypeExtension extends TypeExtension<TableType> {
                 createTable(target.length, 0)
 
                 for (let i = 0; i < target.length; i++) {
-                    thread.pushValue(i + 1, seenMap)
                     thread.pushValue(target[i], seenMap)
-
-                    thread.lua.lua_settable(thread.address, tableIndex)
+                    // Raw, so the table being built cannot be observed through metamethods.
+                    thread.lua.lua_rawseti(thread.address, tableIndex, BigInt(i + 1))
                 }
             } else {
-                createTable(0, Object.getOwnPropertyNames(target).length)
+                // A for..in loop would also walk the prototype chain and copy inherited members.
+                const keys = Object.keys(target)
+                createTable(0, keys.length)
 
-                for (const key in target) {
+                for (const key of keys) {
                     thread.pushValue(key, seenMap)
                     thread.pushValue((target as Record<string, any>)[key], seenMap)
 
-                    thread.lua.lua_settable(thread.address, tableIndex)
+                    thread.lua.lua_rawset(thread.address, tableIndex)
                 }
             }
         } finally {

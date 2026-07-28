@@ -4,6 +4,8 @@ mkdir -p ../build
 
 LUA_SRC=$(ls ../lua/*.c | grep -v "luac.c" | grep -v "lua.c" | tr "\n" " ")
 
+# Do not add --closure here: isEmscriptenUnwind identifies in-flight longjmps by class name, so
+# mangling them would silently turn every unwind into a Lua error.
 extension=""
 if [ "$1" == "dev" ];
 then
@@ -29,6 +31,7 @@ emcc \
         'stringToNewUTF8', \
         'intArrayFromString', \
         'UTF8ToString', \
+        'HEAPU8', \
         'HEAPU32'
     ]" \
     -s DEFAULT_LIBRARY_FUNCS_TO_INCLUDE="[

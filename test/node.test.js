@@ -1,8 +1,23 @@
-import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { spawn } from 'node:child_process'
 import { expect } from 'chai'
 import { Lua } from '../dist/index.js'
+
+// stdin stays closed, as it would be for a redirected or piped invocation. The CLI keeps a
+// readline interface open otherwise and never exits.
+const runCli = (args) => {
+    return new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, ['bin/wasmoon', ...args], { stdio: ['ignore', 'pipe', 'pipe'] })
+        let stdout = ''
+        let stderr = ''
+        child.stdout.on('data', (chunk) => (stdout += chunk))
+        child.stderr.on('data', (chunk) => (stderr += chunk))
+        child.on('error', reject)
+        child.on('close', (code) => resolve({ code, stdout, stderr }))
+    })
+}
 
 describe('Node environment', () => {
     it('load Lua engine in node should succeed', async () => {
@@ -246,5 +261,18 @@ describe('Node environment', () => {
             return not ok and string.find(err, "node test error") ~= nil
         `)
         expect(result).to.be.true
+    })
+
+    it('cli should expose arg as a lua table', async function () {
+        this.timeout(30_000)
+        const directory = mkdtempSync(join(tmpdir(), 'wasmoon-cli-'))
+        const script = join(directory, 'args.lua')
+        writeFileSync(script, 'print(type(arg), #arg, arg[1], arg[2], table.concat(arg, "+"))')
+
+        const { code, stdout, stderr } = await runCli([script, 'first', 'second'])
+
+        expect(stderr).to.be.empty
+        expect(code).to.be.equal(0)
+        expect(stdout.trim()).to.be.equal('table\t2\tfirst\tsecond\tfirst+second')
     })
 })

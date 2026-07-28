@@ -14,7 +14,7 @@ import {
     LuaType,
     PointerSize,
 } from './types'
-import { isPromise } from './utils'
+import { isEmscriptenUnwind, isPromise, yieldToEventLoop } from './utils'
 
 export interface OrderedExtension {
     // Bigger is more important
@@ -24,6 +24,8 @@ export interface OrderedExtension {
 
 // When the debug count hook is set, call it every X instructions.
 const INSTRUCTION_HOOK_COUNT = 1000
+
+const LUA_INTEGER_BITS = 64
 
 export default class Thread {
     public readonly address: LuaState
@@ -126,11 +128,11 @@ export default class Thread {
                         await lastValue
                     } else {
                         // If it's a non-promise, then skip a tick to yield for promises, timers, etc.
-                        await new Promise((resolve) => setImmediate(resolve))
+                        await yieldToEventLoop()
                     }
                 } else {
                     // If there's nothing to yield, then skip a tick to yield for promises, timers, etc.
-                    await new Promise((resolve) => setImmediate(resolve))
+                    await yieldToEventLoop()
                 }
 
                 resumeResult = this.resume(0)
@@ -205,11 +207,19 @@ export default class Thread {
                 this.lua.lua_pushnil(this.address)
                 break
             case 'number':
-                if (Number.isInteger(target)) {
+                // Only integers JS can represent exactly become Lua integers. Values like 1e300
+                // are integral but far outside int64, and would wrap silently if pushed as one.
+                if (Number.isSafeInteger(target)) {
                     this.lua.lua_pushinteger(this.address, BigInt(target))
                 } else {
                     this.lua.lua_pushnumber(this.address, target)
                 }
+                break
+            case 'bigint':
+                if (BigInt.asIntN(LUA_INTEGER_BITS, target) !== target) {
+                    throw new RangeError(`bigint ${target} does not fit in a 64 bit Lua integer`)
+                }
+                this.lua.lua_pushinteger(this.address, target)
                 break
             case 'string':
                 this.lua.lua_pushstring(this.address, target)
@@ -279,8 +289,15 @@ export default class Thread {
                 return undefined
             case LuaType.Nil:
                 return null
-            case LuaType.Number:
-                return this.lua.lua_tonumberx(this.address, index, null)
+            case LuaType.Number: {
+                const value = this.lua.lua_tonumberx(this.address, index, null)
+                // Only outside the safe range can the integer subtype change the result, and
+                // checking that first keeps the common case to a single wasm call.
+                if (Number.isSafeInteger(value) || !this.lua.lua_isinteger(this.address, index)) {
+                    return value
+                }
+                return this.lua.lua_tointegerx(this.address, index, null)
+            }
             case LuaType.String:
                 return this.lua.lua_tolstring(this.address, index, null)
             case LuaType.Boolean:
@@ -324,17 +341,18 @@ export default class Thread {
         if (timeout && timeout > 0) {
             if (!this.hookFunctionPointer) {
                 this.hookFunctionPointer = this.lua._emscripten.addFunction((): void => {
-                    if (Date.now() > timeout) {
+                    // Reads this.timeout rather than closing over the argument, so a hook
+                    // allocated for an earlier deadline still honours the current one.
+                    if (this.timeout !== undefined && Date.now() > this.timeout) {
                         this.pushValue(new LuaTimeoutError(`thread timeout exceeded`))
                         this.lua.lua_error(this.address)
                     }
                 }, 'vii')
             }
 
-            this.lua.lua_sethook(this.address, this.hookFunctionPointer!, LuaEventMasks.Count, INSTRUCTION_HOOK_COUNT)
             this.timeout = timeout
-        } else if (this.hookFunctionPointer) {
-            this.hookFunctionPointer = undefined
+            this.lua.lua_sethook(this.address, this.hookFunctionPointer, LuaEventMasks.Count, INSTRUCTION_HOOK_COUNT)
+        } else {
             this.timeout = undefined
             this.lua.lua_sethook(this.address, null, 0, 0)
         }
@@ -357,6 +375,20 @@ export default class Thread {
         // Pops the string pushed by luaL_tolstring
         this.pop()
         return str
+    }
+
+    /**
+     * Values holding binary data (`string.dump`, `string.pack`, ciphertext, ...) cannot survive a
+     * round trip through a JS string, so use this and {@link pushStringBytes} for those instead
+     * of getValue/pushValue.
+     * @returns the bytes, or undefined if the value is neither a string nor a number.
+     */
+    public getStringBytes(index: number): Uint8Array | undefined {
+        return this.lua.lua_tobytes(this.address, index)
+    }
+
+    public pushStringBytes(bytes: Uint8Array): void {
+        this.lua.lua_pushbytes(this.address, bytes)
     }
 
     public dumpStack(log = console.log): void {
@@ -403,6 +435,9 @@ export default class Thread {
                     }
                     this.pop(1) // pop stack trace.
                 } catch (err) {
+                    if (isEmscriptenUnwind(err)) {
+                        throw err
+                    }
                     console.warn('Failed to generate stack trace', err)
                 }
             }

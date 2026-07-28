@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Lua, LuaReturn, LuaType, LUA_MULTRET, decorate } from '../dist/index.js'
+import { Lua, LuaReturn, LuaType, LUA_MULTRET, decorateProxy } from '../dist/index.js'
 import pkg from '../package.json' with { type: 'json' }
 import fs from 'node:fs'
 import readline from 'node:readline'
@@ -193,7 +193,9 @@ for (const snippet of executeSnippets) {
     await state.doString(snippet)
 }
 
-state.global.set('arg', decorate(scriptArgs, { disableProxy: true }))
+// A real Lua table rather than a JS proxy, so `#arg` and `ipairs(arg)` behave like the
+// standalone interpreter.
+state.global.set('arg', decorateProxy(scriptArgs, { proxy: false }))
 
 const isTTY = process.stdin.isTTY
 

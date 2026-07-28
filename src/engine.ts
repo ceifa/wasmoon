@@ -80,9 +80,7 @@ export default class LuaEngine {
      * @returns - The result returned by the Lua script.
      */
     public doStringSync(script: string): any {
-        this.global.loadString(script)
-        const result = this.global.runSync()
-        return result[0]
+        return this.callByteCodeSync((thread) => thread.loadString(script))
     }
 
     /**
@@ -91,9 +89,20 @@ export default class LuaEngine {
      * @returns - The result returned by the Lua script.
      */
     public doFileSync(filename: string): any {
-        this.global.loadFile(filename)
-        const result = this.global.runSync()
-        return result[0]
+        return this.callByteCodeSync((thread) => thread.loadFile(filename))
+    }
+
+    private callByteCodeSync(loader: (thread: Thread) => void): any {
+        // Runs on the global thread, so leftovers would accumulate for the lifetime of the state.
+        // runSync has already converted the results to JS, and anything that has to outlive them
+        // holds its own registry reference.
+        const startStackTop = this.global.getTop()
+        try {
+            loader(this.global)
+            return this.global.runSync()[0]
+        } finally {
+            this.global.setTop(startStackTop)
+        }
     }
 
     // WARNING: It will not wait for open handles and can potentially cause bugs if JS code tries to reference Lua after executed
@@ -103,14 +112,7 @@ export default class LuaEngine {
         const ref = this.module.luaL_ref(this.global.address, LUA_REGISTRYINDEX)
         try {
             loader(thread)
-            const result = await thread.run(0)
-            if (result.length > 0) {
-                // The shenanigans here are to return the first result value on the stack.
-                // Say there's 2 values at stack indexes 1 and 2. Then top is 2, result.length is 2.
-                // That's why there's a + 1 sitting at the end.
-                return thread.getValue(thread.getTop() - result.length + 1)
-            }
-            return undefined
+            return (await thread.run(0))[0]
         } finally {
             this.module.luaL_unref(this.global.address, LUA_REGISTRYINDEX, ref)
         }

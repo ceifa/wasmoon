@@ -2,10 +2,11 @@ import { Decoration } from '../decoration'
 import Global from '../global'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LuaReturn, LuaState } from '../types'
+import { LUA_REGISTRYINDEX, LuaReturn, LuaState } from '../types'
 
 class NullTypeExtension extends TypeExtension<unknown> {
     private gcPointer: number
+    private nullReference: number
 
     public constructor(thread: Global) {
         super(thread, 'js_null')
@@ -46,7 +47,12 @@ class NullTypeExtension extends TypeExtension<unknown> {
         // Create a new table, this is unique and will be the "null" value by attaching the
         // metatable created above. The first argument is the target, the second options.
         super.pushValue(thread, new Decoration<unknown>({}, {}))
-        // Put it into the global field named null.
+
+        // Lua code is free to reassign the `null` global, so marshalling anchors the sentinel in
+        // the registry instead of looking it up by name.
+        thread.lua.lua_pushvalue(thread.address, -1)
+        this.nullReference = thread.lua.luaL_ref(thread.address, LUA_REGISTRYINDEX)
+
         thread.lua.lua_setglobal(thread.address, 'null')
     }
 
@@ -63,8 +69,7 @@ class NullTypeExtension extends TypeExtension<unknown> {
         if (decoration?.target !== null) {
             return false
         }
-        // Rather than pushing a new value, get the global "null" onto the stack.
-        thread.lua.lua_getglobal(thread.address, 'null')
+        thread.lua.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(this.nullReference))
         return true
     }
 

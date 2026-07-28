@@ -168,6 +168,41 @@ describe('State', () => {
         expect(value).to.be.equal('world')
     })
 
+    it('inherited properties should not be copied into the lua table', async () => {
+        const state = await getState({ enableProxy: false })
+        const obj = Object.create({ inherited: 'yes' })
+        obj.own = 'mine'
+        state.global.set('t', obj)
+
+        const keys = await state.doString(`
+            local out = {}
+            for key in pairs(t) do out[#out + 1] = key end
+            table.sort(out)
+            return table.concat(out, ',')
+        `)
+
+        expect(keys).to.be.equal('own')
+    })
+
+    it('non enumerable properties should not be copied into the lua table', async () => {
+        const state = await getState({ enableProxy: false })
+        const obj = { own: 'mine' }
+        Object.defineProperty(obj, 'hidden', { value: 1, enumerable: false })
+        state.global.set('t', obj)
+
+        expect(await state.doString('return t.hidden == nil')).to.be.true
+        expect(await state.doString('return t.own')).to.be.equal('mine')
+    })
+
+    it('nested arrays and objects should be copied into the lua table', async () => {
+        const state = await getState({ enableProxy: false })
+        state.global.set('t', { list: [10, 20, 30], nested: { deep: [{ value: 5 }] } })
+
+        expect(await state.doString('return #t.list')).to.be.equal(3)
+        expect(await state.doString('return t.list[1]')).to.be.equal(10)
+        expect(await state.doString('return t.nested.deep[1].value')).to.be.equal(5)
+    })
+
     it('a lua error should throw on JS', async () => {
         const state = await getState()
 
@@ -527,6 +562,31 @@ describe('State', () => {
         await expect(state.global.run(0, { timeout: 5 })).eventually.to.be.rejectedWith('thread timeout exceeded')
     })
 
+    it('the most recently set timeout should be the one that applies', async function () {
+        this.timeout(30_000)
+        const state = await getState()
+        const thread = state.global.newThread()
+
+        thread.setTimeout(Date.now() + 20)
+        thread.setTimeout(Date.now() + 20_000)
+        thread.loadString('local x = 0 for i = 1, 20000000 do x = x + 1 end return x')
+
+        expect((await thread.run(0))[0]).to.be.equal(20000000)
+    })
+
+    it('clearing a timeout should disable the hook', async function () {
+        this.timeout(30_000)
+        const state = await getState()
+        const thread = state.global.newThread()
+
+        thread.setTimeout(Date.now() + 10)
+        thread.setTimeout(undefined)
+        thread.loadString('local x = 0 for i = 1, 5000000 do x = x + 1 end return 7')
+
+        expect(thread.getTimeout()).to.be.undefined
+        expect((await thread.run(0))[0]).to.be.equal(7)
+    })
+
     it('overwrite lib function', async () => {
         const state = await getState()
 
@@ -681,6 +741,82 @@ describe('State', () => {
         expect(res).to.be.equal(str)
     })
 
+    it('a large multibyte string should keep its byte length', async function () {
+        this.timeout(30_000)
+        const state = await getState()
+        const str = 'á'.repeat(500000)
+
+        state.global.set('str', str)
+
+        expect(await state.doString('return #str')).to.be.equal(1000000)
+        expect(await state.doString('return str')).to.be.equal(str)
+    })
+
+    it('a string containing NUL should be pushed with its full length', async () => {
+        const state = await getState()
+        state.global.set('str', 'a\0b')
+
+        expect(await state.doString('return #str')).to.be.equal(3)
+    })
+
+    it('a string containing NUL should be retrieved with its full length', async () => {
+        const state = await getState()
+
+        const res = await state.doString('return "x\\0y"')
+
+        expect(res).to.be.equal('x\0y')
+    })
+
+    it('a string containing NUL should round trip unchanged', async () => {
+        const state = await getState()
+        const str = 'before\0middle\0after'
+        state.global.set('str', str)
+
+        expect(await state.doString('return str')).to.be.equal(str)
+    })
+
+    it('an empty string should round trip unchanged', async () => {
+        const state = await getState()
+        state.global.set('str', '')
+
+        expect(await state.doString('return #str')).to.be.equal(0)
+        expect(await state.doString('return str')).to.be.equal('')
+    })
+
+    it('getStringBytes should expose bytes that are not valid UTF-8', async () => {
+        const state = await getState()
+        await state.doString('value = string.char(0, 255, 128, 65)')
+
+        state.global.lua.lua_getglobal(state.global.address, 'value')
+        const bytes = state.global.getStringBytes(-1)
+        state.global.pop()
+
+        expect(Array.from(bytes)).to.be.eql([0, 255, 128, 65])
+    })
+
+    it('getStringBytes should return undefined for a non string value', async () => {
+        const state = await getState()
+        state.global.pushValue({})
+
+        expect(state.global.getStringBytes(-1)).to.be.undefined
+
+        state.global.pop()
+    })
+
+    it('bytecode should round trip through the byte accessors', async () => {
+        const state = await getState()
+        await state.doString('bytecode = string.dump(load("return 42"))')
+
+        state.global.lua.lua_getglobal(state.global.address, 'bytecode')
+        const bytes = state.global.getStringBytes(-1)
+        state.global.pop()
+
+        state.global.pushStringBytes(bytes)
+        state.global.lua.lua_setglobal(state.global.address, 'roundtripped')
+
+        expect(await state.doString('return load(roundtripped)()')).to.be.equal(42)
+    })
+
     it('negative integers should be pushed and retrieved as string', async () => {
         const state = await getState()
         state.global.set('value', -1)
@@ -746,6 +882,59 @@ describe('State', () => {
         expect(asString).to.be.equal('9223372036854775807')
         expect(asFormatted).to.be.equal('9223372036854775807')
         expect(roundTrip).to.be.equal(value)
+    })
+
+    it('integers outside the JS safe range should be retrieved as bigint', async () => {
+        const state = await getState()
+
+        expect(await state.doString('return math.maxinteger')).to.be.equal(9223372036854775807n)
+        expect(await state.doString('return math.mininteger')).to.be.equal(-9223372036854775808n)
+    })
+
+    it('integers inside the JS safe range should be retrieved as number', async () => {
+        const state = await getState()
+
+        const res = await state.doString('return 1689031554550')
+
+        expect(res).to.be.equal(1689031554550)
+        expect(res).to.be.a('number')
+    })
+
+    it('an integral number should be pushed as a lua integer', async () => {
+        const state = await getState()
+        state.global.set('value', 2)
+
+        expect(await state.doString('return math.type(value)')).to.be.equal('integer')
+    })
+
+    it('floats should be retrieved as number', async () => {
+        const state = await getState()
+
+        expect(await state.doString('return 1.5')).to.be.equal(1.5)
+        expect(await state.doString('return math.type(1.5)')).to.be.equal('float')
+    })
+
+    it('a bigint should be pushed as a 64 bit lua integer', async () => {
+        const state = await getState()
+        state.global.set('value', 9223372036854775807n)
+
+        expect(await state.doString('return tostring(value)')).to.be.equal('9223372036854775807')
+        expect(await state.doString('return math.type(value)')).to.be.equal('integer')
+        expect(await state.doString('return value')).to.be.equal(9223372036854775807n)
+    })
+
+    it('a bigint outside the lua integer range should throw', async () => {
+        const state = await getState()
+
+        expect(() => state.global.set('value', 2n ** 70n)).to.throw(RangeError)
+    })
+
+    it('an integral number too large for a lua integer should be pushed as a float', async () => {
+        const state = await getState()
+        state.global.set('value', 1e300)
+
+        expect(await state.doString('return math.type(value)')).to.be.equal('float')
+        expect(await state.doString('return value')).to.be.equal(1e300)
     })
 
     it('yielding in a JS callback into Lua does not break lua state', async () => {
@@ -822,6 +1011,23 @@ describe('State', () => {
         expect(res).to.deep.equal([null, null, 'nil'])
     })
 
+    it('reassigning the null global should not affect pushing null', async () => {
+        const state = await getState()
+        await state.doString('null = 5')
+
+        state.global.set('value', null)
+
+        expect(await state.doString('return type(value)')).to.be.equal('userdata')
+        expect(state.global.get('value')).to.be.null
+    })
+
+    it('a pushed null should equal the injected null global', async () => {
+        const state = await getState()
+        state.global.set('value', null)
+
+        expect(await state.doString('return value == null')).to.be.true
+    })
+
     it('Nested callback from JS to Lua', async () => {
         const state = await getState()
         state.global.set('call', (fn) => fn())
@@ -845,6 +1051,37 @@ describe('State', () => {
             const result = await state.doString(`return ${a} + ${b};`)
             expect(result).to.equal(a + b)
         }
+    })
+
+    it('lots of doStringSync calls should not grow the lua stack', async function () {
+        this.timeout(30_000)
+        const state = await getState()
+        const startTop = state.global.getTop()
+
+        for (let i = 0; i < 500; i++) {
+            expect(state.doStringSync(`return ${i}`)).to.be.equal(i)
+        }
+
+        expect(state.global.getTop()).to.be.equal(startTop)
+    })
+
+    it('a failing doStringSync should not grow the lua stack', async () => {
+        const state = await getState()
+        const startTop = state.global.getTop()
+
+        expect(() => state.doStringSync('error("boom")')).to.throw('boom')
+
+        expect(state.global.getTop()).to.be.equal(startTop)
+    })
+
+    it('values returned by doStringSync should outlive the stack reset', async () => {
+        const state = await getState()
+
+        const fn = state.doStringSync('return function() return 3 end')
+        const table = state.doStringSync('return { a = 1, b = { 2, 3 } }')
+
+        expect(fn()).to.be.equal(3)
+        expect(table).to.be.eql({ a: 1, b: [2, 3] })
     })
 
     it('many concurrent doString calls should succeed', async function () {
