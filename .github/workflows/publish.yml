@@ -9,17 +9,18 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v6
+              uses: actions/checkout@v7
               with:
                   submodules: recursive
 
             - name: Setup EMSDK
-              uses: mymindstorm/setup-emsdk@v14
+              uses: emscripten-core/setup-emsdk@v16
               with:
-                  version: 5.0.4
+                  version: 6.0.4
+                  actions-cache-folder: emsdk-cache
 
             - name: Use Node.js 24.x
-              uses: actions/setup-node@v6
+              uses: actions/setup-node@v7
               with:
                   node-version: 24.x
 
@@ -34,6 +35,9 @@ jobs:
 
             - name: Build project
               run: npm run build
+
+            - name: Install Playwright browsers
+              run: npx playwright install --with-deps chromium
 
             - name: Run tests
               run: npm test
@@ -57,7 +61,7 @@ jobs:
         needs: build
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v6
+              uses: actions/checkout@v7
 
             - name: Download build artifact
               uses: actions/download-artifact@v8
@@ -69,7 +73,7 @@ jobs:
               run: cp -r build-artifact/* .
 
             - name: Publish to npm
-              uses: JS-DevTools/npm-publish@v3
+              uses: JS-DevTools/npm-publish@v4
               with:
                   token: ${{ secrets.NPM_TOKEN }}
 
@@ -82,7 +86,7 @@ jobs:
     #         id-token: write
     #     steps:
     #         - name: Download build artifact
-    #           uses: actions/download-artifact@v4
+    #           uses: actions/download-artifact@v8
     #           with:
     #               name: build-artifact
     #               path: build-artifact

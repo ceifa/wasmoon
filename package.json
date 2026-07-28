@@ -14,8 +14,8 @@
         "luatests": "node --experimental-import-meta-resolve test/luatests.js",
         "build": "rolldown -c && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",
         "clean": "rm -rf dist build",
-        "lint": "oxfmt --write . && oxlint --config .oxlintrc.json -D suspicious --import-plugin --node-plugin --promise-plugin --fix .",
-        "lint:nofix": "oxfmt --check . && oxlint --config .oxlintrc.json -D suspicious --import-plugin --node-plugin --promise-plugin ."
+        "lint": "oxfmt --write . && oxlint --config .oxlintrc.json --fix .",
+        "lint:nofix": "oxfmt --check . && oxlint --config .oxlintrc.json ."
     },
     "files": [
         "bin/*",
@@ -45,13 +45,13 @@
         "chai": "6.2.2",
         "chai-as-promised": "8.0.2",
         "fengari": "0.1.5",
-        "mocha": "11.7.5",
-        "oxfmt": "0.46.0",
-        "oxlint": "1.61.0",
-        "rolldown": "1.0.0-rc.17",
+        "mocha": "11.7.6",
+        "oxfmt": "0.61.0",
+        "oxlint": "1.76.0",
+        "playwright": "1.62.0",
+        "rolldown": "1.2.0",
         "tslib": "2.8.1",
-        "typescript": "6.0.3",
-        "playwright": "1.59.1"
+        "typescript": "7.0.2"
     },
     "dependencies": {
         "@types/emscripten": "1.41.5"

@@ -1,8 +1,13 @@
 {
     "plugins": ["import", "promise", "node"],
+    "categories": {
+        "correctness": "deny",
+        "suspicious": "deny"
+    },
     "rules": {
         "no-shadow": "off",
         "no-extend-native": "off",
+        "no-underscore-dangle": "off",
         "consistent-function-scoping": "off",
         "promise/always-return": "off"
     },
