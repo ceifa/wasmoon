@@ -1,20 +1,20 @@
 import { Decoration } from '../decoration'
-import Global from '../global'
+import type LuaState from '../state'
 import MultiReturn from '../multireturn'
 import RawResult from '../raw-result'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LuaReturn, LuaState } from '../types'
+import { LuaReturn, LuaAddress } from '../types'
 import { isPromise } from '../utils'
-import { decorateFunction } from './function'
+import { decorate } from '../decoration'
 
 class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     private gcPointer: number
 
-    public constructor(thread: Global, injectObject: boolean) {
+    public constructor(thread: LuaState, injectObject: boolean) {
         super(thread, 'js_promise')
 
-        this.gcPointer = thread.lua._emscripten.addFunction((functionStateAddress: LuaState) => {
+        this.gcPointer = thread.lua._emscripten.addFunction((functionStateAddress: LuaAddress) => {
             // Throws a lua error which does a jump if it does not match.
             const userDataPointer = thread.lua.luaL_checkudata(functionStateAddress, 1, this.name)
             const referencePointer = thread.lua._emscripten.getValue(userDataPointer, '*')
@@ -45,12 +45,14 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                 next: (self: Promise<unknown>, ...args: Parameters<typeof self.then>) => checkSelf(self) && self.then(...args),
                 catch: (self: Promise<unknown>, ...args: Parameters<typeof self.catch>) => checkSelf(self) && self.catch(...args),
                 finally: (self: Promise<unknown>, ...args: Parameters<typeof self.finally>) => checkSelf(self) && self.finally(...args),
-                await: decorateFunction(
+                await: decorate(
                     (functionThread: Thread, self: Promise<any>) => {
                         checkSelf(self)
 
-                        if (functionThread.address === thread.address) {
-                            throw new Error('cannot await in the main thread')
+                        // Asking Lua covers every non-resumable context, not just the main
+                        // thread: anything entered through lua_pcall cannot yield either.
+                        if (!thread.lua.lua_isyieldable(functionThread.address)) {
+                            throw new Error('cannot await in a thread that cannot yield, use doString instead of doStringSync')
                         }
 
                         let promiseResult: { status: 'fulfilled' | 'rejected'; value: any } | undefined = undefined
@@ -64,7 +66,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                                 promiseResult = { status: 'rejected', value: err }
                             })
 
-                        const continuance = this.thread.lua._emscripten.addFunction((continuanceState: LuaState) => {
+                        const continuance = this.thread.lua._emscripten.addFunction((continuanceState: LuaAddress) => {
                             // If this yield has been called from within a coroutine and so manually resumed
                             // then there may not yet be any results. In that case yield again.
                             if (!promiseResult) {
@@ -140,6 +142,6 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     }
 }
 
-export default function createTypeExtension<T = unknown>(thread: Global, injectObject: boolean): TypeExtension<Promise<T>> {
+export default function createTypeExtension<T = unknown>(thread: LuaState, injectObject: boolean): TypeExtension<Promise<T>> {
     return new PromiseTypeExtension<T>(thread, injectObject)
 }

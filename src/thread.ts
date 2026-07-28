@@ -4,14 +4,22 @@ import MultiReturn from './multireturn'
 import { Pointer } from './pointer'
 import LuaTypeExtension from './type-extension'
 import {
+    defaultWarnHandler,
     LUA_MULTRET,
+    LuaAbortError,
+    LuaAddress,
+    LuaError,
     LuaEventMasks,
+    LuaInstructionLimitError,
+    LuaInterruptError,
+    LuaLoadOptions,
     LuaResumeResult,
     LuaReturn,
-    LuaState,
-    LuaThreadRunOptions,
+    LuaRunOptions,
+    LuaThreadLimits,
     LuaTimeoutError,
     LuaType,
+    LuaWarnHandler,
     PointerSize,
 } from './types'
 import { isEmscriptenUnwind, isPromise, yieldToEventLoop } from './utils'
@@ -27,14 +35,20 @@ const INSTRUCTION_HOOK_COUNT = 1000
 
 const LUA_INTEGER_BITS = 64
 
+const NO_RESTORE = (): void => undefined
+
 export default class Thread {
-    public readonly address: LuaState
+    public readonly address: LuaAddress
     public readonly lua: LuaModule
+    /** Set on the root state; threads created from it delegate here. */
+    public onWarn: LuaWarnHandler | undefined
     protected readonly typeExtensions: OrderedExtension[]
+    protected readonly parent?: Thread
     private closed = false
     private hookFunctionPointer: number | undefined
-    private timeout?: number
-    private readonly parent?: Thread
+    private hookCount = INSTRUCTION_HOOK_COUNT
+    private limits: LuaThreadLimits = {}
+    private instructionsUsed = 0
 
     public constructor(lua: LuaModule, typeExtensions: OrderedExtension[], address: number, parent?: Thread) {
         this.lua = lua
@@ -55,20 +69,24 @@ export default class Thread {
         this.assertOk(this.lua.lua_resetthread(this.address))
     }
 
-    public loadString(luaCode: string, name?: string): void {
+    /** @param options.mode defaults to `'t'`. See {@link LuaLoadOptions.mode}. */
+    public loadString(luaCode: string, options?: LuaLoadOptions): void {
         const size = this.lua._emscripten.lengthBytesUTF8(luaCode)
         const pointerSize = size + 1
         const bufferPointer = this.lua._emscripten._malloc(pointerSize)
         try {
             this.lua._emscripten.stringToUTF8(luaCode, bufferPointer, pointerSize)
-            this.assertOk(this.lua.luaL_loadbufferx(this.address, bufferPointer, size, name ?? bufferPointer, null))
+            this.assertOk(
+                this.lua.luaL_loadbufferx(this.address, bufferPointer, size, options?.name ?? bufferPointer, options?.mode ?? 't'),
+            )
         } finally {
             this.lua._emscripten._free(bufferPointer)
         }
     }
 
-    public loadFile(filename: string): void {
-        this.assertOk(this.lua.luaL_loadfilex(this.address, filename, null))
+    /** @param options.mode defaults to `'t'`. See {@link LuaLoadOptions.mode}. */
+    public loadFile(filename: string, options?: LuaLoadOptions): void {
+        this.assertOk(this.lua.luaL_loadfilex(this.address, filename, options?.mode ?? 't'))
     }
 
     public resume(argCount = 0): LuaResumeResult {
@@ -103,21 +121,19 @@ export default class Thread {
         this.lua.lua_setfield(this.address, index, name)
     }
 
-    public async run(argCount = 0, options?: Partial<LuaThreadRunOptions>): Promise<MultiReturn> {
-        const originalTimeout = this.timeout
+    public async run(argCount = 0, options?: LuaRunOptions): Promise<MultiReturn> {
+        const restore = this.applyRunOptions(options)
         try {
-            if (options?.timeout !== undefined) {
-                this.setTimeout(Date.now() + options.timeout)
-            }
             let resumeResult: LuaResumeResult = this.resume(argCount)
             while (resumeResult.result === LuaReturn.Yield) {
-                // If it's yielded check the timeout. If it's completed no need to
-                // needlessly discard the output.
-                if (this.timeout && Date.now() > this.timeout) {
+                // If it's completed there's no need to needlessly discard the output. The hook
+                // only fires while Lua runs, so a parked thread is checked here instead.
+                const limitError = this.checkYieldLimits()
+                if (limitError) {
                     if (resumeResult.resultCount > 0) {
                         this.pop(resumeResult.resultCount)
                     }
-                    throw new LuaTimeoutError(`thread timeout exceeded`)
+                    throw limitError
                 }
                 if (resumeResult.resultCount > 0) {
                     const lastValue = this.getValue(-1)
@@ -135,22 +151,32 @@ export default class Thread {
                     await yieldToEventLoop()
                 }
 
+                // The wait itself can outlast the deadline, and resuming would hand Lua another
+                // full slice before the hook noticed.
+                const waitError = this.checkYieldLimits()
+                if (waitError) {
+                    throw waitError
+                }
+
                 resumeResult = this.resume(0)
             }
 
             this.assertOk(resumeResult.result)
             return this.getStackValues()
         } finally {
-            if (options?.timeout !== undefined) {
-                this.setTimeout(originalTimeout)
-            }
+            restore()
         }
     }
 
-    public runSync(argCount = 0): MultiReturn {
-        const base = this.getTop() - argCount - 1 // The 1 is for the function to run
-        this.assertOk(this.lua.lua_pcallk(this.address, argCount, LUA_MULTRET, 0, 0, null) as LuaReturn)
-        return this.getStackValues(base)
+    public runSync(argCount = 0, options?: LuaRunOptions): MultiReturn {
+        const restore = this.applyRunOptions(options)
+        try {
+            const base = this.getTop() - argCount - 1 // The 1 is for the function to run
+            this.assertOk(this.lua.lua_pcallk(this.address, argCount, LUA_MULTRET, 0, 0, null) as LuaReturn)
+            return this.getStackValues(base)
+        } finally {
+            restore()
+        }
     }
 
     public pop(count = 1): void {
@@ -183,7 +209,7 @@ export default class Thread {
         return returnValues
     }
 
-    public stateToThread(L: LuaState): Thread {
+    public stateToThread(L: LuaAddress): Thread {
         return L === this.parent?.address ? this.parent : new Thread(this.lua, this.typeExtensions, L, this.parent || this)
     }
 
@@ -317,9 +343,14 @@ export default class Thread {
                     return typeExtensionWrapper.extension.getValue(this, index, userdata)
                 }
 
-                // Fallthrough if unrecognised user data
-                console.warn(`The type '${this.lua.lua_typename(this.address, type)}' returned is not supported on JS`)
-                return new Pointer(this.lua.lua_topointer(this.address, index))
+                // Handing back an opaque Pointer hid the failure until the value was used, and
+                // it could not be pushed back into Lua anyway.
+                const typeName = this.lua.lua_typename(this.address, type)
+                const withMetatable = metatableName ? ` with metatable '${metatableName}'` : ''
+                throw new TypeError(
+                    `the Lua type '${typeName}'${withMetatable} has no JS representation; register a type ` +
+                        `extension to handle it, or read the address with getPointer`,
+                )
             }
         }
     }
@@ -331,35 +362,44 @@ export default class Thread {
 
         if (this.hookFunctionPointer) {
             this.lua._emscripten.removeFunction(this.hookFunctionPointer)
+            this.hookFunctionPointer = undefined
         }
 
         this.closed = true
     }
 
-    // Set to > 0 to enable, otherwise disable.
-    public setTimeout(timeout: number | undefined): void {
-        if (timeout && timeout > 0) {
-            if (!this.hookFunctionPointer) {
-                this.hookFunctionPointer = this.lua._emscripten.addFunction((): void => {
-                    // Reads this.timeout rather than closing over the argument, so a hook
-                    // allocated for an earlier deadline still honours the current one.
-                    if (this.timeout !== undefined && Date.now() > this.timeout) {
-                        this.pushValue(new LuaTimeoutError(`thread timeout exceeded`))
-                        this.lua.lua_error(this.address)
-                    }
-                }, 'vii')
-            }
+    public [Symbol.dispose](): void {
+        this.close()
+    }
 
-            this.timeout = timeout
-            this.lua.lua_sethook(this.address, this.hookFunctionPointer, LuaEventMasks.Count, INSTRUCTION_HOOK_COUNT)
-        } else {
-            this.timeout = undefined
-            this.lua.lua_sethook(this.address, null, 0, 0)
-        }
+    /**
+     * Installs the deadline, instruction budget and abort signal enforced while this thread runs.
+     * They share a single debug hook, because Lua only allows one hook per thread.
+     */
+    public setLimits(limits: LuaThreadLimits | undefined): void {
+        this.limits = { ...limits }
+        this.instructionsUsed = 0
+        this.applyHook()
+    }
+
+    public getLimits(): LuaThreadLimits {
+        return { ...this.limits }
+    }
+
+    /** Set to > 0 to enable, otherwise disable. Shorthand for the deadline in {@link setLimits}. */
+    public setTimeout(timeout: number | undefined): void {
+        this.limits.deadline = timeout && timeout > 0 ? timeout : undefined
+        this.applyHook()
     }
 
     public getTimeout(): number | undefined {
-        return this.timeout
+        return this.limits.deadline
+    }
+
+    /** Diagnostics the library would otherwise have written straight to the console. */
+    public warn(message: string, cause?: unknown): void {
+        const root = this.parent ?? this
+        ;(root.onWarn ?? defaultWarnHandler)(message, cause)
     }
 
     public getPointer(index: number): Pointer {
@@ -399,51 +439,139 @@ export default class Thread {
             const typename = this.lua.lua_typename(this.address, type)
             const pointer = this.getPointer(i)
             const name = this.indexToString(i)
-            const value = this.getValue(i, type)
+            let value: unknown
+            try {
+                value = this.getValue(i, type)
+            } catch (err) {
+                // A debugging aid should survive one unrepresentable slot.
+                value = `<${(err as Error).message}>`
+            }
 
             log(i, typename, pointer, name, value)
         }
     }
 
     public assertOk(result: LuaReturn): void {
-        if (result !== LuaReturn.Ok && result !== LuaReturn.Yield) {
-            const resultString = LuaReturn[result]
-            // This is the default message if there's nothing on the stack.
-            const error = new Error(`Lua Error(${resultString}/${result})`)
-            if (this.getTop() > 0) {
-                if (result === LuaReturn.ErrorMem) {
-                    // If there's no memory just do a normal to string.
-                    error.message = this.lua.lua_tolstring(this.address, -1, null)
-                } else {
-                    const luaError = this.getValue(-1)
-                    if (luaError instanceof Error) {
-                        error.stack = luaError.stack
-                    }
-
-                    // Calls __tostring if it exists and pushes onto the stack.
-                    error.message = this.indexToString(-1)
-                }
-            }
-
-            // Also attempt to get a traceback
-            if (result !== LuaReturn.ErrorMem) {
-                try {
-                    this.lua.luaL_traceback(this.address, this.address, null, 1)
-                    const traceback = this.lua.lua_tolstring(this.address, -1, null)
-                    if (traceback.trim() !== 'stack traceback:') {
-                        error.message = `${error.message}\n${traceback}`
-                    }
-                    this.pop(1) // pop stack trace.
-                } catch (err) {
-                    if (isEmscriptenUnwind(err)) {
-                        throw err
-                    }
-                    console.warn('Failed to generate stack trace', err)
-                }
-            }
-
-            throw error
+        if (result === LuaReturn.Ok || result === LuaReturn.Yield) {
+            return
         }
+
+        // This is the default message if there's nothing on the stack.
+        let luaMessage = `Lua Error(${LuaReturn[result]}/${result})`
+        let luaValue: unknown
+
+        if (this.getTop() > 0) {
+            if (result === LuaReturn.ErrorMem) {
+                // If there's no memory just do a normal to string.
+                luaMessage = this.lua.lua_tolstring(this.address, -1, null)
+            } else {
+                try {
+                    luaValue = this.getValue(-1)
+                } catch {
+                    // An unrepresentable error value must not replace the error being reported.
+                    luaValue = undefined
+                }
+
+                // Calls __tostring if it exists and pushes onto the stack.
+                luaMessage = this.indexToString(-1)
+            }
+        }
+
+        if (luaValue instanceof LuaInterruptError) {
+            throw luaValue
+        }
+
+        let traceback: string | undefined
+        if (result !== LuaReturn.ErrorMem) {
+            try {
+                this.lua.luaL_traceback(this.address, this.address, null, 1)
+                const text = this.lua.lua_tolstring(this.address, -1, null)
+                if (text.trim() !== 'stack traceback:') {
+                    traceback = text
+                }
+                this.pop(1) // pop stack trace.
+            } catch (err) {
+                if (isEmscriptenUnwind(err)) {
+                    throw err
+                }
+                this.warn('Failed to generate stack trace', err)
+            }
+        }
+
+        throw new LuaError(result, luaMessage, { traceback, luaValue })
+    }
+
+    private applyRunOptions(options: LuaRunOptions | undefined): () => void {
+        const overrides =
+            options !== undefined &&
+            (options.timeout !== undefined || options.maxInstructions !== undefined || options.signal !== undefined)
+
+        if (!overrides) {
+            return NO_RESTORE
+        }
+
+        const previousLimits = this.limits
+        const previousUsed = this.instructionsUsed
+
+        this.setLimits({
+            deadline: options.timeout !== undefined ? Date.now() + options.timeout : previousLimits.deadline,
+            maxInstructions: options.maxInstructions ?? previousLimits.maxInstructions,
+            signal: options.signal ?? previousLimits.signal,
+        })
+
+        return () => {
+            this.limits = previousLimits
+            this.instructionsUsed = previousUsed
+            this.applyHook()
+        }
+    }
+
+    private applyHook(): void {
+        const { deadline, maxInstructions, signal } = this.limits
+        if (deadline === undefined && maxInstructions === undefined && signal === undefined) {
+            this.lua.lua_sethook(this.address, null, 0, 0)
+            return
+        }
+
+        // A budget smaller than the default period would only ever be noticed late.
+        this.hookCount =
+            maxInstructions !== undefined ? Math.max(1, Math.min(INSTRUCTION_HOOK_COUNT, maxInstructions)) : INSTRUCTION_HOOK_COUNT
+
+        if (!this.hookFunctionPointer) {
+            this.hookFunctionPointer = this.lua._emscripten.addFunction((): void => {
+                // Reads this.limits rather than closing over them, so a hook allocated for an
+                // earlier configuration still honours the current one.
+                const error = this.checkHookLimits()
+                if (error) {
+                    this.pushValue(error)
+                    this.lua.lua_error(this.address)
+                }
+            }, 'vii')
+        }
+
+        this.lua.lua_sethook(this.address, this.hookFunctionPointer, LuaEventMasks.Count, this.hookCount)
+    }
+
+    private checkHookLimits(): Error | undefined {
+        const { maxInstructions } = this.limits
+        if (maxInstructions !== undefined) {
+            this.instructionsUsed += this.hookCount
+            if (this.instructionsUsed > maxInstructions) {
+                return new LuaInstructionLimitError(`thread exceeded its budget of ${maxInstructions} instructions`)
+            }
+        }
+        return this.checkYieldLimits()
+    }
+
+    private checkYieldLimits(): Error | undefined {
+        const { deadline, signal } = this.limits
+        if (signal?.aborted) {
+            return new LuaAbortError('thread aborted')
+        }
+        if (deadline !== undefined && Date.now() > deadline) {
+            return new LuaTimeoutError('thread timeout exceeded')
+        }
+        return undefined
     }
 
     private getValueDecorations(value: any): Decoration {

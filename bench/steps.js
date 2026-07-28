@@ -1,4 +1,4 @@
-import { Lua } from '../dist/index.js'
+import { LuaRuntime } from '../dist/index.js'
 import assert from 'node:assert/strict'
 import { isMainModule, parseBenchOptions, readBenchAsset, runBenchmarks } from './utils.js'
 
@@ -39,7 +39,7 @@ function createComplexObjects() {
 function createStateBenchmark(lua, stateOptions = {}) {
     return function runCreateState() {
         const state = lua.createState(stateOptions)
-        state.global.close()
+        state.close()
     }
 }
 
@@ -47,11 +47,11 @@ function createRawHeapsortBenchmark(lua) {
     return function runRawHeapsort() {
         const state = lua.createState()
         try {
-            assertStatus(state.global.lua.luaL_loadstring(state.global.address, heapsort), 'Load raw heapsort')
-            assertStatus(state.global.lua.lua_pcallk(state.global.address, 0, 1, 0, 0, null), 'Compile raw heapsort')
-            assertStatus(state.global.lua.lua_pcallk(state.global.address, 0, 1, 0, 0, null), 'Execute raw heapsort')
+            assertStatus(state.lua.luaL_loadstring(state.address, heapsort), 'Load raw heapsort')
+            assertStatus(state.lua.lua_pcallk(state.address, 0, 1, 0, 0, null), 'Compile raw heapsort')
+            assertStatus(state.lua.lua_pcallk(state.address, 0, 1, 0, 0, null), 'Execute raw heapsort')
         } finally {
-            state.global.close()
+            state.close()
         }
     }
 }
@@ -63,7 +63,7 @@ function createInteropHeapsortBenchmark(lua) {
             const executeHeapsort = await state.doString(heapsort)
             assert.equal(executeHeapsort(), 10)
         } finally {
-            state.global.close()
+            state.close()
         }
     }
 }
@@ -72,9 +72,9 @@ function createInsertObjectsBenchmark(lua, stateOptions = {}) {
     return function runInsertObjects() {
         const state = lua.createState(stateOptions)
         try {
-            state.global.set('obj', createComplexObjects())
+            state.set('obj', createComplexObjects())
         } finally {
-            state.global.close()
+            state.close()
         }
     }
 }
@@ -84,9 +84,9 @@ function createGetObjectsBenchmark(lua) {
         const state = lua.createState()
         try {
             await state.doString(luaObjectFixture)
-            state.global.get('obj')
+            state.get('obj')
         } finally {
-            state.global.close()
+            state.close()
         }
     }
 }
@@ -98,19 +98,19 @@ function assertStatus(status, label) {
 }
 
 export async function runStepBench(options = {}) {
-    const lua = await Lua.load()
+    const lua = await LuaRuntime.load()
 
     return runBenchmarks({
         title: 'Operation benchmarks',
         benches: [
-            { name: 'Create factory', run: () => Lua.load() },
+            { name: 'Create factory', run: () => LuaRuntime.load() },
             { name: 'Create state', run: createStateBenchmark(lua) },
             {
                 name: 'Create state without superpowers',
                 run: createStateBenchmark(lua, {
-                    enableProxy: false,
-                    injectObjects: false,
-                    openStandardLibs: false,
+                    objects: 'copy',
+                    inject: false,
+                    libs: false,
                 }),
             },
             { name: 'Run raw heapsort', run: createRawHeapsortBenchmark(lua) },
@@ -119,7 +119,7 @@ export async function runStepBench(options = {}) {
             {
                 name: 'Insert complex objects without proxy',
                 run: createInsertObjectsBenchmark(lua, {
-                    enableProxy: false,
+                    objects: 'copy',
                 }),
             },
             { name: 'Get complex objects', run: createGetObjectsBenchmark(lua) },

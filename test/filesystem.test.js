@@ -9,7 +9,7 @@ describe('Filesystem', () => {
 
         await state.doString('require("test")')
 
-        expect(state.global.get('answerToLifeTheUniverseAndEverything')).to.be.equal(42)
+        expect(state.get('answerToLifeTheUniverseAndEverything')).to.be.equal(42)
     })
 
     it('mount a file in a complex directory and require inside lua should succeed', async () => {

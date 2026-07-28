@@ -21,6 +21,14 @@
         "bin/*",
         "dist/*"
     ],
+    "engines": {
+        "node": ">=24"
+    },
+    "browserslist": [
+        "chrome >= 134",
+        "firefox >= 138",
+        "safari >= 26"
+    ],
     "bin": {
         "wasmoon": "bin/wasmoon"
     },

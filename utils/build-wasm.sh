@@ -29,7 +29,6 @@ emcc \
         'lengthBytesUTF8', \
         'stringToUTF8', \
         'stringToNewUTF8', \
-        'intArrayFromString', \
         'UTF8ToString', \
         'HEAPU8', \
         'HEAPU32'

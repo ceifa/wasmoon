@@ -1,24 +1,16 @@
-import { BaseDecorationOptions, Decoration } from '../decoration'
-import Global from '../global'
+import { Decoration } from '../decoration'
+import type LuaState from '../state'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LuaReturn, LuaState, LuaType } from '../types'
+import { LuaReturn, LuaAddress, LuaType } from '../types'
 
-export interface UserdataDecorationOptions extends BaseDecorationOptions {
-    reference?: boolean
-}
-
-export function decorateUserdata(target: unknown): Decoration<any, UserdataDecorationOptions> {
-    return new Decoration<any, UserdataDecorationOptions>(target, { reference: true })
-}
-
-class UserdataTypeExtension extends TypeExtension<any, UserdataDecorationOptions> {
+class UserdataTypeExtension extends TypeExtension<any> {
     private readonly gcPointer: number
 
-    public constructor(thread: Global) {
+    public constructor(thread: LuaState) {
         super(thread, 'js_userdata')
 
-        this.gcPointer = thread.lua._emscripten.addFunction((functionStateAddress: LuaState) => {
+        this.gcPointer = thread.lua._emscripten.addFunction((functionStateAddress: LuaAddress) => {
             // Throws a lua error which does a jump if it does not match.
             const userDataPointer = thread.lua.luaL_checkudata(functionStateAddress, 1, this.name)
             const referencePointer = thread.lua._emscripten.getValue(userDataPointer, '*')
@@ -53,8 +45,8 @@ class UserdataTypeExtension extends TypeExtension<any, UserdataDecorationOptions
         return thread.lua.getRef(referencePointer)
     }
 
-    public pushValue(thread: Thread, decoratedValue: Decoration<any, UserdataDecorationOptions>): boolean {
-        if (!decoratedValue.options.reference) {
+    public pushValue(thread: Thread, decoratedValue: Decoration<any>): boolean {
+        if (decoratedValue.options.as !== 'userdata') {
             return false
         }
 
@@ -66,6 +58,6 @@ class UserdataTypeExtension extends TypeExtension<any, UserdataDecorationOptions
     }
 }
 
-export default function createTypeExtension(thread: Global): TypeExtension<Error> {
+export default function createTypeExtension(thread: LuaState): TypeExtension<Error> {
     return new UserdataTypeExtension(thread)
 }

@@ -1,16 +1,16 @@
 import { Decoration } from '../decoration'
-import Global from '../global'
+import type LuaState from '../state'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LuaReturn, LuaState } from '../types'
+import { LuaReturn, LuaAddress } from '../types'
 
 class ErrorTypeExtension extends TypeExtension<Error> {
     private gcPointer: number
 
-    public constructor(thread: Global, injectObject: boolean) {
+    public constructor(thread: LuaState, injectObject: boolean) {
         super(thread, 'js_error')
 
-        this.gcPointer = thread.lua._emscripten.addFunction((functionStateAddress: LuaState) => {
+        this.gcPointer = thread.lua._emscripten.addFunction((functionStateAddress: LuaAddress) => {
             // Throws a lua error which does a jump if it does not match.
             const userDataPointer = thread.lua.luaL_checkudata(functionStateAddress, 1, this.name)
             const referencePointer = thread.lua._emscripten.getValue(userDataPointer, '*')
@@ -76,6 +76,6 @@ class ErrorTypeExtension extends TypeExtension<Error> {
     }
 }
 
-export default function createTypeExtension(thread: Global, injectObject: boolean): TypeExtension<Error> {
+export default function createTypeExtension(thread: LuaState, injectObject: boolean): TypeExtension<Error> {
     return new ErrorTypeExtension(thread, injectObject)
 }

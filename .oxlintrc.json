@@ -17,7 +17,7 @@
     },
     "overrides": [
         {
-            "files": ["test/**"],
+            "files": ["**/test/**"],
             "rules": {
                 "no-unused-expressions": "off"
             }

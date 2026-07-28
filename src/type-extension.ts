@@ -1,14 +1,14 @@
-import { BaseDecorationOptions, Decoration } from './decoration'
-import Global from './global'
+import { Decoration } from './decoration'
+import type LuaState from './state'
 import Thread from './thread'
 import { LuaType, PointerSize } from './types'
 
-export default abstract class LuaTypeExtension<T, K extends BaseDecorationOptions = BaseDecorationOptions> {
+export default abstract class LuaTypeExtension<T> {
     // Type name, for metatables and lookups.
     public readonly name: string
-    protected thread: Global
+    protected thread: LuaState
 
-    public constructor(thread: Global, name: string) {
+    public constructor(thread: LuaState, name: string) {
         this.thread = thread
         this.name = name
     }
@@ -31,7 +31,7 @@ export default abstract class LuaTypeExtension<T, K extends BaseDecorationOption
 
     // Return false if type not matched, otherwise true. This base method does not
     // check the type. That must be done by the class extending this.
-    public pushValue(thread: Thread, decoratedValue: Decoration<T, K>, _userdata?: unknown): boolean {
+    public pushValue(thread: Thread, decoratedValue: Decoration<T>, _userdata?: unknown): boolean {
         const { target } = decoratedValue
 
         const pointer = thread.lua.ref(target)

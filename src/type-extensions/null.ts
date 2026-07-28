@@ -1,17 +1,17 @@
 import { Decoration } from '../decoration'
-import Global from '../global'
+import type LuaState from '../state'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LUA_REGISTRYINDEX, LuaReturn, LuaState } from '../types'
+import { LUA_REGISTRYINDEX, LuaReturn, LuaAddress } from '../types'
 
 class NullTypeExtension extends TypeExtension<unknown> {
     private gcPointer: number
     private nullReference: number
 
-    public constructor(thread: Global) {
+    public constructor(thread: LuaState) {
         super(thread, 'js_null')
 
-        this.gcPointer = thread.lua._emscripten.addFunction((functionStateAddress: LuaState) => {
+        this.gcPointer = thread.lua._emscripten.addFunction((functionStateAddress: LuaAddress) => {
             // Throws a lua error which does a jump if it does not match.
             const userDataPointer = thread.lua.luaL_checkudata(functionStateAddress, 1, this.name)
             const referencePointer = thread.lua._emscripten.getValue(userDataPointer, '*')
@@ -78,6 +78,6 @@ class NullTypeExtension extends TypeExtension<unknown> {
     }
 }
 
-export default function createTypeExtension(thread: Global): TypeExtension<null> {
+export default function createTypeExtension(thread: LuaState): TypeExtension<null> {
     return new NullTypeExtension(thread)
 }

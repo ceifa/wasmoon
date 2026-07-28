@@ -1,13 +1,13 @@
-import { Lua } from '../dist/index.js'
+import { LuaRuntime } from '../dist/index.js'
 
 export const getLua = (env) => {
-    return Lua.load({ env })
+    return LuaRuntime.load({ env })
 }
 
 export const getState = async (config = {}) => {
-    const lua = await Lua.load()
+    const lua = await LuaRuntime.load()
     return lua.createState({
-        injectObjects: true,
+        inject: true,
         ...config,
     })
 }

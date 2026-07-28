@@ -6,9 +6,9 @@ describe('Promises', () => {
     it('use promise next should succeed', async () => {
         const state = await getState()
         const check = mock.fn()
-        state.global.set('check', check)
+        state.set('check', check)
         const promise = new Promise((resolve) => setTimeout(() => resolve(60), 5))
-        state.global.set('promise', promise)
+        state.set('promise', promise)
 
         const res = state.doString(`
             promise:next(check)
@@ -23,9 +23,9 @@ describe('Promises', () => {
     it('chain promises with next should succeed', async () => {
         const state = await getState()
         const check = mock.fn()
-        state.global.set('check', check)
+        state.set('check', check)
         const promise = new Promise((resolve) => resolve(60))
-        state.global.set('promise', promise)
+        state.set('promise', promise)
 
         const res = state.doString(`
             promise:next(function(value)
@@ -43,9 +43,9 @@ describe('Promises', () => {
 
     it('call an async function should succeed', async () => {
         const state = await getState()
-        state.global.set('asyncFunction', async () => Promise.resolve(60))
+        state.set('asyncFunction', async () => Promise.resolve(60))
         const check = mock.fn()
-        state.global.set('check', check)
+        state.set('check', check)
 
         const res = state.doString(`
             asyncFunction():next(check)
@@ -58,7 +58,7 @@ describe('Promises', () => {
 
     it('return an async function should succeed', async () => {
         const state = await getState()
-        state.global.set('asyncFunction', async () => Promise.resolve(60))
+        state.set('asyncFunction', async () => Promise.resolve(60))
 
         const asyncFunction = await state.doString(`
             return asyncFunction
@@ -70,7 +70,7 @@ describe('Promises', () => {
 
     it('return a chained promise should succeed', async () => {
         const state = await getState()
-        state.global.set('asyncFunction', async () => Promise.resolve(60))
+        state.set('asyncFunction', async () => Promise.resolve(60))
 
         const asyncFunction = await state.doString(`
             return asyncFunction():next(function(x) return x * 2 end)
@@ -83,9 +83,9 @@ describe('Promises', () => {
     it('await an promise inside coroutine should succeed', async () => {
         const state = await getState()
         const check = mock.fn()
-        state.global.set('check', check)
+        state.set('check', check)
         const promise = new Promise((resolve) => setTimeout(() => resolve(60), 5))
-        state.global.set('promise', promise)
+        state.set('promise', promise)
 
         const res = state.doString(`
             local co = coroutine.create(function()
@@ -110,9 +110,9 @@ describe('Promises', () => {
     it('awaited coroutines should ignore resume until it resolves the promise', async () => {
         const state = await getState()
         const check = mock.fn()
-        state.global.set('check', check)
+        state.set('check', check)
         const promise = new Promise((resolve) => setTimeout(() => resolve(60), 5))
-        state.global.set('promise', promise)
+        state.set('promise', promise)
 
         const res = state.doString(`
             local co = coroutine.create(function()
@@ -134,8 +134,8 @@ describe('Promises', () => {
 
     it('await a thread run with async calls should succeed', async () => {
         const state = await getState()
-        state.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
-        const asyncThread = state.global.newThread()
+        state.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
+        const asyncThread = state.newThread()
 
         asyncThread.loadString(`
             sleep(1):await()
@@ -148,8 +148,8 @@ describe('Promises', () => {
 
     it('run thread with async calls and yields should succeed', async () => {
         const state = await getState()
-        state.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
-        const asyncThread = state.global.newThread()
+        state.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
+        const asyncThread = state.newThread()
 
         asyncThread.loadString(`
             coroutine.yield()
@@ -166,8 +166,8 @@ describe('Promises', () => {
 
     it('reject a promise should succeed', async () => {
         const state = await getState()
-        state.global.set('throw', () => new Promise((_, reject) => reject(new Error('expected test error'))))
-        const asyncThread = state.global.newThread()
+        state.set('throw', () => new Promise((_, reject) => reject(new Error('expected test error'))))
+        const asyncThread = state.newThread()
 
         asyncThread.loadString(`
             throw():await()
@@ -179,8 +179,8 @@ describe('Promises', () => {
 
     it('pcall a promise await should succeed', async () => {
         const state = await getState()
-        state.global.set('throw', () => new Promise((_, reject) => reject(new Error('expected test error'))))
-        const asyncThread = state.global.newThread()
+        state.set('throw', () => new Promise((_, reject) => reject(new Error('expected test error'))))
+        const asyncThread = state.newThread()
 
         asyncThread.loadString(`
             local succeed, err = pcall(function() throw():await() end)
@@ -195,8 +195,8 @@ describe('Promises', () => {
         const state = await getState()
         const fulfilled = mock.fn()
         const rejected = mock.fn()
-        state.global.set('handlers', { fulfilled, rejected })
-        state.global.set('throw', new Promise((_, reject) => reject(new Error('expected test error'))))
+        state.set('handlers', { fulfilled, rejected })
+        state.set('throw', new Promise((_, reject) => reject(new Error('expected test error'))))
 
         const res = state.doString(`
             throw:next(handlers.fulfilled, handlers.rejected):catch(function() end)
@@ -210,9 +210,9 @@ describe('Promises', () => {
 
     it('run with async callback', async () => {
         const state = await getState()
-        const thread = state.global.newThread()
+        const thread = state.newThread()
 
-        state.global.set('asyncCallback', async (input) => {
+        state.set('asyncCallback', async (input) => {
             return Promise.resolve(input * 2)
         })
 
@@ -262,7 +262,7 @@ describe('Promises', () => {
 
     it('resolve multiple promises with promise.all', async () => {
         const state = await getState()
-        state.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
+        state.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
         const resPromise = state.doString(`
             local promises = {}
             for i = 1, 10 do
@@ -279,7 +279,7 @@ describe('Promises', () => {
 
     it('error in promise next catchable', async () => {
         const state = await getState()
-        state.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
+        state.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
         const resPromise = state.doString(`
             return sleep(1):next(function ()
                 error("sleep done")
@@ -290,10 +290,10 @@ describe('Promises', () => {
 
     it('should not be possible to await in synchronous run', async () => {
         const state = await getState()
-        state.global.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
+        state.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
 
         expect(() => {
             state.doStringSync(`sleep(5):await()`)
-        }).to.throw('cannot await in the main thread')
+        }).to.throw('cannot await in a thread that cannot yield')
     })
 })

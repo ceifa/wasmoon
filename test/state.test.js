@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events'
-import { LuaLibraries, LuaReturn, LuaThread, LuaType, decorate, decorateProxy, decorateUserdata } from '../dist/index.js'
+import { LuaReturn, LuaThread, LuaType, decorate } from '../dist/index.js'
 import { expect } from 'chai'
 import { getState, getLua } from './utils.js'
 import { setTimeout } from 'node:timers/promises'
@@ -36,20 +36,20 @@ describe('State', () => {
 
     it('receive lua table on JS function should succeed', async () => {
         const state = await getState()
-        state.global.set('stringify', (table) => {
+        state.set('stringify', (table) => {
             return JSON.stringify(table)
         })
 
         await state.doString('value = stringify({ test = 1 })')
 
-        expect(state.global.get('value')).to.be.equal(JSON.stringify({ test: 1 }))
+        expect(state.get('value')).to.be.equal(JSON.stringify({ test: 1 }))
     })
 
     it('get a global table inside a JS function called by lua should succeed', async () => {
         const state = await getState()
-        state.global.set('t', { test: 1 })
-        state.global.set('test', () => {
-            return state.global.get('t')
+        state.set('t', { test: 1 })
+        state.set('test', () => {
+            return state.get('t')
         })
 
         const value = await state.doString('return test(2)')
@@ -60,7 +60,7 @@ describe('State', () => {
     it('receive JS object on lua should succeed', async () => {
         const state = await getState()
 
-        state.global.set('test', () => {
+        state.set('test', () => {
             return {
                 aaaa: 1,
                 bbb: 'hey',
@@ -80,7 +80,7 @@ describe('State', () => {
             hello: 'world',
         }
         obj.self = obj
-        state.global.set('obj', obj)
+        state.set('obj', obj)
 
         const value = await state.doString('return obj.self.self.self.hello')
 
@@ -149,7 +149,7 @@ describe('State', () => {
             hello: 'everybody',
         }
         obj2.self = obj2
-        state.global.set('obj', { obj1, obj2 })
+        state.set('obj', { obj1, obj2 })
 
         await state.doString(`
             assert(obj.obj1.self.self.hello == "world")
@@ -161,7 +161,7 @@ describe('State', () => {
         const state = await getState()
         const obj = Object.create(null)
         obj.hello = 'world'
-        state.global.set('obj', obj)
+        state.set('obj', obj)
 
         const value = await state.doString(`return obj.hello`)
 
@@ -169,10 +169,10 @@ describe('State', () => {
     })
 
     it('inherited properties should not be copied into the lua table', async () => {
-        const state = await getState({ enableProxy: false })
+        const state = await getState({ objects: 'copy' })
         const obj = Object.create({ inherited: 'yes' })
         obj.own = 'mine'
-        state.global.set('t', obj)
+        state.set('t', obj)
 
         const keys = await state.doString(`
             local out = {}
@@ -185,18 +185,18 @@ describe('State', () => {
     })
 
     it('non enumerable properties should not be copied into the lua table', async () => {
-        const state = await getState({ enableProxy: false })
+        const state = await getState({ objects: 'copy' })
         const obj = { own: 'mine' }
         Object.defineProperty(obj, 'hidden', { value: 1, enumerable: false })
-        state.global.set('t', obj)
+        state.set('t', obj)
 
         expect(await state.doString('return t.hidden == nil')).to.be.true
         expect(await state.doString('return t.own')).to.be.equal('mine')
     })
 
     it('nested arrays and objects should be copied into the lua table', async () => {
-        const state = await getState({ enableProxy: false })
-        state.global.set('t', { list: [10, 20, 30], nested: { deep: [{ value: 5 }] } })
+        const state = await getState({ objects: 'copy' })
+        state.set('t', { list: [10, 20, 30], nested: { deep: [{ value: 5 }] } })
 
         expect(await state.doString('return #t.list')).to.be.equal(3)
         expect(await state.doString('return t.list[1]')).to.be.equal(10)
@@ -213,14 +213,14 @@ describe('State', () => {
         const state = await getState()
 
         await state.doString(`function sum(x, y) return x + y end`)
-        const sum = state.global.get('sum')
+        const sum = state.get('sum')
 
         expect(sum(10, 50)).to.be.equal(60)
     })
 
     it('scheduled lua calls should succeed', async () => {
         const state = await getState()
-        state.global.set('setInterval', setIntervalSafe)
+        state.set('setInterval', setIntervalSafe)
 
         await state.doString(`
             test = ""
@@ -236,31 +236,28 @@ describe('State', () => {
         `)
 
         const deadline = Date.now() + 1000
-        while (!state.global.get('done')) {
+        while (!state.get('done')) {
             if (Date.now() > deadline) {
                 throw new Error('timed out waiting for scheduled lua calls')
             }
             await setTimeout(5)
         }
 
-        expect(state.global.get('test')).to.be.equal('iiiii')
+        expect(state.get('test')).to.be.equal('iiiii')
     })
 
-    it('scheduled lua calls should fail silently if invalid', async () => {
+    it('calling a lua function after close should throw', async () => {
         const state = await getState()
-        state.global.set('setInterval', setIntervalSafe)
-        const originalConsoleWarn = console.warn
-        console.warn = mock.fn()
 
-        await state.doString(`
+        const callback = await state.doString(`
             test = 0
-            setInterval(function()
+            return function()
                 test = test + 1
-            end, 5)
+            end
         `)
-        state.global.close()
-        await setTimeout(5 + 5)
-        console.warn = originalConsoleWarn
+        state.close()
+
+        expect(() => callback()).to.throw('cannot call a Lua function after its state has been closed')
     })
 
     it('call lua function from JS passing an array argument should succeed', async () => {
@@ -288,7 +285,7 @@ describe('State', () => {
             end
         `)
 
-        const returns = state.global.call('f', 10, 25)
+        const returns = state.call('f', 10, 25)
         expect(returns).to.have.length(6)
         expect(returns.slice(0, -1)).to.eql([1, 10, 25, 'Hello World', {}])
         expect(returns.at(-1)).to.be.a('function')
@@ -310,8 +307,8 @@ describe('State', () => {
     it('a JS error should pause lua execution', async () => {
         const state = await getState()
         const check = mock.fn()
-        state.global.set('check', check)
-        state.global.set('throw', () => {
+        state.set('check', check)
+        state.set('throw', () => {
             throw new Error('expected error')
         })
 
@@ -327,8 +324,8 @@ describe('State', () => {
     it('catch a JS error with pcall should succeed', async () => {
         const state = await getState()
         const check = mock.fn()
-        state.global.set('check', check)
-        state.global.set('throw', () => {
+        state.set('check', check)
+        state.set('throw', () => {
             throw new Error('expected error')
         })
 
@@ -345,7 +342,7 @@ describe('State', () => {
     it('call a JS function in a different thread should succeed', async () => {
         const state = await getState()
         const sum = mock.fn((x, y) => x + y)
-        state.global.set('sum', sum)
+        state.set('sum', sum)
 
         await state.doString(`
             coroutine.resume(coroutine.create(function()
@@ -367,15 +364,15 @@ describe('State', () => {
         })
     `)
 
-        state.global.lua.lua_getglobal(state.global.address, 'sum')
-        const sum = state.global.getValue(-1, LuaType.Function)
+        state.lua.lua_getglobal(state.address, 'sum')
+        const sum = state.getValue(-1, LuaType.Function)
 
         expect(sum(10, 30)).to.be.equal(40)
     })
 
     it('lua_resume with yield succeeds', async () => {
         const state = await getState()
-        const thread = state.global.newThread()
+        const thread = state.newThread()
         thread.loadString(`
         local yieldRes = coroutine.yield(10)
         return yieldRes
@@ -400,12 +397,12 @@ describe('State', () => {
     })
 
     it('get memory with allocation tracing should succeeds', async () => {
-        const state = await getState({ traceAllocations: true })
-        expect(state.global.getMemoryUsed()).to.be.greaterThan(0)
+        const state = await getState({ memory: { trace: true } })
+        expect(state.memory.used).to.be.greaterThan(0)
     })
 
     it('get memory should return correct', async () => {
-        const state = await getState({ traceAllocations: true })
+        const state = await getState({ memory: { trace: true } })
 
         const totalMemory = await state.doString(`
         collectgarbage()
@@ -414,20 +411,20 @@ describe('State', () => {
         return collectgarbage('count') * 1024
     `)
 
-        expect(state.global.getMemoryUsed()).to.be.equal(totalMemory)
+        expect(state.memory.used).to.be.equal(totalMemory)
     })
 
-    it('get memory without tracing should throw', async () => {
-        const state = await getState({ traceAllocations: false })
+    it('memory is undefined without tracing', async () => {
+        const state = await getState()
 
-        expect(() => state.global.getMemoryUsed()).to.throw()
+        expect(state.memory).to.be.undefined
     })
 
     it('limit memory use causes program loading failure succeeds', async () => {
-        const state = await getState({ traceAllocations: true })
-        state.global.setMemoryMax(state.global.getMemoryUsed())
+        const state = await getState({ memory: { trace: true } })
+        state.memory.max = state.memory.used
         expect(() => {
-            state.global.loadString(`
+            state.loadString(`
             local a = 10
             local b = 20
             return a + b
@@ -435,8 +432,8 @@ describe('State', () => {
         }).to.throw('not enough memory')
 
         // Remove the limit and retry
-        state.global.setMemoryMax(undefined)
-        state.global.loadString(`
+        state.memory.max = undefined
+        state.loadString(`
         local a = 10
         local b = 20
         return a + b
@@ -444,16 +441,16 @@ describe('State', () => {
     })
 
     it('limit memory use causes program runtime failure succeeds', async () => {
-        const state = await getState({ traceAllocations: true })
-        state.global.loadString(`
+        const state = await getState({ memory: { trace: true } })
+        state.loadString(`
         local tab = {}
         for i = 1, 50, 1 do
             tab[i] = i
         end
     `)
-        state.global.setMemoryMax(state.global.getMemoryUsed())
+        state.memory.max = state.memory.used
 
-        await expect(state.global.run()).to.eventually.be.rejectedWith('not enough memory')
+        await expect(state.run()).to.eventually.be.rejectedWith('not enough memory')
     })
 
     it('table supported circular dependencies', async () => {
@@ -464,19 +461,19 @@ describe('State', () => {
         b.a = a
         a.b = b
 
-        state.global.pushValue(a)
-        const res = state.global.getValue(-1)
+        state.pushValue(a)
+        const res = state.getValue(-1)
 
         expect(res.b.a).to.be.eql(res)
     })
 
     it('wrap a js object (with metatable)', async () => {
         const state = await getState()
-        state.global.set('TestClass', {
+        state.set('TestClass', {
             create: (name) => {
                 return decorate(
                     {
-                        instance: decorateUserdata(new TestClass(name)),
+                        instance: decorate(new TestClass(name), { as: 'userdata' }),
                     },
                     {
                         metatable: {
@@ -502,7 +499,7 @@ describe('State', () => {
 
     it('wrap a js object using proxy', async () => {
         const state = await getState()
-        state.global.set('TestClass', {
+        state.set('TestClass', {
             create: (name) => new TestClass(name),
         })
         const res = await state.doString(`
@@ -514,7 +511,7 @@ describe('State', () => {
 
     it('wrap a js object using proxy and apply metatable in lua', async () => {
         const state = await getState()
-        state.global.set('TestClass', {
+        state.set('TestClass', {
             create: (name) => new TestClass(name),
         })
         const res = await state.doString(`
@@ -543,7 +540,7 @@ describe('State', () => {
 
     it('classes should be a userdata when proxied', async () => {
         const state = await getState()
-        state.global.set('obj', { TestClass })
+        state.set('obj', { TestClass })
 
         const testClass = await state.doString(`
         return obj.TestClass
@@ -554,18 +551,18 @@ describe('State', () => {
 
     it('timeout blocking lua program', async () => {
         const state = await getState()
-        state.global.loadString(`
+        state.loadString(`
             local i = 0
             while true do i = i + 1 end
         `)
 
-        await expect(state.global.run(0, { timeout: 5 })).eventually.to.be.rejectedWith('thread timeout exceeded')
+        await expect(state.run(0, { timeout: 5 })).eventually.to.be.rejectedWith('thread timeout exceeded')
     })
 
     it('the most recently set timeout should be the one that applies', async function () {
         this.timeout(30_000)
         const state = await getState()
-        const thread = state.global.newThread()
+        const thread = state.newThread()
 
         thread.setTimeout(Date.now() + 20)
         thread.setTimeout(Date.now() + 20_000)
@@ -577,7 +574,7 @@ describe('State', () => {
     it('clearing a timeout should disable the hook', async function () {
         this.timeout(30_000)
         const state = await getState()
-        const thread = state.global.newThread()
+        const thread = state.newThread()
 
         thread.setTimeout(Date.now() + 10)
         thread.setTimeout(undefined)
@@ -591,8 +588,8 @@ describe('State', () => {
         const state = await getState()
 
         let output = ''
-        state.global.getTable(LuaLibraries.Base, (index) => {
-            state.global.setField(index, 'print', (val) => {
+        state.getTable('_G', (index) => {
+            state.setField(index, 'print', (val) => {
                 // Not a proper print implementation.
                 output += `${val}\n`
             })
@@ -614,7 +611,7 @@ describe('State', () => {
                 metatable: { __index: (_, k) => `Hello ${k}!` },
             },
         )
-        state.global.set('obj', obj)
+        state.set('obj', obj)
 
         const res = await state.doString('return obj.World')
 
@@ -624,9 +621,9 @@ describe('State', () => {
     it('a userdata should be collected', async () => {
         const state = await getState()
         const obj = {}
-        state.global.set('obj', obj)
-        const refIndex = state.global.lua.getLastRefIndex()
-        const oldRef = state.global.lua.getRef(refIndex)
+        state.set('obj', obj)
+        const refIndex = state.lua.getLastRefIndex()
+        const oldRef = state.lua.getRef(refIndex)
 
         await state.doString(`
         local weaktable = {}
@@ -638,7 +635,7 @@ describe('State', () => {
     `)
 
         expect(oldRef).to.be.equal(obj)
-        const newRef = state.global.lua.getRef(refIndex)
+        const newRef = state.lua.getRef(refIndex)
         expect(newRef).to.be.equal(undefined)
     })
 
@@ -653,7 +650,7 @@ describe('State', () => {
 
     it('static methods should be callable on classes', async () => {
         const state = await getState()
-        state.global.set('TestClass', TestClass)
+        state.set('TestClass', TestClass)
 
         const testHello = await state.doString(`return TestClass.hello()`)
 
@@ -664,7 +661,7 @@ describe('State', () => {
         const state = await getState()
         const testFunction = () => undefined
         testFunction.hello = 'world'
-        state.global.set('TestFunction', decorateProxy(testFunction, { proxy: true }))
+        state.set('TestFunction', decorate(testFunction, { as: 'proxy' }))
 
         const testHello = await state.doString(`return TestFunction.hello`)
 
@@ -685,11 +682,15 @@ describe('State', () => {
             throw new Error('should not be reached')
         } catch (err) {
             expect(err.message).to.includes('[string "..."]:3: function a threw error')
-            expect(err.message).to.includes('stack traceback:')
-            expect(err.message).to.includes(`[string "..."]:3: in upvalue 'a'`)
-            expect(err.message).to.includes(`[string "..."]:5: in upvalue 'b'`)
-            expect(err.message).to.includes(`[string "..."]:6: in local 'c'`)
-            expect(err.message).to.includes(`[string "..."]:7: in main chunk`)
+            expect(err.message).to.not.includes('stack traceback:')
+            expect(err.luaMessage).to.be.equal(err.message)
+            expect(err.traceback).to.includes('stack traceback:')
+            expect(err.traceback).to.includes(`[string "..."]:3: in upvalue 'a'`)
+            expect(err.traceback).to.includes(`[string "..."]:5: in upvalue 'b'`)
+            expect(err.traceback).to.includes(`[string "..."]:6: in local 'c'`)
+            expect(err.traceback).to.includes(`[string "..."]:7: in main chunk`)
+            // Still reachable through the default logging path.
+            expect(err.stack).to.includes('stack traceback:')
         }
     })
 
@@ -709,11 +710,11 @@ describe('State', () => {
 
     it('should get only the return values on call function', async () => {
         const state = await getState()
-        state.global.set('hello', (name) => `Hello ${name}!`)
+        state.set('hello', (name) => `Hello ${name}!`)
 
         const a = await state.doString(`return 1`)
         const b = state.doStringSync(`return 5`)
-        const values = state.global.call('hello', 'joao')
+        const values = state.call('hello', 'joao')
 
         expect(a).to.be.equal(1)
         expect(b).to.be.equal(5)
@@ -725,7 +726,7 @@ describe('State', () => {
         const state = await getState()
         const str = 'a'.repeat(1000000)
 
-        state.global.set('str', str)
+        state.set('str', str)
 
         const res = await state.doString('return str')
 
@@ -746,7 +747,7 @@ describe('State', () => {
         const state = await getState()
         const str = 'á'.repeat(500000)
 
-        state.global.set('str', str)
+        state.set('str', str)
 
         expect(await state.doString('return #str')).to.be.equal(1000000)
         expect(await state.doString('return str')).to.be.equal(str)
@@ -754,7 +755,7 @@ describe('State', () => {
 
     it('a string containing NUL should be pushed with its full length', async () => {
         const state = await getState()
-        state.global.set('str', 'a\0b')
+        state.set('str', 'a\0b')
 
         expect(await state.doString('return #str')).to.be.equal(3)
     })
@@ -770,14 +771,14 @@ describe('State', () => {
     it('a string containing NUL should round trip unchanged', async () => {
         const state = await getState()
         const str = 'before\0middle\0after'
-        state.global.set('str', str)
+        state.set('str', str)
 
         expect(await state.doString('return str')).to.be.equal(str)
     })
 
     it('an empty string should round trip unchanged', async () => {
         const state = await getState()
-        state.global.set('str', '')
+        state.set('str', '')
 
         expect(await state.doString('return #str')).to.be.equal(0)
         expect(await state.doString('return str')).to.be.equal('')
@@ -787,39 +788,39 @@ describe('State', () => {
         const state = await getState()
         await state.doString('value = string.char(0, 255, 128, 65)')
 
-        state.global.lua.lua_getglobal(state.global.address, 'value')
-        const bytes = state.global.getStringBytes(-1)
-        state.global.pop()
+        state.lua.lua_getglobal(state.address, 'value')
+        const bytes = state.getStringBytes(-1)
+        state.pop()
 
         expect(Array.from(bytes)).to.be.eql([0, 255, 128, 65])
     })
 
     it('getStringBytes should return undefined for a non string value', async () => {
         const state = await getState()
-        state.global.pushValue({})
+        state.pushValue({})
 
-        expect(state.global.getStringBytes(-1)).to.be.undefined
+        expect(state.getStringBytes(-1)).to.be.undefined
 
-        state.global.pop()
+        state.pop()
     })
 
     it('bytecode should round trip through the byte accessors', async () => {
         const state = await getState()
         await state.doString('bytecode = string.dump(load("return 42"))')
 
-        state.global.lua.lua_getglobal(state.global.address, 'bytecode')
-        const bytes = state.global.getStringBytes(-1)
-        state.global.pop()
+        state.lua.lua_getglobal(state.address, 'bytecode')
+        const bytes = state.getStringBytes(-1)
+        state.pop()
 
-        state.global.pushStringBytes(bytes)
-        state.global.lua.lua_setglobal(state.global.address, 'roundtripped')
+        state.pushStringBytes(bytes)
+        state.lua.lua_setglobal(state.address, 'roundtripped')
 
         expect(await state.doString('return load(roundtripped)()')).to.be.equal(42)
     })
 
     it('negative integers should be pushed and retrieved as string', async () => {
         const state = await getState()
-        state.global.set('value', -1)
+        state.set('value', -1)
 
         const res = await state.doString(`return tostring(value)`)
 
@@ -828,7 +829,7 @@ describe('State', () => {
 
     it('negative integers should be pushed and retrieved as number', async () => {
         const state = await getState()
-        state.global.set('value', -1)
+        state.set('value', -1)
 
         const res = await state.doString(`return value`)
 
@@ -838,7 +839,7 @@ describe('State', () => {
     it('number greater than 32 bit int should be pushed and retrieved as string', async () => {
         const state = await getState()
         const value = 1689031554550
-        state.global.set('value', value)
+        state.set('value', value)
 
         const res = await state.doString(`return tostring(value)`)
 
@@ -848,7 +849,7 @@ describe('State', () => {
     it('number greater than 32 bit int should be pushed and retrieved as number', async () => {
         const state = await getState()
         const value = 1689031554550
-        state.global.set('value', value)
+        state.set('value', value)
 
         const res = await state.doString(`return value`)
 
@@ -858,7 +859,7 @@ describe('State', () => {
     it('number greater than 32 bit int should be usable as a format argument', async () => {
         const state = await getState()
         const value = 1689031554550
-        state.global.set('value', value)
+        state.set('value', value)
 
         const res = await state.doString(`return ("%d"):format(value)`)
 
@@ -869,15 +870,15 @@ describe('State', () => {
         const state = await getState()
         const value = 9223372036854775807n
 
-        state.global.lua.lua_pushinteger(state.global.address, value)
-        state.global.lua.lua_setglobal(state.global.address, 'value')
+        state.lua.lua_pushinteger(state.address, value)
+        state.lua.lua_setglobal(state.address, 'value')
 
         const asString = await state.doString(`return tostring(value)`)
         const asFormatted = await state.doString(`return ("%d"):format(value)`)
 
-        state.global.lua.lua_getglobal(state.global.address, 'value')
-        const roundTrip = state.global.lua.lua_tointegerx(state.global.address, -1, null)
-        state.global.pop()
+        state.lua.lua_getglobal(state.address, 'value')
+        const roundTrip = state.lua.lua_tointegerx(state.address, -1, null)
+        state.pop()
 
         expect(asString).to.be.equal('9223372036854775807')
         expect(asFormatted).to.be.equal('9223372036854775807')
@@ -902,7 +903,7 @@ describe('State', () => {
 
     it('an integral number should be pushed as a lua integer', async () => {
         const state = await getState()
-        state.global.set('value', 2)
+        state.set('value', 2)
 
         expect(await state.doString('return math.type(value)')).to.be.equal('integer')
     })
@@ -916,7 +917,7 @@ describe('State', () => {
 
     it('a bigint should be pushed as a 64 bit lua integer', async () => {
         const state = await getState()
-        state.global.set('value', 9223372036854775807n)
+        state.set('value', 9223372036854775807n)
 
         expect(await state.doString('return tostring(value)')).to.be.equal('9223372036854775807')
         expect(await state.doString('return math.type(value)')).to.be.equal('integer')
@@ -926,12 +927,12 @@ describe('State', () => {
     it('a bigint outside the lua integer range should throw', async () => {
         const state = await getState()
 
-        expect(() => state.global.set('value', 2n ** 70n)).to.throw(RangeError)
+        expect(() => state.set('value', 2n ** 70n)).to.throw(RangeError)
     })
 
     it('an integral number too large for a lua integer should be pushed as a float', async () => {
         const state = await getState()
-        state.global.set('value', 1e300)
+        state.set('value', 1e300)
 
         expect(await state.doString('return math.type(value)')).to.be.equal('float')
         expect(await state.doString('return value')).to.be.equal(1e300)
@@ -943,7 +944,7 @@ describe('State', () => {
         // re-used and doesn't cause JS to abort or some nonsense.
         const state = await getState()
         const testEmitter = new EventEmitter()
-        state.global.set('yield', () => new Promise((resolve) => testEmitter.once('resolve', resolve)))
+        state.set('yield', () => new Promise((resolve) => testEmitter.once('resolve', resolve)))
         const resPromise = state.doString(`
         local res = yield():next(function ()
             coroutine.yield()
@@ -959,9 +960,9 @@ describe('State', () => {
     })
 
     it('forced yield within JS callback from Lua doesnt cause vm to crash', async () => {
-        const state = await getState({ functionTimeout: 10 })
-        state.global.set('promise', Promise.resolve())
-        const thread = state.global.newThread()
+        const state = await getState({ limits: { functionTimeout: 10 } })
+        state.set('promise', Promise.resolve())
+        const thread = state.newThread()
         thread.loadString(`
         promise:next(function ()
             while true do
@@ -976,8 +977,8 @@ describe('State', () => {
 
     it('function callback timeout still allows timeout of caller thread', async () => {
         const state = await getState()
-        state.global.set('promise', Promise.resolve())
-        const thread = state.global.newThread()
+        state.set('promise', Promise.resolve())
+        const thread = state.newThread()
         thread.loadString(`
         promise:next(function ()
             -- nothing
@@ -989,25 +990,25 @@ describe('State', () => {
 
     it('null injected and valid', async () => {
         const state = await getState()
-        state.global.loadString(`
+        state.loadString(`
         local args = { ... }
         assert(args[1] == null, string.format("expected first argument to be null, got %s", tostring(args[1])))
         return null, args[1], tostring(null)
       `)
-        state.global.pushValue(null)
-        const res = await state.global.run(1)
+        state.pushValue(null)
+        const res = await state.run(1)
         expect(res).to.deep.equal([null, null, 'null'])
     })
 
     it('null injected as nil', async () => {
-        const state = await getState({ injectObjects: false })
-        state.global.loadString(`
+        const state = await getState({ inject: false })
+        state.loadString(`
         local args = { ... }
         assert(type(args[1]) == "nil", string.format("expected first argument to be nil, got %s", type(args[1])))
         return nil, args[1], tostring(nil)
       `)
-        state.global.pushValue(null)
-        const res = await state.global.run(1)
+        state.pushValue(null)
+        const res = await state.run(1)
         expect(res).to.deep.equal([null, null, 'nil'])
     })
 
@@ -1015,22 +1016,22 @@ describe('State', () => {
         const state = await getState()
         await state.doString('null = 5')
 
-        state.global.set('value', null)
+        state.set('value', null)
 
         expect(await state.doString('return type(value)')).to.be.equal('userdata')
-        expect(state.global.get('value')).to.be.null
+        expect(state.get('value')).to.be.null
     })
 
     it('a pushed null should equal the injected null global', async () => {
         const state = await getState()
-        state.global.set('value', null)
+        state.set('value', null)
 
         expect(await state.doString('return value == null')).to.be.true
     })
 
     it('Nested callback from JS to Lua', async () => {
         const state = await getState()
-        state.global.set('call', (fn) => fn())
+        state.set('call', (fn) => fn())
         const res = await state.doString(`
         return call(function ()
           return call(function ()
@@ -1056,22 +1057,22 @@ describe('State', () => {
     it('lots of doStringSync calls should not grow the lua stack', async function () {
         this.timeout(30_000)
         const state = await getState()
-        const startTop = state.global.getTop()
+        const startTop = state.getTop()
 
         for (let i = 0; i < 500; i++) {
             expect(state.doStringSync(`return ${i}`)).to.be.equal(i)
         }
 
-        expect(state.global.getTop()).to.be.equal(startTop)
+        expect(state.getTop()).to.be.equal(startTop)
     })
 
     it('a failing doStringSync should not grow the lua stack', async () => {
         const state = await getState()
-        const startTop = state.global.getTop()
+        const startTop = state.getTop()
 
         expect(() => state.doStringSync('error("boom")')).to.throw('boom')
 
-        expect(state.global.getTop()).to.be.equal(startTop)
+        expect(state.getTop()).to.be.equal(startTop)
     })
 
     it('values returned by doStringSync should outlive the stack reset', async () => {
@@ -1098,5 +1099,132 @@ describe('State', () => {
         for (let i = 0; i < length; i++) {
             expect(results[i]).to.equal(i)
         }
+    })
+})
+
+describe('Load mode', () => {
+    it('loadString refuses bytecode by default', async () => {
+        const state = await getState()
+        // Produced and reloaded inside Lua so the bytes never round trip through a JS string.
+        expect(
+            state.doStringSync(`
+            local d = string.dump(function() return 42 end)
+            local f, err = load(d, 'c', 't')
+            return err
+        `),
+        ).to.include('attempt to load a binary chunk')
+    })
+
+    it('the host loader refuses a binary chunk by default', async () => {
+        const state = await getState()
+
+        expect(() => state.loadString('\x1bLua\x55\x00')).to.throw('attempt to load a binary chunk')
+    })
+
+    it('mode bt opts back in', async () => {
+        const state = await getState()
+
+        expect(
+            state.doStringSync(`
+            local d = string.dump(function() return 42 end)
+            return load(d, 'c', 'bt')()
+        `),
+        ).to.be.equal(42)
+    })
+})
+
+describe('Decoration', () => {
+    class Thing {
+        constructor(name) {
+            this.name = name
+        }
+        getName() {
+            return this.name
+        }
+    }
+
+    it('as userdata hides the members', async () => {
+        const state = await getState()
+        state.set('thing', decorate(new Thing('bob'), { as: 'userdata' }))
+
+        // An opaque userdata has no __index of its own, so Lua refuses to index it at all.
+        await expect(state.doString('return thing.name')).to.eventually.be.rejectedWith('attempt to index a js_userdata value')
+    })
+
+    it('as userdata still cannot take a metatable of its own', async () => {
+        const state = await getState()
+
+        // The userdata extension owns the metatable slot. That is a constraint of the extension,
+        // not of the decoration API, so a custom metatable has to go on a wrapper.
+        expect(() => state.set('thing', decorate(new Thing('bob'), { as: 'userdata', metatable: { __name: 'js_thing' } }))).to.throw(
+            'data already has associated metatable: js_userdata',
+        )
+    })
+
+    it('a wrapper carries the metatable around an opaque userdata', async () => {
+        const state = await getState()
+        state.set(
+            'thing',
+            decorate(
+                { inner: decorate(new Thing('bob'), { as: 'userdata' }) },
+                { metatable: { __name: 'js_thing', __index: (self, key) => (key === 'name' ? self.inner.getName() : null) } },
+            ),
+        )
+
+        expect(await state.doString('return thing.name')).to.be.equal('bob')
+    })
+
+    it('as value copies an object instead of proxying it', async () => {
+        const state = await getState()
+        state.set('plain', decorate({ a: 1 }, { as: 'value' }))
+
+        expect(await state.doString('return type(plain)')).to.be.equal('table')
+    })
+
+    it('as proxy forces a function through the proxy layer', async () => {
+        const state = await getState()
+        const fn = () => undefined
+        fn.hello = 'world'
+        state.set('fn', decorate(fn, { as: 'proxy' }))
+
+        expect(await state.doString('return fn.hello')).to.be.equal('world')
+    })
+})
+
+describe('Memory', () => {
+    it('memory.max rejects without tracing', async () => {
+        const lua = await getLua()
+
+        expect(() => lua.createState({ memory: { max: 1000 } })).to.throw('requires memory.trace')
+    })
+
+    it('memory is a live view', async () => {
+        using state = await getState({ memory: { trace: true } })
+
+        const before = state.memory.used
+        await state.doString('big = {} for i = 1, 5000 do big[i] = i end')
+
+        expect(state.memory.used).to.be.greaterThan(before)
+    })
+})
+
+describe('Synchronous runs', () => {
+    it('do not leak stack onto the state between calls', async () => {
+        const state = await getState()
+        const top = state.getTop()
+
+        for (let i = 0; i < 50; i++) {
+            state.doStringSync('return 1')
+        }
+
+        expect(state.getTop()).to.be.equal(top)
+    })
+
+    it('a hook installed for a sync run does not outlive it', async () => {
+        const state = await getState()
+
+        state.doStringSync('return 1', { timeout: 1000 })
+
+        expect(state.getTimeout()).to.be.undefined
     })
 })

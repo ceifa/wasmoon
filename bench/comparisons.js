@@ -1,4 +1,4 @@
-import { Lua } from '../dist/index.js'
+import { LuaRuntime } from '../dist/index.js'
 import fengari from 'fengari'
 import { isMainModule, parseBenchOptions, readBenchAsset, runBenchmarks } from './utils.js'
 
@@ -20,11 +20,11 @@ function createWasmoonIteration(lua) {
     return function runWasmoonIteration() {
         const state = lua.createState()
         try {
-            assertStatus(state.global.lua.luaL_loadstring(state.global.address, heapsort), 'Wasmoon load')
-            assertStatus(state.global.lua.lua_pcallk(state.global.address, 0, 1, 0, 0, null), 'Wasmoon compile')
-            assertStatus(state.global.lua.lua_pcallk(state.global.address, 0, 1, 0, 0, null), 'Wasmoon execute')
+            assertStatus(state.lua.luaL_loadstring(state.address, heapsort), 'Wasmoon load')
+            assertStatus(state.lua.lua_pcallk(state.address, 0, 1, 0, 0, null), 'Wasmoon compile')
+            assertStatus(state.lua.lua_pcallk(state.address, 0, 1, 0, 0, null), 'Wasmoon execute')
         } finally {
-            state.global.close()
+            state.close()
         }
     }
 }
@@ -36,7 +36,7 @@ function assertStatus(status, label) {
 }
 
 export async function runComparisonBench(options = {}) {
-    const lua = await Lua.load()
+    const lua = await LuaRuntime.load()
     return runBenchmarks({
         title: 'Comparison benchmarks',
         benches: [

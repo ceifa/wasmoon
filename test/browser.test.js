@@ -19,9 +19,9 @@ function startServer() {
 <script type="module">
 const wasmFile = new URL('./glue.wasm', location.href).href
 window.__runTest = async (code) => {
-    const { default: Lua } = await import('./index.js')
-    const fn = new Function('Lua', 'wasmFile', 'return (async () => {' + code + '})()')
-    return await fn(Lua, wasmFile)
+    const { default: LuaRuntime } = await import('./index.js')
+    const fn = new Function('LuaRuntime', 'wasmFile', 'return (async () => {' + code + '})()')
+    return await fn(LuaRuntime, wasmFile)
 }
 window.__ready = true
 </script>
@@ -92,7 +92,7 @@ describe('Browser environment', () => {
     it('load Lua engine in browser should succeed', async function () {
         this.timeout(30_000)
         const result = await runInBrowser(`
-            const lua = await Lua.load({ wasmFile })
+            const lua = await LuaRuntime.load({ wasmFile })
             const state = lua.createState()
             return state !== undefined
         `)
@@ -102,7 +102,7 @@ describe('Browser environment', () => {
     it('execute Lua code in browser should succeed', async function () {
         this.timeout(30_000)
         const result = await runInBrowser(`
-            const lua = await Lua.load({ wasmFile })
+            const lua = await LuaRuntime.load({ wasmFile })
             const state = lua.createState()
             return await state.doString('return 2 + 2')
         `)
@@ -112,9 +112,9 @@ describe('Browser environment', () => {
     it('pass JS values to Lua and back in browser should succeed', async function () {
         this.timeout(30_000)
         const result = await runInBrowser(`
-            const lua = await Lua.load({ wasmFile })
-            const state = lua.createState({ injectObjects: true })
-            state.global.set('name', 'wasmoon')
+            const lua = await LuaRuntime.load({ wasmFile })
+            const state = lua.createState({ inject: true })
+            state.set('name', 'wasmoon')
             return await state.doString('return "hello " .. name')
         `)
         expect(result).to.be.equal('hello wasmoon')
@@ -123,9 +123,9 @@ describe('Browser environment', () => {
     it('call JS function from Lua in browser should succeed', async function () {
         this.timeout(30_000)
         const result = await runInBrowser(`
-            const lua = await Lua.load({ wasmFile })
-            const state = lua.createState({ injectObjects: true })
-            state.global.set('add', (a, b) => a + b)
+            const lua = await LuaRuntime.load({ wasmFile })
+            const state = lua.createState({ inject: true })
+            state.set('add', (a, b) => a + b)
             return await state.doString('return add(10, 20)')
         `)
         expect(result).to.be.equal(30)
@@ -134,7 +134,7 @@ describe('Browser environment', () => {
     it('mount and require a file in browser should succeed', async function () {
         this.timeout(30_000)
         const result = await runInBrowser(`
-            const lua = await Lua.load({ wasmFile })
+            const lua = await LuaRuntime.load({ wasmFile })
             lua.mountFile('mymodule.lua', 'return 42')
             const state = lua.createState()
             return await state.doString('return require("mymodule")')
@@ -145,8 +145,8 @@ describe('Browser environment', () => {
     it('handle Lua tables as JS objects in browser should succeed', async function () {
         this.timeout(30_000)
         const result = await runInBrowser(`
-            const lua = await Lua.load({ wasmFile })
-            const state = lua.createState({ injectObjects: true })
+            const lua = await LuaRuntime.load({ wasmFile })
+            const state = lua.createState({ inject: true })
             const value = await state.doString('return { x = 10, y = 20 }')
             return { x: value.x, y: value.y }
         `)
@@ -156,7 +156,7 @@ describe('Browser environment', () => {
     it('handle errors in browser should succeed', async function () {
         this.timeout(30_000)
         const result = await runInBrowser(`
-            const lua = await Lua.load({ wasmFile })
+            const lua = await LuaRuntime.load({ wasmFile })
             const state = lua.createState()
             try {
                 await state.doString('error("test error")')
@@ -171,7 +171,7 @@ describe('Browser environment', () => {
     it('use coroutines in browser should succeed', async function () {
         this.timeout(30_000)
         const result = await runInBrowser(`
-            const lua = await Lua.load({ wasmFile })
+            const lua = await LuaRuntime.load({ wasmFile })
             const state = lua.createState()
             return await state.doString(\`
                 local co = coroutine.create(function()
@@ -196,7 +196,7 @@ describe('Browser environment', () => {
         this.timeout(30_000)
         // Browsers have no setImmediate, which the yield path used to depend on.
         const result = await runInBrowser(`
-            const lua = await Lua.load({ wasmFile })
+            const lua = await LuaRuntime.load({ wasmFile })
             const state = lua.createState()
             return await state.doString('coroutine.yield() return 7')
         `)

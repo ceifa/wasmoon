@@ -1,8 +1,8 @@
-import { Lua } from '../dist/index.js'
+import { LuaRuntime } from '../dist/index.js'
 import { fileURLToPath } from 'node:url'
 import { readFile, glob } from 'node:fs/promises'
 
-const lua = await Lua.load()
+const lua = await LuaRuntime.load()
 const testsPath = import.meta.resolve('../lua/testes')
 const filePath = fileURLToPath(typeof testsPath === 'string' ? testsPath : await Promise.resolve(testsPath))
 
@@ -33,11 +33,11 @@ for await (const file of glob(`${filePath}/**/*.lua`)) {
 }
 
 const state = lua.createState()
-lua.module.lua_warning(state.global.address, '@on', 0)
-state.global.set('arg', ['lua', 'all.lua'])
-state.global.set('_port', true)
-state.global.getTable('os', (i) => {
-    state.global.setField(i, 'setlocale', (locale) => {
+lua.module.lua_warning(state.address, '@on', 0)
+state.set('arg', ['lua', 'all.lua'])
+state.set('_port', true)
+state.getTable('os', (i) => {
+    state.setField(i, 'setlocale', (locale) => {
         return locale && locale !== 'C' ? false : 'C'
     })
 })

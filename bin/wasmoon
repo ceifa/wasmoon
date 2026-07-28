@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Lua, LuaReturn, LuaType, LUA_MULTRET, decorateProxy } from '../dist/index.js'
+import { LuaRuntime, LuaReturn, LuaType, LUA_MULTRET, decorate } from '../dist/index.js'
 import pkg from '../package.json' with { type: 'json' }
 import fs from 'node:fs'
 import readline from 'node:readline'
@@ -114,57 +114,107 @@ let inputFD = 0
 if (process.stdin.isTTY) {
     try {
         inputFD = fs.openSync('/dev/tty', 'r')
-    } catch (e) {
+    } catch {
         // If opening /dev/tty fails (or on non-Unix systems), fallback to fd 0.
         inputFD = 0
     }
 }
 
-const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: true,
-    removeHistoryDuplicates: true,
-    prompt: '> ',
-})
+// Created only for the REPL: an open interface holds process.stdin in flowing mode, which both
+// steals the bytes io.read is after and keeps the process alive after a script is done.
+let rl = null
+// Lua's io.read and the REPL share the terminal, so they can't be listening at the same time.
+const pauseReadline = () => rl && !rl.closed && rl.pause()
+const resumeReadline = () => rl && !rl.closed && rl.resume()
 
-const lua = await Lua.load({
+// Bytes read past the end of a line: a single read can return more than one line, and dropping
+// the remainder would lose input.
+const inputChunk = Buffer.alloc(1024)
+let pendingLength = 0
+let pendingOffset = 0
+// Set when a line ended on CR, so the LF of a CRLF pair doesn't start an empty line.
+let skipLineFeed = false
+
+// Reading ahead in raw mode would strand whatever the user typed past the end of the line in here,
+// where the REPL (which reads process.stdin) can never see it.
+const refillInputChunk = (isRaw) => {
+    try {
+        pendingLength = fs.readSync(inputFD, inputChunk, 0, isRaw ? 1 : inputChunk.length)
+    } catch (err) {
+        // Both mean "nothing more right now", which for a blocking read is the end of the input.
+        if (err.code !== 'EOF' && err.code !== 'EAGAIN') {
+            throw err
+        }
+        pendingLength = 0
+    }
+    pendingOffset = 0
+    return pendingLength > 0
+}
+
+const lua = await LuaRuntime.load({
     env: ignoreEnv ? undefined : process.env,
     fs: 'node',
     stdin: () => {
         try {
-            rl.pause()
+            pauseReadline()
 
-            let buffer = Buffer.alloc(0xff)
-            let content = ''
-            let current = 0
+            // Raw mode is what the REPL puts the terminal in, and it comes with no echo and no
+            // line editing, so both have to be done by hand. Any other input already has them.
+            const isRaw = process.stdin.isRaw === true
+            const line = []
+            let terminated = false
 
-            while (true) {
-                const bytesRead = fs.readSync(inputFD, buffer, current, buffer.length - current)
-                if (bytesRead > 0) {
-                    const charcode = buffer[current++]
-                    if (charcode === 127) {
-                        current = Math.max(0, current - 2)
-                    } else {
-                        if (charcode === 13) {
-                            break
-                        }
-                    }
-
-                    content = buffer.subarray(0, current).toString('utf8')
-                    process.stdout.write('\x1b[2K')
-                    process.stdout.write('\x1b[0G')
-                    process.stdout.write(content)
-                } else {
+            while (!terminated) {
+                if (pendingOffset >= pendingLength && !refillInputChunk(isRaw)) {
                     break
+                }
+
+                const charcode = inputChunk[pendingOffset++]
+
+                if (skipLineFeed) {
+                    skipLineFeed = false
+                    if (charcode === 10) {
+                        continue
+                    }
+                }
+
+                if (charcode === 10 || charcode === 13) {
+                    skipLineFeed = charcode === 13
+                    terminated = true
+                } else if (isRaw && (charcode === 127 || charcode === 8)) {
+                    // Erase a whole character rather than a single byte, or a multi byte one would
+                    // be left as an invalid sequence.
+                    while (line.length > 0 && (line[line.length - 1] & 0xc0) === 0x80) {
+                        line.pop()
+                    }
+                    line.pop()
+                } else {
+                    line.push(charcode)
+                }
+
+                if (isRaw) {
+                    const echo = Buffer.from(line).toString('utf8')
+                    // A character whose remaining bytes are still on their way would flash as a
+                    // replacement character, so leave it for the next redraw.
+                    if (terminated) {
+                        process.stdout.write('\n')
+                    } else if (!echo.endsWith('�')) {
+                        process.stdout.write(`\x1b[2K\x1b[0G${echo}`)
+                    }
                 }
             }
 
-            rl.resume()
-            return content
+            const content = Buffer.from(line).toString('utf8')
+            // Lua looks for the line break to know the line is complete, and reading raw mode
+            // input stripped it. Adding one at the end of the input would invent a line that
+            // isn't there.
+            return terminated ? `${content}\n` : content
         } catch (err) {
             // the error will not be thrown to the top, its better to log it
             console.error(err)
+            return ''
+        } finally {
+            resumeReadline()
         }
     },
 })
@@ -172,12 +222,12 @@ const lua = await Lua.load({
 const state = lua.createState()
 
 if (showVersion) {
-    console.log(`wasmoon ${pkg.version} (${state.global.get('_VERSION')})`)
+    console.log(`wasmoon ${pkg.version} (${state.get('_VERSION')})`)
     process.exit(0)
 }
 
 if (warnings) {
-    lua.module.lua_warning(state.global.address, '@on', 0)
+    lua.module.lua_warning(state.address, '@on', 0)
 }
 
 for (const module of includeModules) {
@@ -185,8 +235,8 @@ for (const module of includeModules) {
     if (!mod) {
         mod = global
     }
-    const require = state.global.get('require')
-    state.global.set(global, require(mod))
+    const require = state.get('require')
+    state.set(global, require(mod))
 }
 
 for (const snippet of executeSnippets) {
@@ -195,9 +245,10 @@ for (const snippet of executeSnippets) {
 
 // A real Lua table rather than a JS proxy, so `#arg` and `ipairs(arg)` behave like the
 // standalone interpreter.
-state.global.set('arg', decorateProxy(scriptArgs, { proxy: false }))
+state.set('arg', decorate(scriptArgs, { as: 'value' }))
 
 const isTTY = process.stdin.isTTY
+const hasProgram = Boolean(scriptFile) || executeSnippets.length > 0
 
 if (scriptFile === '-') {
     const input = fs.readFileSync(0, 'utf-8')
@@ -206,19 +257,26 @@ if (scriptFile === '-') {
     await state.doFile(scriptFile)
 }
 
-const shouldInteractive = isTTY && (forceInteractive || (!scriptFile && !executeSnippets.length))
+const shouldInteractive = isTTY && (forceInteractive || !hasProgram)
 if (shouldInteractive) {
     // Bypass result verification for interactive mode
     const loadcode = (code) => {
-        state.global.setTop(0)
-        return lua.module.luaL_loadstring(state.global.address, code) === LuaReturn.Ok
+        state.setTop(0)
+        return lua.module.luaL_loadstring(state.address, code) === LuaReturn.Ok
     }
 
     const version = pkg.version
-    const luaversion = state.global.get('_VERSION')
+    const luaversion = state.get('_VERSION')
     console.log(`Welcome to Wasmoon ${version} (${luaversion})`)
     console.log('Type Lua code and press Enter to execute. Ctrl+C to exit.\n')
 
+    rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+        terminal: true,
+        removeHistoryDuplicates: true,
+        prompt: '> ',
+    })
     rl.prompt()
 
     for await (const line of rl) {
@@ -226,31 +284,32 @@ if (shouldInteractive) {
         const loaded = loadcode(`return ${line}`) || loadcode(line)
         if (!loaded) {
             // Failed to parse
-            const err = state.global.getValue(-1, LuaType.String)
+            const err = state.getValue(-1, LuaType.String)
             console.log(err)
             rl.prompt()
             continue
         }
 
-        const result = lua.module.lua_pcallk(state.global.address, 0, LUA_MULTRET, 0, 0, null)
+        const result = lua.module.lua_pcallk(state.address, 0, LUA_MULTRET, 0, 0, null)
         if (result === LuaReturn.Ok) {
-            const count = state.global.getTop()
+            const count = state.getTop()
             if (count > 0) {
                 const returnValues = []
                 for (let i = 1; i <= count; i++) {
-                    returnValues.push(state.global.indexToString(i))
+                    returnValues.push(state.indexToString(i))
                 }
                 console.log(...returnValues)
             }
         } else {
-            console.log(state.global.getValue(-1, LuaType.String))
+            console.log(state.getValue(-1, LuaType.String))
         }
 
         rl.prompt()
     }
-} else if (!scriptFile) {
-    // If we're not interactive, and we did NOT run a file,
+} else if (!hasProgram) {
+    // If we're not interactive, and we did NOT run a file or any -e snippet,
     // read from stdin until EOF. (Non-TTY or no -i, no file).
+    // With -e, stdin belongs to the script, as in the standalone interpreter.
     const input = fs.readFileSync(0, 'utf-8')
     await state.doString(input)
 }

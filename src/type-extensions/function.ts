@@ -1,29 +1,19 @@
-import { BaseDecorationOptions, Decoration } from '../decoration'
-import Global from '../global'
+import { Decoration } from '../decoration'
+import type LuaState from '../state'
 import MultiReturn from '../multireturn'
 import RawResult from '../raw-result'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from '../types'
+import { LUA_REGISTRYINDEX, LuaReturn, LuaAddress, LuaType, PointerSize } from '../types'
 import { isEmscriptenUnwind } from '../utils'
 
-export interface FunctionDecoration extends BaseDecorationOptions {
-    receiveArgsQuantity?: boolean
-    receiveThread?: boolean
-    self?: any
-}
-
 export type FunctionType = (...args: any[]) => Promise<any> | any
-
-export function decorateFunction(target: FunctionType, options: FunctionDecoration): Decoration<FunctionType, FunctionDecoration> {
-    return new Decoration<FunctionType, FunctionDecoration>(target, options)
-}
 
 export interface FunctionTypeExtensionOptions {
     functionTimeout?: number
 }
 
-class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecoration> {
+class FunctionTypeExtension extends TypeExtension<FunctionType> {
     private readonly functionRegistry = new FinalizationRegistry((func: number) => {
         if (!this.thread.isClosed()) {
             this.thread.lua.luaL_unref(this.thread.address, LUA_REGISTRYINDEX, func)
@@ -36,7 +26,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
     private callbackContextIndex: number
     private options?: FunctionTypeExtensionOptions
 
-    public constructor(thread: Global, options?: FunctionTypeExtensionOptions) {
+    public constructor(thread: LuaState, options?: FunctionTypeExtensionOptions) {
         super(thread, 'js_function')
 
         this.options = options
@@ -48,10 +38,10 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
         this.callbackContextIndex = this.thread.lua.luaL_ref(thread.address, LUA_REGISTRYINDEX)
 
         if (!this.functionRegistry) {
-            console.warn('FunctionTypeExtension: FinalizationRegistry not found. Memory leaks likely.')
+            thread.warn('FunctionTypeExtension: FinalizationRegistry not found. Memory leaks likely.')
         }
 
-        this.gcPointer = thread.lua._emscripten.addFunction((calledL: LuaState) => {
+        this.gcPointer = thread.lua._emscripten.addFunction((calledL: LuaAddress) => {
             // Throws a lua error which does a jump if it does not match.
             const userDataPointer = thread.lua.luaL_checkudata(calledL, 1, this.name)
             const referencePointer = thread.lua._emscripten.getValue(userDataPointer, '*')
@@ -73,12 +63,12 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
         // Pop the metatable from the stack.
         thread.lua.lua_pop(thread.address, 1)
 
-        this.functionWrapper = thread.lua._emscripten.addFunction((calledL: LuaState) => {
+        this.functionWrapper = thread.lua._emscripten.addFunction((calledL: LuaAddress) => {
             const calledThread = thread.stateToThread(calledL)
 
             const refUserdata = thread.lua.luaL_checkudata(calledL, thread.lua.lua_upvalueindex(1), this.name)
             const refPointer = thread.lua._emscripten.getValue(refUserdata, '*')
-            const { target, options: decorationOptions } = thread.lua.getRef(refPointer) as Decoration<FunctionType, FunctionDecoration>
+            const { target, options: decorationOptions } = thread.lua.getRef(refPointer) as Decoration<FunctionType>
 
             const argsQuantity = calledThread.getTop()
             const args = []
@@ -137,7 +127,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
         return type === LuaType.Function
     }
 
-    public pushValue(thread: Thread, decoration: Decoration<FunctionType, FunctionDecoration>): boolean {
+    public pushValue(thread: Thread, decoration: Decoration<FunctionType>): boolean {
         if (typeof decoration.target !== 'function') {
             return false
         }
@@ -181,8 +171,9 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
             // destroyed, and then this JS func were called it would be calling from a dead context. That means the safest
             // thing to do is to have a thread you know will always exist.
             if (this.callbackContext.isClosed()) {
-                console.warn('Tried to call a function after closing lua state')
-                return
+                // Returning undefined here surfaced the mistake several layers away from the
+                // call that actually used a dead state.
+                throw new Error('cannot call a Lua function after its state has been closed')
             }
 
             // Function calls back to value should always be within a new thread because
@@ -229,9 +220,6 @@ class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecorati
     }
 }
 
-export default function createTypeExtension(
-    thread: Global,
-    options?: FunctionTypeExtensionOptions,
-): TypeExtension<FunctionType, FunctionDecoration> {
+export default function createTypeExtension(thread: LuaState, options?: FunctionTypeExtensionOptions): TypeExtension<FunctionType> {
     return new FunctionTypeExtension(thread, options)
 }

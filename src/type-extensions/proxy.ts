@@ -1,28 +1,18 @@
-import { BaseDecorationOptions, Decoration } from '../decoration'
-import Global from '../global'
+import { decorate, Decoration } from '../decoration'
+import type LuaState from '../state'
 import MultiReturn from '../multireturn'
 import Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LuaReturn, LuaState, LuaType } from '../types'
+import { LuaReturn, LuaAddress, LuaType } from '../types'
 import { isPromise } from '../utils'
-import { decorateFunction } from './function'
 
-export interface ProxyDecorationOptions extends BaseDecorationOptions {
-    // If undefined, will try to figure out if should proxy
-    proxy?: boolean
-}
-
-export function decorateProxy(target: unknown, options?: ProxyDecorationOptions): Decoration<any, ProxyDecorationOptions> {
-    return new Decoration<any, ProxyDecorationOptions>(target, options || {})
-}
-
-class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
+class ProxyTypeExtension extends TypeExtension<any> {
     private readonly gcPointer: number
 
-    public constructor(thread: Global) {
+    public constructor(thread: LuaState) {
         super(thread, 'js_proxy')
 
-        this.gcPointer = thread.lua._emscripten.addFunction((functionStateAddress: LuaState) => {
+        this.gcPointer = thread.lua._emscripten.addFunction((functionStateAddress: LuaAddress) => {
             // Throws a lua error which does a jump if it does not match.
             const userDataPointer = thread.lua.luaL_checkudata(functionStateAddress, 1, this.name)
             const referencePointer = thread.lua._emscripten.getValue(userDataPointer, '*')
@@ -58,7 +48,7 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
 
                 const value = self[key as string | number]
                 if (typeof value === 'function') {
-                    return decorateFunction(value as (...args: any[]) => any, { self })
+                    return decorate(value as (...args: any[]) => any, { self })
                 }
 
                 return value
@@ -135,9 +125,9 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
         return thread.lua.getRef(referencePointer)
     }
 
-    public pushValue(thread: Thread, decoratedValue: Decoration<any, ProxyDecorationOptions>): boolean {
+    public pushValue(thread: Thread, decoratedValue: Decoration<any>): boolean {
         const { target, options } = decoratedValue
-        if (options.proxy === undefined) {
+        if (options.as === undefined) {
             if (target === null || target === undefined) {
                 return false
             }
@@ -154,14 +144,15 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
             if (isPromise(target)) {
                 return false
             }
-        } else if (options.proxy === false) {
+        } else if (options.as !== 'proxy') {
+            // Both 'userdata' and 'value' mean "do not go through the proxy layer".
             return false
         }
 
         if (options.metatable && !(options.metatable instanceof Decoration)) {
             // Otherwise the metatable will get converted into a JS ref rather than being set as a standard
             // table. This forces it to use the standard table type.
-            decoratedValue.options.metatable = decorateProxy(options.metatable, { proxy: false })
+            decoratedValue.options.metatable = decorate(options.metatable, { as: 'value' })
             return false
         }
 
@@ -173,6 +164,6 @@ class ProxyTypeExtension extends TypeExtension<any, ProxyDecorationOptions> {
     }
 }
 
-export default function createTypeExtension(thread: Global): TypeExtension<any, ProxyDecorationOptions> {
+export default function createTypeExtension(thread: LuaState): TypeExtension<any> {
     return new ProxyTypeExtension(thread)
 }

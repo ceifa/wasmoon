@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { expect } from 'chai'
-import { Lua } from '../dist/index.js'
+import { LuaRuntime } from '../dist/index.js'
 
 const createTempDir = () => {
     const dir = join(tmpdir(), `wasmoon-nodefs-${Date.now()}-${Math.random().toString(36).slice(2)}`)
@@ -24,7 +24,7 @@ describe('Node FS', () => {
     it('read a host file should succeed', async () => {
         writeFileSync(join(tempDir, 'hello.txt'), 'hello world')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         const result = await state.doString(`
             local f = io.open("${join(tempDir, 'hello.txt').replace(/\\/g, '/')}", "r")
@@ -39,7 +39,7 @@ describe('Node FS', () => {
     it('write a file to host should succeed', async () => {
         const filePath = join(tempDir, 'output.txt')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         await state.doString(`
             local f = io.open("${filePath.replace(/\\/g, '/')}", "w")
@@ -54,7 +54,7 @@ describe('Node FS', () => {
         const filePath = join(tempDir, 'append.txt')
         writeFileSync(filePath, 'first line\n')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         await state.doString(`
             local f = io.open("${filePath.replace(/\\/g, '/')}", "a")
@@ -68,7 +68,7 @@ describe('Node FS', () => {
     it('read file line by line should succeed', async () => {
         writeFileSync(join(tempDir, 'lines.txt'), 'alpha\nbeta\ngamma\n')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         const result = await state.doString(`
             local lines = {}
@@ -85,7 +85,7 @@ describe('Node FS', () => {
         const buf = Buffer.from([0x00, 0x01, 0x02, 0xff, 0xfe])
         writeFileSync(join(tempDir, 'binary.dat'), buf)
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         const result = await state.doString(`
             local f = io.open("${join(tempDir, 'binary.dat').replace(/\\/g, '/')}", "rb")
@@ -100,7 +100,7 @@ describe('Node FS', () => {
     it('write and read back binary data should succeed', async () => {
         const filePath = join(tempDir, 'binout.dat')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         await state.doString(`
             local f = io.open("${filePath.replace(/\\/g, '/')}", "wb")
@@ -114,7 +114,7 @@ describe('Node FS', () => {
     it('check if file exists using io.open should succeed', async () => {
         writeFileSync(join(tempDir, 'exists.txt'), 'yes')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         const result = await state.doString(`
             local f = io.open("${join(tempDir, 'exists.txt').replace(/\\/g, '/')}", "r")
@@ -134,7 +134,7 @@ describe('Node FS', () => {
     it('read file size should succeed', async () => {
         writeFileSync(join(tempDir, 'sized.txt'), 'abcdefghij')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         const result = await state.doString(`
             local f = io.open("${join(tempDir, 'sized.txt').replace(/\\/g, '/')}", "r")
@@ -149,7 +149,7 @@ describe('Node FS', () => {
     it('seek within a file should succeed', async () => {
         writeFileSync(join(tempDir, 'seek.txt'), 'abcdefghij')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         const result = await state.doString(`
             local f = io.open("${join(tempDir, 'seek.txt').replace(/\\/g, '/')}", "r")
@@ -165,7 +165,7 @@ describe('Node FS', () => {
     it('doFile from host filesystem should succeed', async () => {
         writeFileSync(join(tempDir, 'script.lua'), 'return 7 * 6')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         const result = await state.doFile(join(tempDir, 'script.lua').replace(/\\/g, '/'))
 
@@ -177,8 +177,8 @@ describe('Node FS', () => {
         mkdirSync(luaDir, { recursive: true })
         writeFileSync(join(luaDir, 'mymod.lua'), 'local M = {}; M.value = 99; return M')
 
-        const lua = await Lua.load({ fs: 'node' })
-        const state = lua.createState({ injectObjects: true })
+        const lua = await LuaRuntime.load({ fs: 'node' })
+        const state = lua.createState({ inject: true })
         const result = await state.doString(`
             package.path = "${luaDir.replace(/\\/g, '/')}/?.lua;" .. package.path
             local m = require("mymod")
@@ -193,7 +193,7 @@ describe('Node FS', () => {
         mkdirSync(nested, { recursive: true })
         writeFileSync(join(nested, 'deep.txt'), 'deep content')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         const result = await state.doString(`
             local f = io.open("${join(nested, 'deep.txt').replace(/\\/g, '/')}", "r")
@@ -208,7 +208,7 @@ describe('Node FS', () => {
     it('create directory from lua with os.execute should succeed', async () => {
         const newDir = join(tempDir, 'newdir')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         await state.doString(`
             os.execute("mkdir -p '${newDir.replace(/\\/g, '/')}'")
@@ -221,7 +221,7 @@ describe('Node FS', () => {
         const filePath = join(tempDir, 'removeme.txt')
         writeFileSync(filePath, 'to be deleted')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         const result = await state.doString(`
             return os.remove("${filePath.replace(/\\/g, '/')}")
@@ -236,7 +236,7 @@ describe('Node FS', () => {
         const newPath = join(tempDir, 'new.txt')
         writeFileSync(oldPath, 'rename me')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         const result = await state.doString(`
             return os.rename("${oldPath.replace(/\\/g, '/')}", "${newPath.replace(/\\/g, '/')}")
@@ -249,7 +249,7 @@ describe('Node FS', () => {
 
     it('doFile from cwd-relative path should succeed', async () => {
         // NODEFS sets cwd to process.cwd(), so relative doFile should work
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         lua.mountFile('cwd_test.lua', 'return "from cwd"')
         try {
             const state = lua.createState()
@@ -265,7 +265,7 @@ describe('Node FS', () => {
         const filePath = join(tempDir, 'large.txt')
         const lineCount = 10000
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         await state.doString(`
             local f = io.open("${filePath.replace(/\\/g, '/')}", "w")
@@ -286,7 +286,7 @@ describe('Node FS', () => {
         const filePath = join(tempDir, 'overwrite.txt')
         writeFileSync(filePath, 'original content')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         await state.doString(`
             local f = io.open("${filePath.replace(/\\/g, '/')}", "w")
@@ -301,7 +301,7 @@ describe('Node FS', () => {
         const content = 'héllo wörld 日本語 🌍'
         writeFileSync(join(tempDir, 'utf8.txt'), content)
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         const result = await state.doString(`
             local f = io.open("${join(tempDir, 'utf8.txt').replace(/\\/g, '/')}", "r")
@@ -316,7 +316,7 @@ describe('Node FS', () => {
     it('write UTF-8 content should succeed', async () => {
         const filePath = join(tempDir, 'utf8out.txt')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         await state.doString(`
             local f = io.open("${filePath.replace(/\\/g, '/')}", "w")
@@ -330,7 +330,7 @@ describe('Node FS', () => {
     it('read empty file should succeed', async () => {
         writeFileSync(join(tempDir, 'empty.txt'), '')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         const result = await state.doString(`
             local f = io.open("${join(tempDir, 'empty.txt').replace(/\\/g, '/')}", "r")
@@ -343,7 +343,7 @@ describe('Node FS', () => {
     })
 
     it('open non-existent file for reading should return nil', async () => {
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         const result = await state.doString(`
             local f, err = io.open("${join(tempDir, 'nonexistent.txt').replace(/\\/g, '/')}", "r")
@@ -354,7 +354,7 @@ describe('Node FS', () => {
     })
 
     it('io.tmpfile should succeed', async () => {
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         const result = await state.doString(`
             local f = io.tmpfile()
@@ -371,7 +371,7 @@ describe('Node FS', () => {
     it('multiple states sharing the same NODEFS should succeed', async () => {
         const filePath = join(tempDir, 'shared.txt')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state1 = lua.createState()
         const state2 = lua.createState()
 
@@ -394,7 +394,7 @@ describe('Node FS', () => {
     it('read number from file should succeed', async () => {
         writeFileSync(join(tempDir, 'numbers.txt'), '42\n3.14\n100')
 
-        const lua = await Lua.load({ fs: 'node' })
+        const lua = await LuaRuntime.load({ fs: 'node' })
         const state = lua.createState()
         const result = await state.doString(`
             local f = io.open("${join(tempDir, 'numbers.txt').replace(/\\/g, '/')}", "r")
