@@ -1,14 +1,14 @@
 import { Decoration } from '../decoration'
 import type LuaState from '../state'
-import Thread from '../thread'
+import type Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LUA_REGISTRYINDEX, LuaType } from '../types'
+import { LUA_REGISTRYINDEX, type LuaGetCache, type LuaPushCache, LuaType } from '../types'
 
 export type TableType = Record<any, any> | any[]
 
 class TableTypeExtension extends TypeExtension<TableType> {
-    public constructor(thread: LuaState) {
-        super(thread, 'js_table')
+    public constructor(state: LuaState) {
+        super(state, 'js_table')
     }
 
     public close(): void {
@@ -19,12 +19,12 @@ class TableTypeExtension extends TypeExtension<TableType> {
         return type === LuaType.Table
     }
 
-    public getValue(thread: Thread, index: number, userdata?: any): TableType {
+    public getValue(thread: Thread, index: number, cache?: LuaGetCache): TableType {
         // This is a map of Lua pointers to JS objects.
-        const seenMap: Map<number, TableType> = userdata || new Map()
+        const seenMap: LuaGetCache = cache ?? new Map()
         const pointer = thread.lua.lua_topointer(thread.address, index)
 
-        let table = seenMap.get(pointer)
+        let table = seenMap.get(pointer) as TableType | undefined
         if (!table) {
             const keys = this.readTableKeys(thread, index)
 
@@ -38,13 +38,13 @@ class TableTypeExtension extends TypeExtension<TableType> {
         return table
     }
 
-    public pushValue(thread: Thread, { target }: Decoration<TableType>, userdata?: Map<any, number>): boolean {
+    public pushValue(thread: Thread, { target }: Decoration<unknown>, cache?: LuaPushCache): boolean {
         if (typeof target !== 'object' || target === null) {
             return false
         }
 
         // This is a map of JS objects to luaL references.
-        const seenMap = userdata || new Map<any, number>()
+        const seenMap: LuaPushCache = cache ?? new Map()
         const existingReference = seenMap.get(target)
         if (existingReference !== undefined) {
             thread.lua.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(existingReference))
@@ -82,7 +82,8 @@ class TableTypeExtension extends TypeExtension<TableType> {
                 }
             }
         } finally {
-            if (userdata === undefined) {
+            // Only the outermost push owns the anchors it created for the values below it.
+            if (cache === undefined) {
                 for (const reference of seenMap.values()) {
                     thread.lua.luaL_unref(thread.address, LUA_REGISTRYINDEX, reference)
                 }
@@ -107,7 +108,7 @@ class TableTypeExtension extends TypeExtension<TableType> {
         return keys
     }
 
-    private readTableValues(thread: Thread, index: number, seenMap: Map<number, TableType>, table: TableType): void {
+    private readTableValues(thread: Thread, index: number, seenMap: LuaGetCache, table: TableType): void {
         const isArray = Array.isArray(table)
 
         thread.lua.lua_pushnil(thread.address)
@@ -126,6 +127,6 @@ class TableTypeExtension extends TypeExtension<TableType> {
     }
 }
 
-export default function createTypeExtension(thread: LuaState): TypeExtension<any> {
-    return new TableTypeExtension(thread)
+export default function createTypeExtension(state: LuaState): TypeExtension<TableType> {
+    return new TableTypeExtension(state)
 }

@@ -49,7 +49,7 @@ describe('Unrepresentable values', () => {
         const thread = state.newThread()
         thread.lua.lua_newuserdatauv(thread.address, 4, 0)
 
-        expect(Number(thread.getPointer(-1))).to.be.greaterThan(0)
+        expect(thread.getPointer(-1)).to.be.greaterThan(0)
     })
 })
 

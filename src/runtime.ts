@@ -1,6 +1,6 @@
-import LuaModule from './module'
+import LuaModule, { type EmscriptenPath, type LuaModuleOptions } from './module'
 import LuaState from './state'
-import { CreateStateOptions } from './types'
+import type { CreateStateOptions } from './types'
 
 /**
  * One loaded Lua wasm module, and the factory for the states that run on it.
@@ -9,17 +9,8 @@ import { CreateStateOptions } from './types'
  * otherwise independent.
  */
 export default class LuaRuntime {
-    /**
-     * Loads the Lua wasm module.
-     * @param opts.wasmFile - Custom URI for the Lua WebAssembly module.
-     * @param opts.env - Environment variables for the Lua states.
-     * @param opts.stdin - Standard input, shared by every state on this runtime.
-     * @param opts.fs - File system that should be used.
-     * @param opts.stdout - Standard output, shared by every state on this runtime.
-     * @param opts.stderr - Standard error, shared by every state on this runtime.
-     * @param opts.onWarn - Where load time diagnostics go. Defaults to `console.warn`.
-     */
-    public static async load(luaModuleOpts: Parameters<typeof LuaModule.initialize>[0] = {}): Promise<LuaRuntime> {
+    /** Loads the Lua wasm module. Stdio and the filesystem are shared by every state on it. */
+    public static async load(luaModuleOpts: Readonly<LuaModuleOptions> = {}): Promise<LuaRuntime> {
         return new LuaRuntime(await LuaModule.initialize(luaModuleOpts))
     }
 
@@ -64,7 +55,7 @@ export default class LuaRuntime {
         return this.module._emscripten.FS
     }
 
-    public get path(): typeof this.module._emscripten.PATH {
+    public get path(): EmscriptenPath {
         return this.module._emscripten.PATH
     }
 }

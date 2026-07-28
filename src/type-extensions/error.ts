@@ -1,58 +1,50 @@
 import { Decoration } from '../decoration'
 import type LuaState from '../state'
-import Thread from '../thread'
+import type Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LuaReturn, LuaAddress } from '../types'
 
 class ErrorTypeExtension extends TypeExtension<Error> {
     private gcPointer: number
 
-    public constructor(thread: LuaState, injectObject: boolean) {
-        super(thread, 'js_error')
+    public constructor(state: LuaState, injectObject: boolean) {
+        super(state, 'js_error')
 
-        this.gcPointer = thread.lua._emscripten.addFunction((functionStateAddress: LuaAddress) => {
-            // Throws a lua error which does a jump if it does not match.
-            const userDataPointer = thread.lua.luaL_checkudata(functionStateAddress, 1, this.name)
-            const referencePointer = thread.lua._emscripten.getValue(userDataPointer, '*')
-            thread.lua.unref(referencePointer)
+        this.gcPointer = this.createGcFunction()
 
-            return LuaReturn.Ok
-        }, 'ii')
-
-        if (thread.lua.luaL_newmetatable(thread.address, this.name)) {
-            const metatableIndex = thread.lua.lua_gettop(thread.address)
+        if (state.lua.luaL_newmetatable(state.address, this.name)) {
+            const metatableIndex = state.lua.lua_gettop(state.address)
 
             // Mark it as uneditable
-            thread.lua.lua_pushstring(thread.address, 'protected metatable')
-            thread.lua.lua_setfield(thread.address, metatableIndex, '__metatable')
+            state.lua.lua_pushstring(state.address, 'protected metatable')
+            state.lua.lua_setfield(state.address, metatableIndex, '__metatable')
 
             // Add the gc function
-            thread.lua.lua_pushcclosure(thread.address, this.gcPointer, 0)
-            thread.lua.lua_setfield(thread.address, metatableIndex, '__gc')
+            state.lua.lua_pushcclosure(state.address, this.gcPointer, 0)
+            state.lua.lua_setfield(state.address, metatableIndex, '__gc')
 
             // Add an __index method that returns the message field
-            thread.pushValue((jsRefError: Error, key: unknown) => {
+            state.pushValue((jsRefError: Error, key: unknown) => {
                 if (key === 'message') {
                     return jsRefError.message
                 }
                 return null
             })
-            thread.lua.lua_setfield(thread.address, metatableIndex, '__index')
+            state.lua.lua_setfield(state.address, metatableIndex, '__index')
 
             // Add a tostring method that returns the message.
-            thread.pushValue((jsRefError: Error) => {
+            state.pushValue((jsRefError: Error) => {
                 // The message rather than toString to avoid the Error: prefix being
                 // added. This fits better with Lua errors.
                 return jsRefError.message
             })
-            thread.lua.lua_setfield(thread.address, metatableIndex, '__tostring')
+            state.lua.lua_setfield(state.address, metatableIndex, '__tostring')
         }
         // Pop the metatable from the stack.
-        thread.lua.lua_pop(thread.address, 1)
+        state.lua.lua_pop(state.address, 1)
 
         if (injectObject) {
             // Lastly create a static Error constructor.
-            thread.set('Error', {
+            state.set('Error', {
                 create: (message: string | undefined) => {
                     if (message && typeof message !== 'string') {
                         throw new Error('message must be a string')
@@ -64,7 +56,7 @@ class ErrorTypeExtension extends TypeExtension<Error> {
         }
     }
 
-    public pushValue(thread: Thread, decoration: Decoration<Error>): boolean {
+    public pushValue(thread: Thread, decoration: Decoration<unknown>): boolean {
         if (!(decoration.target instanceof Error)) {
             return false
         }
@@ -72,10 +64,10 @@ class ErrorTypeExtension extends TypeExtension<Error> {
     }
 
     public close(): void {
-        this.thread.lua._emscripten.removeFunction(this.gcPointer)
+        this.state.lua._emscripten.removeFunction(this.gcPointer)
     }
 }
 
-export default function createTypeExtension(thread: LuaState, injectObject: boolean): TypeExtension<Error> {
-    return new ErrorTypeExtension(thread, injectObject)
+export default function createTypeExtension(state: LuaState, injectObject: boolean): TypeExtension<Error> {
+    return new ErrorTypeExtension(state, injectObject)
 }

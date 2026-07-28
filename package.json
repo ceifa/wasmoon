@@ -14,8 +14,8 @@
         "luatests": "node --experimental-import-meta-resolve test/luatests.js",
         "build": "rolldown -c && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",
         "clean": "rm -rf dist build",
-        "lint": "oxfmt --write . && oxlint --config .oxlintrc.json --fix .",
-        "lint:nofix": "oxfmt --check . && oxlint --config .oxlintrc.json ."
+        "lint": "oxfmt --write . && oxlint --fix .",
+        "lint:nofix": "oxfmt --check . && oxlint ."
     },
     "files": [
         "bin/*",

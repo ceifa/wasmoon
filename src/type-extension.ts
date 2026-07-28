@@ -1,15 +1,16 @@
-import { Decoration } from './decoration'
+import type { Decoration } from './decoration'
 import type LuaState from './state'
-import Thread from './thread'
-import { LuaType, PointerSize } from './types'
+import type Thread from './thread'
+import { type LuaAddress, type LuaGetCache, type LuaPushCache, LuaReturn, LuaType, PointerSize } from './types'
 
 export default abstract class LuaTypeExtension<T> {
     // Type name, for metatables and lookups.
     public readonly name: string
-    protected thread: LuaState
+    /** Owns this extension's metatable and function pointers, so its lifetime bounds theirs. */
+    protected state: LuaState
 
-    public constructor(thread: LuaState, name: string) {
-        this.thread = thread
+    public constructor(state: LuaState, name: string) {
+        this.state = state
         this.name = name
     }
 
@@ -19,19 +20,34 @@ export default abstract class LuaTypeExtension<T> {
 
     public abstract close(): void
 
+    /**
+     * The `__gc` handler every reference holding extension needs. The caller owns the returned
+     * pointer and has to release it with `removeFunction` in {@link close}.
+     */
+    protected createGcFunction(): number {
+        return this.state.lua._emscripten.addFunction((calledL: LuaAddress) => {
+            // Throws a lua error which does a jump if it does not match.
+            const userDataPointer = this.state.lua.luaL_checkudata(calledL, 1, this.name)
+            const referencePointer = this.state.lua._emscripten.getValue(userDataPointer, '*')
+            this.state.lua.unref(referencePointer)
+
+            return LuaReturn.Ok
+        }, 'ii')
+    }
+
     // A base implementation that assumes user data serialisation
-    public getValue(thread: Thread, index: number, _userdata?: unknown): T {
+    public getValue(thread: Thread, index: number, _cache?: LuaGetCache): T {
         const refUserdata = thread.lua.luaL_testudata(thread.address, index, this.name)
         if (!refUserdata) {
             throw new Error(`data does not have the expected metatable: ${this.name}`)
         }
         const referencePointer = thread.lua._emscripten.getValue(refUserdata, '*')
-        return thread.lua.getRef(referencePointer)
+        return thread.lua.getRef(referencePointer) as T
     }
 
     // Return false if type not matched, otherwise true. This base method does not
     // check the type. That must be done by the class extending this.
-    public pushValue(thread: Thread, decoratedValue: Decoration<T>, _userdata?: unknown): boolean {
+    public pushValue(thread: Thread, decoratedValue: Decoration<unknown>, _cache?: LuaPushCache): boolean {
         const { target } = decoratedValue
 
         const pointer = thread.lua.ref(target)

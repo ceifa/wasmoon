@@ -1,25 +1,26 @@
-import { Decoration } from './decoration'
+import { Decoration, type LuaMetatable } from './decoration'
 import type LuaModule from './module'
 import MultiReturn from './multireturn'
-import { Pointer } from './pointer'
-import LuaTypeExtension from './type-extension'
+import type LuaTypeExtension from './type-extension'
 import {
     defaultWarnHandler,
     LUA_MULTRET,
     LuaAbortError,
-    LuaAddress,
+    type LuaAddress,
     LuaError,
     LuaEventMasks,
+    type LuaGetCache,
     LuaInstructionLimitError,
     LuaInterruptError,
-    LuaLoadOptions,
-    LuaResumeResult,
+    type LuaLoadOptions,
+    type LuaPushCache,
+    type LuaResumeResult,
     LuaReturn,
-    LuaRunOptions,
-    LuaThreadLimits,
+    type LuaRunOptions,
+    type LuaThreadLimits,
     LuaTimeoutError,
     LuaType,
-    LuaWarnHandler,
+    type LuaWarnHandler,
     PointerSize,
 } from './types'
 import { isEmscriptenUnwind, isPromise, yieldToEventLoop } from './utils'
@@ -43,7 +44,7 @@ export default class Thread {
     /** Set on the root state; threads created from it delegate here. */
     public onWarn: LuaWarnHandler | undefined
     protected readonly typeExtensions: OrderedExtension[]
-    protected readonly parent?: Thread
+    protected readonly parent: Thread | undefined
     private closed = false
     private hookFunctionPointer: number | undefined
     private hookCount = INSTRUCTION_HOOK_COUNT
@@ -172,7 +173,7 @@ export default class Thread {
         const restore = this.applyRunOptions(options)
         try {
             const base = this.getTop() - argCount - 1 // The 1 is for the function to run
-            this.assertOk(this.lua.lua_pcallk(this.address, argCount, LUA_MULTRET, 0, 0, null) as LuaReturn)
+            this.assertOk(this.lua.lua_pcallk(this.address, argCount, LUA_MULTRET, 0, 0, null))
             return this.getStackValues(base)
         } finally {
             restore()
@@ -213,7 +214,7 @@ export default class Thread {
         return L === this.parent?.address ? this.parent : new Thread(this.lua, this.typeExtensions, L, this.parent || this)
     }
 
-    public pushValue(rawValue: unknown, userdata?: unknown): void {
+    public pushValue(rawValue: unknown, cache?: LuaPushCache): void {
         const decoratedValue = this.getValueDecorations(rawValue)
         const target = decoratedValue.target
 
@@ -254,7 +255,7 @@ export default class Thread {
                 this.lua.lua_pushboolean(this.address, target ? 1 : 0)
                 break
             default:
-                if (this.typeExtensions.find((wrapper) => wrapper.extension.pushValue(this, decoratedValue, userdata))) {
+                if (this.typeExtensions.find((wrapper) => wrapper.extension.pushValue(this, decoratedValue, cache))) {
                     break
                 }
                 if (target === null) {
@@ -273,7 +274,7 @@ export default class Thread {
         }
     }
 
-    public setMetatable(index: number, metatable: Record<any, any>): void {
+    public setMetatable(index: number, metatable: LuaMetatable): void {
         index = this.lua.lua_absindex(this.address, index)
 
         if (this.lua.lua_getmetatable(this.address, index)) {
@@ -305,7 +306,7 @@ export default class Thread {
         return name
     }
 
-    public getValue(index: number, inputType?: LuaType, userdata?: unknown): any {
+    public getValue(index: number, inputType?: LuaType, cache?: LuaGetCache): any {
         index = this.lua.lua_absindex(this.address, index)
 
         const type: LuaType = inputType ?? this.lua.lua_type(this.address, index)
@@ -340,7 +341,7 @@ export default class Thread {
                     wrapper.extension.isType(this, index, type, metatableName),
                 )
                 if (typeExtensionWrapper) {
-                    return typeExtensionWrapper.extension.getValue(this, index, userdata)
+                    return typeExtensionWrapper.extension.getValue(this, index, cache)
                 }
 
                 // Handing back an opaque Pointer hid the failure until the value was used, and
@@ -386,13 +387,17 @@ export default class Thread {
         return { ...this.limits }
     }
 
-    /** Set to > 0 to enable, otherwise disable. Shorthand for the deadline in {@link setLimits}. */
-    public setTimeout(timeout: number | undefined): void {
-        this.limits.deadline = timeout && timeout > 0 ? timeout : undefined
+    /**
+     * Shorthand for the deadline in {@link setLimits}. The argument is an absolute timestamp as
+     * returned by `Date.now()`, not a duration — pass `Date.now() + ms`, or undefined to disable.
+     * `LuaRunOptions.timeout` is the per-run equivalent that does take a duration.
+     */
+    public setDeadline(deadline: number | undefined): void {
+        this.limits.deadline = deadline && deadline > 0 ? deadline : undefined
         this.applyHook()
     }
 
-    public getTimeout(): number | undefined {
+    public getDeadline(): number | undefined {
         return this.limits.deadline
     }
 
@@ -402,8 +407,9 @@ export default class Thread {
         ;(root.onWarn ?? defaultWarnHandler)(message, cause)
     }
 
-    public getPointer(index: number): Pointer {
-        return new Pointer(this.lua.lua_topointer(this.address, index))
+    /** For identity checks on values JS cannot represent. */
+    public getPointer(index: number): LuaAddress {
+        return this.lua.lua_topointer(this.address, index)
     }
 
     public isClosed(): boolean {

@@ -564,8 +564,8 @@ describe('State', () => {
         const state = await getState()
         const thread = state.newThread()
 
-        thread.setTimeout(Date.now() + 20)
-        thread.setTimeout(Date.now() + 20_000)
+        thread.setDeadline(Date.now() + 20)
+        thread.setDeadline(Date.now() + 20_000)
         thread.loadString('local x = 0 for i = 1, 20000000 do x = x + 1 end return x')
 
         expect((await thread.run(0))[0]).to.be.equal(20000000)
@@ -576,11 +576,11 @@ describe('State', () => {
         const state = await getState()
         const thread = state.newThread()
 
-        thread.setTimeout(Date.now() + 10)
-        thread.setTimeout(undefined)
+        thread.setDeadline(Date.now() + 10)
+        thread.setDeadline(undefined)
         thread.loadString('local x = 0 for i = 1, 5000000 do x = x + 1 end return 7')
 
-        expect(thread.getTimeout()).to.be.undefined
+        expect(thread.getDeadline()).to.be.undefined
         expect((await thread.run(0))[0]).to.be.equal(7)
     })
 
@@ -1225,6 +1225,6 @@ describe('Synchronous runs', () => {
 
         state.doStringSync('return 1', { timeout: 1000 })
 
-        expect(state.getTimeout()).to.be.undefined
+        expect(state.getDeadline()).to.be.undefined
     })
 })

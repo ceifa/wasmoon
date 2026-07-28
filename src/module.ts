@@ -1,32 +1,61 @@
 import initWasmModule from '../build/glue.js'
-import { defaultWarnHandler, LUA_REGISTRYINDEX, LuaAddress, LuaReturn, LuaType, LuaWarnHandler, PointerSize } from './types.js'
+import { defaultWarnHandler, LUA_REGISTRYINDEX, type LuaAddress, LuaReturn, LuaType, type LuaWarnHandler, PointerSize } from './types'
 // A rolldown plugin will resolve this to the current version on package.json
 import version from 'package-version'
 
-type EnvironmentVariables = Record<string, string | undefined>
+export type EnvironmentVariables = Record<string, string | undefined>
 
-interface LuaEmscriptenModule extends EmscriptenModule {
+/** Emscripten's own path helpers, which work on the virtual filesystem rather than the host one. */
+export interface EmscriptenPath {
+    isAbs: (path: string) => boolean
+    normalize: (path: string) => string
+    dirname: (path: string) => string
+    basename: (path: string) => string
+    join: (...paths: string[]) => string
+    join2: (left: string, right: string) => string
+}
+
+export interface LuaEmscriptenModule extends EmscriptenModule {
     ccall: typeof ccall
     addFunction: typeof addFunction
     removeFunction: typeof removeFunction
     setValue: typeof setValue
     getValue: typeof getValue
+    // `filesystems` is the only member missing upstream; mkdirTree and the rest come from typeof FS.
     FS: typeof FS & {
         filesystems: {
             NODEFS: Emscripten.FileSystemType
             MEMFS: Emscripten.FileSystemType
         }
-        mkdirTree: (path: string) => void
     }
-    PATH: {
-        dirname: (typeof import('node:path'))['dirname']
-    }
+    PATH: EmscriptenPath
     stringToNewUTF8: typeof stringToNewUTF8
     lengthBytesUTF8: typeof lengthBytesUTF8
     stringToUTF8: typeof stringToUTF8
     UTF8ToString: typeof UTF8ToString
     ENV: EnvironmentVariables
     _realloc: (pointer: number, size: number) => number
+}
+
+export interface LuaModuleOptions {
+    /** Custom URI for the Lua WebAssembly module. Defaults to unpkg in the browser. */
+    wasmFile?: string | undefined
+    /** Environment variables for the Lua states. */
+    env?: EnvironmentVariables | undefined
+    /** File system that should be used. */
+    fs?: 'node' | 'memory' | undefined
+    /** Host directories to mount when `fs` is `'node'`. Defaults to the drive holding the CWD. */
+    fsMountPaths?: string[] | undefined
+    /** Called once per read. An empty string (or nothing) means EOF. */
+    stdin?: (() => string | null | undefined) | undefined
+    /**
+     * Called with each completed line, without the line break, and with a partial line when Lua
+     * flushes or suspends in the middle of one.
+     */
+    stdout?: ((content: string) => void) | undefined
+    stderr?: ((content: string) => void) | undefined
+    /** Where load time diagnostics go. Defaults to `console.warn`. */
+    onWarn?: LuaWarnHandler | undefined
 }
 
 // One-shot conversions, so a single stateless pair is shared by every module. Streaming output
@@ -46,35 +75,23 @@ interface ReferenceMetadata {
 }
 
 export default class LuaModule {
-    public static async initialize(opts: {
-        wasmFile?: string
-        env?: EnvironmentVariables
-        fs?: 'node' | 'memory'
-        fsMountPaths?: string[]
-        // Called once per read, and an empty string (or nothing) means EOF.
-        stdin?: () => string | null | undefined
-        // Called with each completed line, without the line break, and with a partial line when
-        // Lua flushes or suspends in the middle of one.
-        stdout?: (content: string) => void
-        stderr?: (content: string) => void
-        /** Where load time diagnostics go. Defaults to `console.warn`. */
-        onWarn?: LuaWarnHandler
-    }): Promise<LuaModule> {
+    public static async initialize(opts: Readonly<LuaModuleOptions> = {}): Promise<LuaModule> {
         const warn = opts.onWarn ?? defaultWarnHandler
         const isBrowser =
             (typeof window === 'object' && typeof window.document !== 'undefined') ||
             (typeof self === 'object' && self?.constructor?.name === 'DedicatedWorkerGlobalScope')
 
-        if (opts.wasmFile === undefined && isBrowser) {
-            opts.wasmFile = `https://unpkg.com/wasmoon@${version}/dist/glue.wasm`
-        }
-
         const useNodeFS = !isBrowser && opts.fs === 'node' && typeof process !== 'undefined'
         const fs = useNodeFS ? await import('node:fs') : null
 
-        const module: LuaEmscriptenModule = await initWasmModule({
+        const module = await initWasmModule({
             locateFile: (path: string, scriptDirectory: string) => {
-                return opts.wasmFile || scriptDirectory + path
+                // The wasm sits next to the bundle when it was built alongside it, which is not the
+                // case for a browser loading the published package.
+                if (opts.wasmFile) {
+                    return opts.wasmFile
+                }
+                return isBrowser ? `https://unpkg.com/wasmoon@${version}/dist/glue.wasm` : scriptDirectory + path
             },
             preRun: (initializedModule: LuaEmscriptenModule) => {
                 if (typeof opts?.env === 'object') {
@@ -160,15 +177,16 @@ export default class LuaModule {
     public luaL_optlstring: (L: LuaAddress, arg: number, def: string | null, l: number | null) => string
     public luaL_checknumber: (L: LuaAddress, arg: number) => number
     public luaL_optnumber: (L: LuaAddress, arg: number, def: number) => number
-    public luaL_checkinteger: (L: LuaAddress, arg: number) => number
-    public luaL_optinteger: (L: LuaAddress, arg: number, def: number) => number
+    // lua_Integer is 64 bit, and the module is built with WASM_BIGINT, so these cross as BigInt.
+    public luaL_checkinteger: (L: LuaAddress, arg: number) => bigint
+    public luaL_optinteger: (L: LuaAddress, arg: number, def: bigint) => bigint
     public luaL_checkstack: (L: LuaAddress, sz: number, msg: string | null) => void
     public luaL_checktype: (L: LuaAddress, arg: number, t: number) => void
     public luaL_checkany: (L: LuaAddress, arg: number) => void
     public luaL_newmetatable: (L: LuaAddress, tname: string | null) => number
     public luaL_setmetatable: (L: LuaAddress, tname: string | null) => void
-    public luaL_testudata: (L: LuaAddress, ud: number, tname: string | null) => number
-    public luaL_checkudata: (L: LuaAddress, ud: number, tname: string | null) => number
+    public luaL_testudata: (L: LuaAddress, ud: number, tname: string | null) => LuaAddress
+    public luaL_checkudata: (L: LuaAddress, ud: number, tname: string | null) => LuaAddress
     public luaL_where: (L: LuaAddress, lvl: number) => void
     public luaL_fileresult: (L: LuaAddress, stat: number, fname: string | null) => number
     public luaL_execresult: (L: LuaAddress, stat: number) => number
@@ -184,7 +202,7 @@ export default class LuaModule {
     ) => LuaReturn
     public luaL_loadstring: (L: LuaAddress, s: string | null) => LuaReturn
     public luaL_newstate: () => LuaAddress
-    public luaL_len: (L: LuaAddress, idx: number) => number
+    public luaL_len: (L: LuaAddress, idx: number) => bigint
     public luaL_addgsub: (b: number | null, s: string | null, p: string | null, r: string | null) => void
     public luaL_gsub: (L: LuaAddress, s: string | null, p: string | null, r: string | null) => string
     public luaL_setfuncs: (L: LuaAddress, l: number | null, nup: number) => void
@@ -227,9 +245,9 @@ export default class LuaModule {
     public lua_toboolean: (L: LuaAddress, idx: number) => number
     public lua_rawlen: (L: LuaAddress, idx: number) => bigint
     public lua_tocfunction: (L: LuaAddress, idx: number) => number
-    public lua_touserdata: (L: LuaAddress, idx: number) => number
+    public lua_touserdata: (L: LuaAddress, idx: number) => LuaAddress
     public lua_tothread: (L: LuaAddress, idx: number) => LuaAddress
-    public lua_topointer: (L: LuaAddress, idx: number) => number
+    public lua_topointer: (L: LuaAddress, idx: number) => LuaAddress
     public lua_arith: (L: LuaAddress, op: number) => void
     public lua_rawequal: (L: LuaAddress, idx1: number, idx2: number) => number
     public lua_compare: (L: LuaAddress, idx1: number, idx2: number, op: number) => number
@@ -245,11 +263,11 @@ export default class LuaModule {
     public lua_gettable: (L: LuaAddress, idx: number) => LuaType
     public lua_getfield: (L: LuaAddress, idx: number, k: string | null) => LuaType
     public lua_geti: (L: LuaAddress, idx: number, n: bigint) => LuaType
-    public lua_rawget: (L: LuaAddress, idx: number) => number
+    public lua_rawget: (L: LuaAddress, idx: number) => LuaType
     public lua_rawgeti: (L: LuaAddress, idx: number, n: bigint) => LuaType
     public lua_rawgetp: (L: LuaAddress, idx: number, p: number | null) => LuaType
     public lua_createtable: (L: LuaAddress, narr: number, nrec: number) => void
-    public lua_newuserdatauv: (L: LuaAddress, sz: number, nuvalue: number) => number
+    public lua_newuserdatauv: (L: LuaAddress, sz: number, nuvalue: number) => LuaAddress
     public lua_getmetatable: (L: LuaAddress, objindex: number) => number
     public lua_getiuservalue: (L: LuaAddress, idx: number, n: number) => LuaType
     public lua_setglobal: (L: LuaAddress, name: string | null) => void
@@ -262,7 +280,7 @@ export default class LuaModule {
     public lua_setmetatable: (L: LuaAddress, objindex: number) => number
     public lua_setiuservalue: (L: LuaAddress, idx: number, n: number) => number
     public lua_callk: (L: LuaAddress, nargs: number, nresults: number, ctx: number, k: number | null) => void
-    public lua_pcallk: (L: LuaAddress, nargs: number, nresults: number, errfunc: number, ctx: number, k: number | null) => number
+    public lua_pcallk: (L: LuaAddress, nargs: number, nresults: number, errfunc: number, ctx: number, k: number | null) => LuaReturn
     public lua_load: (L: LuaAddress, reader: number | null, dt: number | null, chunkname: string | null, mode: string | null) => LuaReturn
     public lua_dump: (L: LuaAddress, writer: number | null, data: number | null, strip: number) => number
     public lua_yieldk: (L: LuaAddress, nresults: number, ctx: number, k: number | null) => number
@@ -286,7 +304,7 @@ export default class LuaModule {
     public lua_setlocal: (L: LuaAddress, ar: number | null, n: number) => string
     public lua_getupvalue: (L: LuaAddress, funcindex: number, n: number) => string
     public lua_setupvalue: (L: LuaAddress, funcindex: number, n: number) => string
-    public lua_upvalueid: (L: LuaAddress, fidx: number, n: number) => number
+    public lua_upvalueid: (L: LuaAddress, fidx: number, n: number) => LuaAddress
     public lua_upvaluejoin: (L: LuaAddress, fidx1: number, n1: number, fidx2: number, n2: number) => void
     public lua_sethook: (L: LuaAddress, func: number | null, mask: number, count: number) => void
     public lua_gethook: (L: LuaAddress) => number
@@ -611,7 +629,7 @@ export default class LuaModule {
         }
     }
 
-    public getRef(index: number): any | undefined {
+    public getRef(index: number): unknown {
         return this.referenceMap.get(index)
     }
 

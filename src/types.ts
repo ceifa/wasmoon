@@ -1,4 +1,7 @@
-/** A pointer to a `lua_State` inside the wasm heap. */
+/**
+ * An address in the wasm heap: a `lua_State`, or the storage behind a Lua value. Emscripten
+ * function pointers are table indices rather than addresses, so those stay plain numbers.
+ */
 export type LuaAddress = number
 
 /** Receives diagnostics the library would otherwise have written to the console. */
@@ -61,16 +64,16 @@ export interface LuaMemoryOptions {
      * Installs a custom allocator so memory can be measured and capped. Without it `state.memory`
      * is undefined.
      */
-    trace?: boolean
+    trace?: boolean | undefined
     /** Maximum bytes the state may allocate. Requires `trace`. */
-    max?: number
+    max?: number | undefined
 }
 
 export interface LuaLimitOptions {
     /** Milliseconds a Lua function called from JS may run before being interrupted. */
-    functionTimeout?: number
+    functionTimeout?: number | undefined
     /** Instructions a single run may execute before being interrupted. */
-    maxInstructions?: number
+    maxInstructions?: number | undefined
 }
 
 export interface CreateStateOptions {
@@ -78,30 +81,30 @@ export interface CreateStateOptions {
      * Which standard libraries to open. `true` opens all of them, `false` opens none (which
      * leaves the state without even `tostring`), or name them individually.
      */
-    libs?: LuaLibName[] | boolean
+    libs?: LuaLibName[] | boolean | undefined
     /**
      * How plain JS objects and class instances cross into Lua. `'proxy'` keeps their identity and
      * exposes their members, `'copy'` marshals them into plain Lua tables.
      */
-    objects?: 'proxy' | 'copy'
+    objects?: 'proxy' | 'copy' | undefined
     /**
      * Registers the JS `Error` to Lua error bridge. Defaults to true when `objects` is `'copy'`,
      * because the proxy already covers errors when it is enabled.
      */
-    errors?: boolean
+    errors?: boolean | undefined
     /** Injects `Error`, `Promise` and `null` into the Lua globals. */
-    inject?: boolean
-    memory?: LuaMemoryOptions
-    limits?: LuaLimitOptions
+    inject?: boolean | undefined
+    memory?: LuaMemoryOptions | undefined
+    limits?: LuaLimitOptions | undefined
     /** Where diagnostics go. Defaults to `console.warn`. */
-    onWarn?: LuaWarnHandler
+    onWarn?: LuaWarnHandler | undefined
 }
 
 export interface LuaRunOptions {
     /** Milliseconds before the run is interrupted. */
-    timeout?: number
+    timeout?: number | undefined
     /** Instructions the run may execute before being interrupted. */
-    maxInstructions?: number
+    maxInstructions?: number | undefined
     /**
      * Interrupts the run when the signal aborts.
      *
@@ -111,7 +114,7 @@ export interface LuaRunOptions {
      * the hook evaluates them on its own. And a run parked on a promise finishes awaiting that
      * promise before the abort is seen, rather than abandoning it mid-flight.
      */
-    signal?: AbortSignal
+    signal?: AbortSignal | undefined
 }
 
 export interface LuaLoadOptions {
@@ -120,19 +123,22 @@ export interface LuaLoadOptions {
      * bytecode from an untrusted source is a memory safety hole rather than a sandbox escape.
      * Only widen this for chunks you produced yourself.
      */
-    mode?: LuaLoadMode
+    mode?: LuaLoadMode | undefined
     /** Chunk name used in error messages and tracebacks. */
-    name?: string
+    name?: string | undefined
 }
 
 export type LuaDoOptions = LuaRunOptions & LuaLoadOptions
 
-/** Deadline and budget enforced by the debug hook while a thread runs. */
+/**
+ * Deadline and budget enforced by the debug hook while a thread runs. Every field accepts an
+ * explicit undefined, which clears that one limit.
+ */
 export interface LuaThreadLimits {
     /** Absolute timestamp, as returned by `Date.now()`. */
-    deadline?: number
-    maxInstructions?: number
-    signal?: AbortSignal
+    deadline?: number | undefined
+    maxInstructions?: number | undefined
+    signal?: AbortSignal | undefined
 }
 
 export enum LuaReturn {
@@ -149,6 +155,15 @@ export interface LuaResumeResult {
     result: LuaReturn
     resultCount: number
 }
+
+/**
+ * Memo threaded through a recursive read, keyed by the address of the Lua value, so a cyclic table
+ * produces a cyclic JS object instead of recursing forever.
+ */
+export type LuaGetCache = Map<number, unknown>
+
+/** The mirror of {@link LuaGetCache}, holding a registry reference to anchor each pushed value. */
+export type LuaPushCache = Map<unknown, number>
 
 export const PointerSize = 4
 
@@ -198,7 +213,7 @@ export class LuaError extends Error {
     /** The value Lua actually raised, which is not always a string. */
     public readonly luaValue: unknown
 
-    public constructor(code: LuaReturn, luaMessage: string, options: { traceback?: string; luaValue?: unknown } = {}) {
+    public constructor(code: LuaReturn, luaMessage: string, options: { traceback?: string | undefined; luaValue?: unknown } = {}) {
         super(luaMessage)
         this.code = code
         this.luaMessage = luaMessage

@@ -1,6 +1,6 @@
 import type LuaModule from './module'
 import Thread from './thread'
-import LuaTypeExtension from './type-extension'
+import type LuaTypeExtension from './type-extension'
 import createErrorType from './type-extensions/error'
 import createFunctionType from './type-extensions/function'
 import createNullType from './type-extensions/null'
@@ -9,12 +9,12 @@ import createProxyType from './type-extensions/proxy'
 import createTableType from './type-extensions/table'
 import createUserdataType from './type-extensions/userdata'
 import {
-    CreateStateOptions,
+    type CreateStateOptions,
     LUA_REGISTRYINDEX,
-    LuaAddress,
-    LuaDoOptions,
-    LuaMemoryOptions,
-    LuaRunOptions,
+    type LuaAddress,
+    type LuaDoOptions,
+    type LuaMemoryOptions,
+    type LuaRunOptions,
     LuaType,
     resolveLibraryMask,
 } from './types'
@@ -118,7 +118,7 @@ export default class LuaState extends Thread {
 
         // Generic handlers - These may be required to be registered for additional types.
         this.registerTypeExtension(0, createTableType(this))
-        this.registerTypeExtension(0, createFunctionType(this, { functionTimeout: limits?.functionTimeout }))
+        this.registerTypeExtension(0, createFunctionType(this, limits?.functionTimeout))
 
         // Contains the :await functionality.
         this.registerTypeExtension(1, createPromiseType(this, inject))
@@ -153,9 +153,10 @@ export default class LuaState extends Thread {
 
     /**
      * Executes Lua code from a string asynchronously.
-     * @returns A Promise that resolves to the result returned by the Lua script execution.
+     * @returns A Promise that resolves to the result returned by the Lua script execution. Nothing
+     * checks it against `T`, which only saves the caller a cast.
      */
-    public doString(script: string, options?: LuaDoOptions): Promise<any> {
+    public doString<T = any>(script: string, options?: LuaDoOptions): Promise<T> {
         return this.callByteCode((thread) => thread.loadString(script, options), this.runOptions(options))
     }
 
@@ -163,7 +164,7 @@ export default class LuaState extends Thread {
      * Executes Lua code from a file asynchronously.
      * @returns A Promise that resolves to the result returned by the Lua script execution.
      */
-    public doFile(filename: string, options?: LuaDoOptions): Promise<any> {
+    public doFile<T = any>(filename: string, options?: LuaDoOptions): Promise<T> {
         return this.callByteCode((thread) => thread.loadFile(filename, options), this.runOptions(options))
     }
 
@@ -171,7 +172,7 @@ export default class LuaState extends Thread {
      * Executes Lua code from a string synchronously. The script cannot yield, so `:await()` and a
      * top level `coroutine.yield` are errors here.
      */
-    public doStringSync(script: string, options?: LuaDoOptions): any {
+    public doStringSync<T = any>(script: string, options?: LuaDoOptions): T {
         return this.callByteCodeSync((thread) => thread.loadString(script, options), this.runOptions(options))
     }
 
@@ -179,7 +180,7 @@ export default class LuaState extends Thread {
      * Executes Lua code from a file synchronously. The script cannot yield, so `:await()` and a
      * top level `coroutine.yield` are errors here.
      */
-    public doFileSync(filename: string, options?: LuaDoOptions): any {
+    public doFileSync<T = any>(filename: string, options?: LuaDoOptions): T {
         return this.callByteCodeSync((thread) => thread.loadFile(filename, options), this.runOptions(options))
     }
 
@@ -194,7 +195,7 @@ export default class LuaState extends Thread {
     }
 
     /** Retrieves the value of a global variable. */
-    public get(name: string): any {
+    public get<T = any>(name: string): T {
         const type = this.lua.lua_getglobal(this.address, name)
         const value = this.getValue(-1, type)
         this.pop()

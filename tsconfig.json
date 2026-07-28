@@ -18,8 +18,11 @@
         "noUnusedLocals": true,
         "importHelpers": true,
         "strict": true,
+        "exactOptionalPropertyTypes": true,
+        "verbatimModuleSyntax": true,
         "resolveJsonModule": true
     },
-    "include": ["src/**/*", "test/**/*", "bench/**/*"],
+    // test/ and bench/ are plain JS, so without allowJs they were only nominally covered.
+    "include": ["src/**/*"],
     "exclude": ["node_modules"]
 }

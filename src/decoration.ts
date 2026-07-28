@@ -17,19 +17,25 @@ export class Decoration<T = any> {
     ) {}
 }
 
+/**
+ * A metatable to attach to a pushed value. Decorating it controls how it is pushed; on its own it
+ * is copied into a plain Lua table.
+ */
+export type LuaMetatable = object | Decoration<object>
+
 export interface DecorationOptions {
     /** Metatable to attach to the pushed value, itself decoratable to control how it is pushed. */
-    metatable?: Record<any, any> | Decoration
-    as?: DecorationTarget
+    metatable?: LuaMetatable | undefined
+    as?: DecorationTarget | undefined
     /** Function only: bound as the receiver, and dropped from the argument list. */
-    self?: any
+    self?: unknown
     /** Function only: receives the calling thread as the first argument. */
-    receiveThread?: boolean
+    receiveThread?: boolean | undefined
     /**
      * Function only: receives the argument count instead of the decoded arguments, and is
      * expected to read the stack itself. This is a raw-level escape hatch.
      */
-    receiveArgsQuantity?: boolean
+    receiveArgsQuantity?: boolean | undefined
 }
 
 /**

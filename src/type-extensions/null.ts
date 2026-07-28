@@ -1,59 +1,52 @@
 import { Decoration } from '../decoration'
 import type LuaState from '../state'
-import Thread from '../thread'
+import type Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LUA_REGISTRYINDEX, LuaReturn, LuaAddress } from '../types'
+import { LUA_REGISTRYINDEX } from '../types'
 
 class NullTypeExtension extends TypeExtension<unknown> {
     private gcPointer: number
     private nullReference: number
 
-    public constructor(thread: LuaState) {
-        super(thread, 'js_null')
+    public constructor(state: LuaState) {
+        super(state, 'js_null')
 
-        this.gcPointer = thread.lua._emscripten.addFunction((functionStateAddress: LuaAddress) => {
-            // Throws a lua error which does a jump if it does not match.
-            const userDataPointer = thread.lua.luaL_checkudata(functionStateAddress, 1, this.name)
-            const referencePointer = thread.lua._emscripten.getValue(userDataPointer, '*')
-            thread.lua.unref(referencePointer)
+        this.gcPointer = this.createGcFunction()
 
-            return LuaReturn.Ok
-        }, 'ii')
-
-        if (thread.lua.luaL_newmetatable(thread.address, this.name)) {
-            const metatableIndex = thread.lua.lua_gettop(thread.address)
+        if (state.lua.luaL_newmetatable(state.address, this.name)) {
+            const metatableIndex = state.lua.lua_gettop(state.address)
 
             // Mark it as uneditable
-            thread.lua.lua_pushstring(thread.address, 'protected metatable')
-            thread.lua.lua_setfield(thread.address, metatableIndex, '__metatable')
+            state.lua.lua_pushstring(state.address, 'protected metatable')
+            state.lua.lua_setfield(state.address, metatableIndex, '__metatable')
 
             // Add the gc function
-            thread.lua.lua_pushcclosure(thread.address, this.gcPointer, 0)
-            thread.lua.lua_setfield(thread.address, metatableIndex, '__gc')
+            state.lua.lua_pushcclosure(state.address, this.gcPointer, 0)
+            state.lua.lua_setfield(state.address, metatableIndex, '__gc')
 
             // Add an __index method that returns nothing.
-            thread.pushValue(() => null)
-            thread.lua.lua_setfield(thread.address, metatableIndex, '__index')
+            state.pushValue(() => null)
+            state.lua.lua_setfield(state.address, metatableIndex, '__index')
 
-            thread.pushValue(() => 'null')
-            thread.lua.lua_setfield(thread.address, metatableIndex, '__tostring')
+            state.pushValue(() => 'null')
+            state.lua.lua_setfield(state.address, metatableIndex, '__tostring')
 
-            thread.pushValue((self: unknown, other: unknown) => self === other)
-            thread.lua.lua_setfield(thread.address, metatableIndex, '__eq')
+            state.pushValue((self: unknown, other: unknown) => self === other)
+            state.lua.lua_setfield(state.address, metatableIndex, '__eq')
         }
         // Pop the metatable from the stack.
-        thread.lua.lua_pop(thread.address, 1)
+        state.lua.lua_pop(state.address, 1)
 
         // Create a new table, this is unique and will be the "null" value by attaching the
         // metatable created above. The first argument is the target, the second options.
-        super.pushValue(thread, new Decoration<unknown>({}, {}))
+        super.pushValue(state, new Decoration<unknown>({}, {}))
 
         // Lua code is free to reassign the `null` global, so marshalling anchors the sentinel in
         // the registry instead of looking it up by name.
-        thread.lua.lua_pushvalue(thread.address, -1)
-        this.nullReference = thread.lua.luaL_ref(thread.address, LUA_REGISTRYINDEX)
+        state.lua.lua_pushvalue(state.address, -1)
+        this.nullReference = state.lua.luaL_ref(state.address, LUA_REGISTRYINDEX)
 
-        thread.lua.lua_setglobal(thread.address, 'null')
+        state.lua.lua_setglobal(state.address, 'null')
     }
 
     public getValue(thread: Thread, index: number): null {
@@ -64,9 +57,8 @@ class NullTypeExtension extends TypeExtension<unknown> {
         return null
     }
 
-    // any because LuaDecoration is not exported from the Lua lib.
-    public pushValue(thread: Thread, decoration: any): boolean {
-        if (decoration?.target !== null) {
+    public pushValue(thread: Thread, decoration: Decoration<unknown>): boolean {
+        if (decoration.target !== null) {
             return false
         }
         thread.lua.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(this.nullReference))
@@ -74,10 +66,10 @@ class NullTypeExtension extends TypeExtension<unknown> {
     }
 
     public close(): void {
-        this.thread.lua._emscripten.removeFunction(this.gcPointer)
+        this.state.lua._emscripten.removeFunction(this.gcPointer)
     }
 }
 
-export default function createTypeExtension(thread: LuaState): TypeExtension<null> {
-    return new NullTypeExtension(thread)
+export default function createTypeExtension(state: LuaState): TypeExtension<unknown> {
+    return new NullTypeExtension(state)
 }
