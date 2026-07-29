@@ -12,7 +12,7 @@ export type FunctionType = (...args: any[]) => Promise<any> | any
 class FunctionTypeExtension extends TypeExtension<FunctionType> {
     private readonly functionRegistry = new FinalizationRegistry((func: number) => {
         if (!this.state.isClosed()) {
-            this.state.lua.luaL_unref(this.state.address, LUA_REGISTRYINDEX, func)
+            this.state.module.luaL_unref(this.state.address, LUA_REGISTRYINDEX, func)
         }
     })
 
@@ -32,7 +32,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
         // even if the thread that called getValue() has been destroyed.
         this.callbackContext = state.newThread()
         // Pops it from the global stack but keeps it alive
-        this.callbackContextIndex = this.state.lua.luaL_ref(state.address, LUA_REGISTRYINDEX)
+        this.callbackContextIndex = this.state.module.luaL_ref(state.address, LUA_REGISTRYINDEX)
 
         if (!this.functionRegistry) {
             state.warn('FunctionTypeExtension: FinalizationRegistry not found. Memory leaks likely.')
@@ -41,24 +41,24 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
         this.gcPointer = this.createGcFunction()
 
         // Creates metatable if it doesn't exist, always pushes it onto the stack.
-        if (state.lua.luaL_newmetatable(state.address, this.name)) {
-            state.lua.lua_pushstring(state.address, '__gc')
-            state.lua.lua_pushcclosure(state.address, this.gcPointer, 0)
-            state.lua.lua_settable(state.address, -3)
+        if (state.module.luaL_newmetatable(state.address, this.name)) {
+            state.module.lua_pushstring(state.address, '__gc')
+            state.module.lua_pushcclosure(state.address, this.gcPointer, 0)
+            state.module.lua_settable(state.address, -3)
 
-            state.lua.lua_pushstring(state.address, '__metatable')
-            state.lua.lua_pushstring(state.address, 'protected metatable')
-            state.lua.lua_settable(state.address, -3)
+            state.module.lua_pushstring(state.address, '__metatable')
+            state.module.lua_pushstring(state.address, 'protected metatable')
+            state.module.lua_settable(state.address, -3)
         }
         // Pop the metatable from the stack.
-        state.lua.lua_pop(state.address, 1)
+        state.module.lua_pop(state.address, 1)
 
-        this.functionWrapper = state.lua._emscripten.addFunction((calledL: LuaAddress) => {
+        this.functionWrapper = state.module.emscripten.addFunction((calledL: LuaAddress) => {
             const calledThread = state.stateToThread(calledL)
 
-            const refUserdata = state.lua.luaL_checkudata(calledL, state.lua.lua_upvalueindex(1), this.name)
-            const refPointer = state.lua._emscripten.getValue(refUserdata, '*')
-            const { target, options: decorationOptions } = state.lua.getRef(refPointer) as Decoration<FunctionType>
+            const refUserdata = state.module.luaL_checkudata(calledL, state.module.lua_upvalueindex(1), this.name)
+            const refPointer = state.module.emscripten.getValue(refUserdata, '*')
+            const { target, options: decorationOptions } = state.module.getRef(refPointer) as Decoration<FunctionType>
 
             const argsQuantity = calledThread.getTop()
             const args = []
@@ -99,18 +99,18 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
                     throw err
                 }
                 calledThread.pushValue(err)
-                return calledThread.lua.lua_error(calledThread.address)
+                return calledThread.module.lua_error(calledThread.address)
             }
         }, 'ii')
     }
 
     public close(): void {
-        this.state.lua._emscripten.removeFunction(this.gcPointer)
-        this.state.lua._emscripten.removeFunction(this.functionWrapper)
+        this.state.module.emscripten.removeFunction(this.gcPointer)
+        this.state.module.emscripten.removeFunction(this.functionWrapper)
         // Doesn't destroy the Lua thread, just function pointers.
         this.callbackContext.close()
         // Destroy the Lua thread
-        this.callbackContext.lua.luaL_unref(this.callbackContext.address, LUA_REGISTRYINDEX, this.callbackContextIndex)
+        this.callbackContext.module.luaL_unref(this.callbackContext.address, LUA_REGISTRYINDEX, this.callbackContextIndex)
     }
 
     public isType(_thread: Thread, _index: number, type: LuaType): boolean {
@@ -126,33 +126,33 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
         // function which stays solely in JS. The cfunction called from Lua is created at the top of the class
         // and it accesses the JS data through an upvalue.
 
-        const pointer = thread.lua.ref(decoration)
+        const pointer = thread.module.ref(decoration)
         // 4 = size of pointer in wasm.
-        const userDataPointer = thread.lua.lua_newuserdatauv(thread.address, PointerSize, 0)
-        thread.lua._emscripten.setValue(userDataPointer, pointer, '*')
+        const userDataPointer = thread.module.lua_newuserdatauv(thread.address, PointerSize, 0)
+        thread.module.emscripten.setValue(userDataPointer, pointer, '*')
 
-        if (LuaType.Nil === thread.lua.luaL_getmetatable(thread.address, this.name)) {
+        if (LuaType.Nil === thread.module.luaL_getmetatable(thread.address, this.name)) {
             // Pop the pushed userdata.
             thread.pop(1)
-            thread.lua.unref(pointer)
+            thread.module.unref(pointer)
             throw new Error(`metatable not found: ${this.name}`)
         }
 
         // Set as the metatable for the function.
         // -1 is the metatable, -2 is the userdata
-        thread.lua.lua_setmetatable(thread.address, -2)
+        thread.module.lua_setmetatable(thread.address, -2)
 
         // Pass 1 to associate the closure with the userdata, pops the userdata.
-        thread.lua.lua_pushcclosure(thread.address, this.functionWrapper, 1)
+        thread.module.lua_pushcclosure(thread.address, this.functionWrapper, 1)
 
         return true
     }
 
     public getValue(thread: Thread, index: number): FunctionType {
         // Create a copy of the function
-        thread.lua.lua_pushvalue(thread.address, index)
+        thread.module.lua_pushvalue(thread.address, index)
         // Create a reference to the function which pops it from the stack
-        const func = thread.lua.luaL_ref(thread.address, LUA_REGISTRYINDEX)
+        const func = thread.module.luaL_ref(thread.address, LUA_REGISTRYINDEX)
 
         const jsFunc = (...args: any[]): any => {
             // Calling a function would ideally be in the Lua context that's calling it. For example if the JS function
@@ -170,12 +170,12 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
             // they can be left in inconsistent states.
             const callThread = this.callbackContext.newThread()
             try {
-                const internalType = callThread.lua.lua_rawgeti(callThread.address, LUA_REGISTRYINDEX, BigInt(func))
+                const internalType = callThread.module.lua_rawgeti(callThread.address, LUA_REGISTRYINDEX, BigInt(func))
                 if (internalType !== LuaType.Function) {
-                    const callMetafieldType = callThread.lua.luaL_getmetafield(callThread.address, -1, '__call')
+                    const callMetafieldType = callThread.module.luaL_getmetafield(callThread.address, -1, '__call')
                     callThread.pop()
                     if (callMetafieldType !== LuaType.Function) {
-                        throw new Error(`A value of type '${internalType}' was pushed but it is not callable`)
+                        throw new TypeError(`cannot call a value of type ${LuaType[internalType]}: it has no __call metamethod`)
                     }
                 }
 
@@ -187,7 +187,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
                     callThread.setDeadline(Date.now() + this.functionTimeout)
                 }
 
-                const status = callThread.lua.lua_pcallk(callThread.address, args.length, 1, 0, 0, null)
+                const status = callThread.module.lua_pcallk(callThread.address, args.length, 1, 0, 0, null)
                 if (status === LuaReturn.Yield) {
                     throw new Error('cannot yield in callbacks from javascript')
                 }

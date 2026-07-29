@@ -27,7 +27,7 @@
         "pretest": "npm run build",
         "test": "mocha --parallel --exit --require ./test/boot.js test/*.test.js",
         "luatests": "node --experimental-import-meta-resolve test/luatests.js",
-        "build": "rm -rf dist && rolldown -c && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",
+        "build": "rm -rf dist && rolldown -c && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist && node utils/reference-types.js",
         "clean": "rm -rf dist build",
         "lint": "oxfmt --write . && oxlint --fix .",
         "lint:nofix": "oxfmt --check . && oxlint ."

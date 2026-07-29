@@ -20,8 +20,8 @@ import {
 } from './types'
 
 /**
- * Memory accounting for a state created with `{ memory: { trace: true } }`. On a state without
- * tracing `state.memory` is undefined, so the absence is a type error rather than a runtime one.
+ * Memory accounting for a state created with `memory.trace` or `memory.max`. Without either
+ * `state.memory` is undefined, so the absence is a type error rather than a runtime one.
  */
 export interface LuaMemory {
     /** Bytes currently allocated by this state. */
@@ -58,20 +58,18 @@ interface CreatedState {
  * of the constructor body rather than branching around `super()` twice.
  */
 function createAddress(cmodule: LuaModule, memory: LuaMemoryOptions | undefined): CreatedState {
-    if (!memory?.trace) {
-        if (memory?.max !== undefined) {
-            throw new Error('memory.max requires memory.trace to be enabled')
-        }
+    // A cap can only be enforced by the tracing allocator, so asking for one asks for tracing.
+    if (!memory?.trace && memory?.max === undefined) {
         return { address: cmodule.luaL_newstate() }
     }
 
     const stats = { used: 0, max: memory.max }
-    const allocatorFunctionPointer = cmodule._emscripten.addFunction(
+    const allocatorFunctionPointer = cmodule.emscripten.addFunction(
         (_userData: number, pointer: number, oldSize: number, newSize: number): number => {
             if (newSize === 0) {
                 if (pointer) {
                     stats.used -= oldSize
-                    cmodule._emscripten._free(pointer)
+                    cmodule.emscripten._free(pointer)
                 }
                 return 0
             }
@@ -83,7 +81,7 @@ function createAddress(cmodule: LuaModule, memory: LuaMemoryOptions | undefined)
                 return 0
             }
 
-            const reallocated = cmodule._emscripten._realloc(pointer, newSize)
+            const reallocated = cmodule.emscripten._realloc(pointer, newSize)
             if (reallocated) {
                 stats.used = endMemory
             }
@@ -98,8 +96,14 @@ function createAddress(cmodule: LuaModule, memory: LuaMemoryOptions | undefined)
         ((Date.now() >>> 0) ^ Math.floor(Math.random() * 0x100000000)) >>> 0,
     )
     if (!address) {
-        cmodule._emscripten.removeFunction(allocatorFunctionPointer)
-        throw new Error('lua_newstate returned a null pointer')
+        cmodule.emscripten.removeFunction(allocatorFunctionPointer)
+        // A cap the state cannot even be built under is the overwhelmingly likely cause, and it is
+        // the one thing the caller can act on.
+        throw new Error(
+            memory.max === undefined
+                ? 'lua_newstate returned a null pointer'
+                : `a memory.max of ${memory.max} bytes is too small to create a Lua state`,
+        )
     }
 
     return { address, memory: stats, allocatorFunctionPointer }
@@ -112,7 +116,7 @@ function createAddress(cmodule: LuaModule, memory: LuaMemoryOptions | undefined)
  * does not affect the others.
  */
 export default class LuaState extends Thread {
-    /** Present only when the state was created with `{ memory: { trace: true } }`. */
+    /** Present only when the state was created with `memory.trace` or `memory.max`. */
     public readonly memory: LuaMemory | undefined
 
     private readonly allocatorFunctionPointer: number | undefined
@@ -159,7 +163,7 @@ export default class LuaState extends Thread {
 
         const libraryMask = resolveLibraryMask(libs)
         if (libraryMask !== 0) {
-            this.lua.luaL_openselectedlibs(this.address, libraryMask, 0)
+            this.module.luaL_openselectedlibs(this.address, libraryMask, 0)
         }
 
         this.defaultMaxInstructions = limits?.maxInstructions
@@ -210,7 +214,7 @@ export default class LuaState extends Thread {
 
     /** Retrieves the value of a global variable. */
     public get<T = any>(name: string): T {
-        const type = this.lua.lua_getglobal(this.address, name)
+        const type = this.module.lua_getglobal(this.address, name)
         const value = this.getValue(-1, type)
         this.pop()
         return value
@@ -219,12 +223,12 @@ export default class LuaState extends Thread {
     /** Sets the value of a global variable. */
     public set(name: string, value: unknown): void {
         this.pushValue(value)
-        this.lua.lua_setglobal(this.address, name)
+        this.module.lua_setglobal(this.address, name)
     }
 
     public getTable(name: string, callback: (index: number) => void): void {
         const startStackTop = this.getTop()
-        const type = this.lua.lua_getglobal(this.address, name)
+        const type = this.module.lua_getglobal(this.address, name)
         try {
             if (type !== LuaType.Table) {
                 throw new TypeError(`Unexpected type in ${name}. Expected ${LuaType[LuaType.Table]}. Got ${LuaType[type]}.`)
@@ -256,10 +260,10 @@ export default class LuaState extends Thread {
         // Here rather than in the threads because you don't
         // actually close threads, just pop them. Only the top-level
         // lua state needs closing.
-        this.lua.lua_close(this.address)
+        this.module.lua_close(this.address)
 
         if (this.allocatorFunctionPointer) {
-            this.lua._emscripten.removeFunction(this.allocatorFunctionPointer)
+            this.module.emscripten.removeFunction(this.allocatorFunctionPointer)
         }
 
         for (const wrapper of this.typeExtensions) {
@@ -296,7 +300,7 @@ export default class LuaState extends Thread {
     private async callByteCode(loader: (thread: Thread) => void, options?: LuaRunOptions): Promise<any> {
         const thread = this.newThread()
         // Move the thread off the global stack and into the registry as a GC anchor so it doesn't pile threads up into the stack
-        const ref = this.lua.luaL_ref(this.address, LUA_REGISTRYINDEX)
+        const ref = this.module.luaL_ref(this.address, LUA_REGISTRYINDEX)
         try {
             // Seeded from the state so a state wide setLimits reaches the async path too, which
             // runs on a child thread rather than on the state itself.
@@ -305,7 +309,7 @@ export default class LuaState extends Thread {
             return (await thread.run(0, options))[0]
         } finally {
             thread.close()
-            this.lua.luaL_unref(this.address, LUA_REGISTRYINDEX, ref)
+            this.module.luaL_unref(this.address, LUA_REGISTRYINDEX, ref)
         }
     }
 }

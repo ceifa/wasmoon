@@ -8,6 +8,7 @@ export { decorate, Decoration, type DecorationOptions, type DecorationTarget, ty
 // use the bindings rather than the wrappers.
 export {
     default as LuaModule,
+    type EmscriptenFS,
     type EmscriptenPath,
     type EnvironmentVariables,
     type LuaEmscriptenModule,

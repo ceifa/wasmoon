@@ -49,7 +49,7 @@ export function resolveLibraryMask(libs: LuaLibName[] | boolean | undefined): nu
     for (const lib of libs) {
         const bit = LUA_LIB_BITS[lib]
         if (bit === undefined) {
-            throw new Error(`unknown Lua library: ${String(lib)}`)
+            throw new Error(`unknown Lua library '${String(lib)}', expected one of: ${Object.keys(LUA_LIB_BITS).join(', ')}`)
         }
         mask |= bit
     }
@@ -61,11 +61,11 @@ export type LuaLoadMode = 't' | 'bt'
 
 export interface LuaMemoryOptions {
     /**
-     * Installs a custom allocator so memory can be measured and capped. Without it `state.memory`
-     * is undefined.
+     * Installs a custom allocator so memory can be measured through `state.memory`, which is
+     * undefined on a state that has neither this nor `max`.
      */
     trace?: boolean | undefined
-    /** Maximum bytes the state may allocate. Requires `trace`. */
+    /** Maximum bytes the state may allocate. Implies `trace`, since the allocator enforces it. */
     max?: number | undefined
 }
 
@@ -96,7 +96,7 @@ export interface CreateStateOptions {
     inject?: boolean | undefined
     memory?: LuaMemoryOptions | undefined
     limits?: LuaLimitOptions | undefined
-    /** Where diagnostics go. Defaults to `console.warn`. */
+    /** Where diagnostics go. Defaults to the runtime's handler, and then to `console.warn`. */
     onWarn?: LuaWarnHandler | undefined
 }
 

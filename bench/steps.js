@@ -47,9 +47,9 @@ function createRawHeapsortBenchmark(lua) {
     return function runRawHeapsort() {
         const state = lua.createState()
         try {
-            assertStatus(state.lua.luaL_loadstring(state.address, heapsort), 'Load raw heapsort')
-            assertStatus(state.lua.lua_pcallk(state.address, 0, 1, 0, 0, null), 'Compile raw heapsort')
-            assertStatus(state.lua.lua_pcallk(state.address, 0, 1, 0, 0, null), 'Execute raw heapsort')
+            assertStatus(state.module.luaL_loadstring(state.address, heapsort), 'Load raw heapsort')
+            assertStatus(state.module.lua_pcallk(state.address, 0, 1, 0, 0, null), 'Compile raw heapsort')
+            assertStatus(state.module.lua_pcallk(state.address, 0, 1, 0, 0, null), 'Execute raw heapsort')
         } finally {
             state.close()
         }

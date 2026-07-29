@@ -1,4 +1,4 @@
-import LuaModule, { type EmscriptenPath, type LuaModuleOptions } from './module'
+import LuaModule, { type EmscriptenFS, type EmscriptenPath, type LuaModuleOptions } from './module'
 import LuaState from './state'
 import type { CreateStateOptions } from './types'
 
@@ -41,21 +41,20 @@ export default class LuaRuntime {
     }
 
     /**
-     * Mounts a file in the Lua environment synchronously.
+     * Writes a file into the Lua environment, creating its directories as needed.
      * @param path - Path to the file in the Lua environment.
      * @param content - Content of the file to be mounted.
      */
     public mountFile(path: string, content: string | ArrayBufferView): void {
-        const dirname = this.module._emscripten.PATH.dirname(path)
-        this.module._emscripten.FS.mkdirTree(dirname)
-        this.module._emscripten.FS.writeFile(path, content)
+        this.filesystem.mkdirTree(this.path.dirname(path))
+        this.filesystem.writeFile(path, content)
     }
 
-    public get filesystem(): typeof this.module._emscripten.FS {
-        return this.module._emscripten.FS
+    public get filesystem(): EmscriptenFS {
+        return this.module.emscripten.FS
     }
 
     public get path(): EmscriptenPath {
-        return this.module._emscripten.PATH
+        return this.module.emscripten.PATH
     }
 }

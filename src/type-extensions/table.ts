@@ -22,7 +22,7 @@ class TableTypeExtension extends TypeExtension<TableType> {
     public getValue(thread: Thread, index: number, cache?: LuaGetCache): TableType {
         // This is a map of Lua pointers to JS objects.
         const seenMap: LuaGetCache = cache ?? new Map()
-        const pointer = thread.lua.lua_topointer(thread.address, index)
+        const pointer = thread.module.lua_topointer(thread.address, index)
 
         let table = seenMap.get(pointer) as TableType | undefined
         if (!table) {
@@ -47,7 +47,7 @@ class TableTypeExtension extends TypeExtension<TableType> {
         const seenMap: LuaPushCache = cache ?? new Map()
         const existingReference = seenMap.get(target)
         if (existingReference !== undefined) {
-            thread.lua.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(existingReference))
+            thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(existingReference))
             return true
         }
 
@@ -55,10 +55,10 @@ class TableTypeExtension extends TypeExtension<TableType> {
             const tableIndex = thread.getTop() + 1
 
             const createTable = (arrayCount: number, keyCount: number): void => {
-                thread.lua.lua_createtable(thread.address, arrayCount, keyCount)
-                const ref = thread.lua.luaL_ref(thread.address, LUA_REGISTRYINDEX)
+                thread.module.lua_createtable(thread.address, arrayCount, keyCount)
+                const ref = thread.module.luaL_ref(thread.address, LUA_REGISTRYINDEX)
                 seenMap.set(target, ref)
-                thread.lua.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(ref))
+                thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(ref))
             }
 
             if (Array.isArray(target)) {
@@ -67,7 +67,7 @@ class TableTypeExtension extends TypeExtension<TableType> {
                 for (let i = 0; i < target.length; i++) {
                     thread.pushValue(target[i], seenMap)
                     // Raw, so the table being built cannot be observed through metamethods.
-                    thread.lua.lua_rawseti(thread.address, tableIndex, BigInt(i + 1))
+                    thread.module.lua_rawseti(thread.address, tableIndex, BigInt(i + 1))
                 }
             } else {
                 // A for..in loop would also walk the prototype chain and copy inherited members.
@@ -78,14 +78,14 @@ class TableTypeExtension extends TypeExtension<TableType> {
                     thread.pushValue(key, seenMap)
                     thread.pushValue((target as Record<string, any>)[key], seenMap)
 
-                    thread.lua.lua_rawset(thread.address, tableIndex)
+                    thread.module.lua_rawset(thread.address, tableIndex)
                 }
             }
         } finally {
             // Only the outermost push owns the anchors it created for the values below it.
             if (cache === undefined) {
                 for (const reference of seenMap.values()) {
-                    thread.lua.luaL_unref(thread.address, LUA_REGISTRYINDEX, reference)
+                    thread.module.luaL_unref(thread.address, LUA_REGISTRYINDEX, reference)
                 }
             }
         }
@@ -96,8 +96,8 @@ class TableTypeExtension extends TypeExtension<TableType> {
     private readTableKeys(thread: Thread, index: number): string[] {
         const keys = []
 
-        thread.lua.lua_pushnil(thread.address)
-        while (thread.lua.lua_next(thread.address, index)) {
+        thread.module.lua_pushnil(thread.address)
+        while (thread.module.lua_next(thread.address, index)) {
             // JS only supports string keys in objects.
             const key = thread.indexToString(-2)
             keys.push(key)
@@ -111,8 +111,8 @@ class TableTypeExtension extends TypeExtension<TableType> {
     private readTableValues(thread: Thread, index: number, seenMap: LuaGetCache, table: TableType): void {
         const isArray = Array.isArray(table)
 
-        thread.lua.lua_pushnil(thread.address)
-        while (thread.lua.lua_next(thread.address, index)) {
+        thread.module.lua_pushnil(thread.address)
+        while (thread.module.lua_next(thread.address, index)) {
             const key = thread.indexToString(-2)
             const value = thread.getValue(-1, undefined, seenMap)
 

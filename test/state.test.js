@@ -364,7 +364,7 @@ describe('State', () => {
         })
     `)
 
-        state.lua.lua_getglobal(state.address, 'sum')
+        state.module.lua_getglobal(state.address, 'sum')
         const sum = state.getValue(-1, LuaType.Function)
 
         expect(sum(10, 30)).to.be.equal(40)
@@ -622,8 +622,8 @@ describe('State', () => {
         using state = await getState()
         const obj = {}
         state.set('obj', obj)
-        const refIndex = state.lua.getLastRefIndex()
-        const oldRef = state.lua.getRef(refIndex)
+        const refIndex = state.module.getLastRefIndex()
+        const oldRef = state.module.getRef(refIndex)
 
         await state.doString(`
         local weaktable = {}
@@ -635,7 +635,7 @@ describe('State', () => {
     `)
 
         expect(oldRef).to.be.equal(obj)
-        const newRef = state.lua.getRef(refIndex)
+        const newRef = state.module.getRef(refIndex)
         expect(newRef).to.be.equal(undefined)
     })
 
@@ -788,7 +788,7 @@ describe('State', () => {
         using state = await getState()
         await state.doString('value = string.char(0, 255, 128, 65)')
 
-        state.lua.lua_getglobal(state.address, 'value')
+        state.module.lua_getglobal(state.address, 'value')
         const bytes = state.getStringBytes(-1)
         state.pop()
 
@@ -808,12 +808,12 @@ describe('State', () => {
         using state = await getState()
         await state.doString('bytecode = string.dump(load("return 42"))')
 
-        state.lua.lua_getglobal(state.address, 'bytecode')
+        state.module.lua_getglobal(state.address, 'bytecode')
         const bytes = state.getStringBytes(-1)
         state.pop()
 
         state.pushStringBytes(bytes)
-        state.lua.lua_setglobal(state.address, 'roundtripped')
+        state.module.lua_setglobal(state.address, 'roundtripped')
 
         expect(await state.doString('return load(roundtripped)()')).to.be.equal(42)
     })
@@ -870,14 +870,14 @@ describe('State', () => {
         using state = await getState()
         const value = 9223372036854775807n
 
-        state.lua.lua_pushinteger(state.address, value)
-        state.lua.lua_setglobal(state.address, 'value')
+        state.module.lua_pushinteger(state.address, value)
+        state.module.lua_setglobal(state.address, 'value')
 
         const asString = await state.doString(`return tostring(value)`)
         const asFormatted = await state.doString(`return ("%d"):format(value)`)
 
-        state.lua.lua_getglobal(state.address, 'value')
-        const roundTrip = state.lua.lua_tointegerx(state.address, -1, null)
+        state.module.lua_getglobal(state.address, 'value')
+        const roundTrip = state.module.lua_tointegerx(state.address, -1, null)
         state.pop()
 
         expect(asString).to.be.equal('9223372036854775807')
@@ -1192,10 +1192,19 @@ describe('Decoration', () => {
 })
 
 describe('Memory', () => {
-    it('memory.max rejects without tracing', async () => {
+    it('memory.max turns tracing on by itself', async () => {
+        const lua = await getLua()
+        using state = lua.createState({ memory: { max: 4 * 1024 * 1024 } })
+
+        expect(state.memory).to.not.be.undefined
+        expect(state.memory.max).to.be.equal(4 * 1024 * 1024)
+        expect(state.memory.used).to.be.greaterThan(0)
+    })
+
+    it('a max too small to hold a state is reported as such', async () => {
         const lua = await getLua()
 
-        expect(() => lua.createState({ memory: { max: 1000 } })).to.throw('requires memory.trace')
+        expect(() => lua.createState({ memory: { max: 1000 } })).to.throw('memory.max of 1000 bytes')
     })
 
     it('memory is a live view', async () => {

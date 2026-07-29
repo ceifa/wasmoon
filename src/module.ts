@@ -1,3 +1,7 @@
+// The types below are `@types/emscripten`'s ambient globals. They only resolve for a consumer who
+// lists "emscripten" in their own tsconfig `types`, so utils/reference-types.js puts a
+// `/// <reference types="emscripten" />` at the top of the emitted declarations to cover everyone
+// else. tsc drops the directive when it is written here, hence the build step.
 import initWasmModule from '../build/glue.js'
 import { defaultWarnHandler, LUA_REGISTRYINDEX, type LuaAddress, LuaReturn, LuaType, type LuaWarnHandler, PointerSize } from './types'
 // A rolldown plugin will resolve this to the current version on package.json
@@ -15,6 +19,7 @@ export interface EmscriptenPath {
     join2: (left: string, right: string) => string
 }
 
+/** The instantiated wasm module, as {@link LuaModule.emscripten}. */
 export interface LuaEmscriptenModule extends EmscriptenModule {
     ccall: typeof ccall
     addFunction: typeof addFunction
@@ -37,6 +42,9 @@ export interface LuaEmscriptenModule extends EmscriptenModule {
     _realloc: (pointer: number, size: number) => number
 }
 
+/** The virtual filesystem every state on a runtime shares, as {@link LuaModule.emscripten}'s `FS`. */
+export type EmscriptenFS = LuaEmscriptenModule['FS']
+
 export interface LuaModuleOptions {
     /**
      * Where to load `glue.wasm` from. Defaults to next to this module, falling back to unpkg when
@@ -57,7 +65,10 @@ export interface LuaModuleOptions {
      */
     stdout?: ((content: string) => void) | undefined
     stderr?: ((content: string) => void) | undefined
-    /** Where load time diagnostics go. Defaults to `console.warn`. */
+    /**
+     * Where diagnostics go, both while loading and from every state created on the runtime unless
+     * that state overrides it. Defaults to `console.warn`.
+     */
     onWarn?: LuaWarnHandler | undefined
 }
 
@@ -164,6 +175,7 @@ export default class LuaModule {
         const load = async (wasmFile?: string): Promise<LuaModule> => {
             return new LuaModule(
                 await initWasmModule({ ...(wasmFile === undefined ? {} : { locateFile: () => wasmFile }), preRun, printErr }),
+                opts.onWarn,
             )
         }
 
@@ -209,7 +221,9 @@ export default class LuaModule {
         }
     }
 
-    public _emscripten: LuaEmscriptenModule
+    public emscripten: LuaEmscriptenModule
+    /** The handler passed to {@link LuaModule.initialize}, which states created on it inherit. */
+    public readonly onWarn: LuaWarnHandler | undefined
 
     public luaL_checkversion_: (L: LuaAddress, ver: number, sz: number) => void
     public luaL_getmetafield: (L: LuaAddress, obj: number, e: string | null) => LuaType
@@ -382,8 +396,9 @@ export default class LuaModule {
     private readonly sizeScratch: number
     private stringBuffer = 0
 
-    public constructor(module: LuaEmscriptenModule) {
-        this._emscripten = module
+    public constructor(module: LuaEmscriptenModule, onWarn?: LuaWarnHandler) {
+        this.emscripten = module
+        this.onWarn = onWarn
 
         this.luaL_checkversion_ = this.cwrap('luaL_checkversion_', null, ['number', 'number', 'number'])
         this.luaL_getmetafield = this.cwrap('luaL_getmetafield', 'number', ['number', 'number', 'string'])
@@ -690,16 +705,16 @@ export default class LuaModule {
     // Never cache this: ALLOW_MEMORY_GROWTH swaps the underlying buffer when the heap grows, and
     // Emscripten reassigns HEAPU8 to match.
     private get heap(): Uint8Array {
-        return this._emscripten.HEAPU8
+        return this.emscripten.HEAPU8
     }
 
     private readSize(pointer: number): number {
-        return this._emscripten.HEAPU32[pointer >>> 2]
+        return this.emscripten.HEAPU32[pointer >>> 2]
     }
 
     private acquireStringBuffer(size: number): number {
         if (size > REUSABLE_STRING_BUFFER_LIMIT) {
-            const pointer = this._emscripten._malloc(size)
+            const pointer = this.emscripten._malloc(size)
             if (!pointer) {
                 throw new Error(`failed to allocate ${size} bytes for a string`)
             }
@@ -707,7 +722,7 @@ export default class LuaModule {
         }
 
         if (!this.stringBuffer) {
-            this.stringBuffer = this._emscripten._malloc(REUSABLE_STRING_BUFFER_LIMIT)
+            this.stringBuffer = this.emscripten._malloc(REUSABLE_STRING_BUFFER_LIMIT)
             if (!this.stringBuffer) {
                 throw new Error(`failed to allocate ${REUSABLE_STRING_BUFFER_LIMIT} bytes for the string buffer`)
             }
@@ -718,7 +733,7 @@ export default class LuaModule {
 
     private releaseStringBuffer(pointer: number): void {
         if (pointer !== this.stringBuffer) {
-            this._emscripten._free(pointer)
+            this.emscripten._free(pointer)
         }
     }
 
@@ -731,7 +746,7 @@ export default class LuaModule {
         const hasStringOrNumber = argTypes.some((argType) => argType === 'string|number')
         if (!hasStringOrNumber) {
             return (...args: any[]) =>
-                this._emscripten.ccall(name, returnType, argTypes as Emscripten.JSType[], args as Emscripten.TypeCompatibleWithC[])
+                this.emscripten.ccall(name, returnType, argTypes as Emscripten.JSType[], args as Emscripten.TypeCompatibleWithC[])
         }
 
         return (...args: any[]) => {
@@ -743,7 +758,7 @@ export default class LuaModule {
                     } else {
                         // because it will be freed later, this can only be used on functions that lua internally copies the string
                         if (args[i]?.length > 1024) {
-                            const bufferPointer = this._emscripten.stringToNewUTF8(args[i] as string)
+                            const bufferPointer = this.emscripten.stringToNewUTF8(args[i] as string)
                             args[i] = bufferPointer
                             pointersToBeFreed.push(bufferPointer)
                             return 'number'
@@ -756,10 +771,10 @@ export default class LuaModule {
             })
 
             try {
-                return this._emscripten.ccall(name, returnType, resolvedArgTypes, args as Emscripten.TypeCompatibleWithC[])
+                return this.emscripten.ccall(name, returnType, resolvedArgTypes, args as Emscripten.TypeCompatibleWithC[])
             } finally {
                 for (const pointer of pointersToBeFreed) {
-                    this._emscripten._free(pointer)
+                    this.emscripten._free(pointer)
                 }
             }
         }

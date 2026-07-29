@@ -119,7 +119,7 @@ describe('Unrepresentable values', () => {
     it('getValue throws instead of returning an opaque handle', async () => {
         using state = await getState()
         const thread = state.newThread()
-        thread.lua.lua_newuserdatauv(thread.address, 4, 0)
+        thread.module.lua_newuserdatauv(thread.address, 4, 0)
 
         expect(() => thread.getValue(-1)).to.throw('has no JS representation')
     })
@@ -127,7 +127,7 @@ describe('Unrepresentable values', () => {
     it('the address is still reachable through getPointer', async () => {
         using state = await getState()
         const thread = state.newThread()
-        thread.lua.lua_newuserdatauv(thread.address, 4, 0)
+        thread.module.lua_newuserdatauv(thread.address, 4, 0)
 
         expect(thread.getPointer(-1)).to.be.greaterThan(0)
     })
@@ -141,7 +141,7 @@ describe('Warnings', () => {
 
         state.getTable('_G', () => {
             // Leaves the stack unbalanced on purpose.
-            state.lua.lua_pushnil(state.address)
+            state.module.lua_pushnil(state.address)
         })
 
         expect(seen).to.have.lengthOf(1)

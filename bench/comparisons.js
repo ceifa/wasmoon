@@ -20,9 +20,9 @@ function createWasmoonIteration(lua) {
     return function runWasmoonIteration() {
         const state = lua.createState()
         try {
-            assertStatus(state.lua.luaL_loadstring(state.address, heapsort), 'Wasmoon load')
-            assertStatus(state.lua.lua_pcallk(state.address, 0, 1, 0, 0, null), 'Wasmoon compile')
-            assertStatus(state.lua.lua_pcallk(state.address, 0, 1, 0, 0, null), 'Wasmoon execute')
+            assertStatus(state.module.luaL_loadstring(state.address, heapsort), 'Wasmoon load')
+            assertStatus(state.module.lua_pcallk(state.address, 0, 1, 0, 0, null), 'Wasmoon compile')
+            assertStatus(state.module.lua_pcallk(state.address, 0, 1, 0, 0, null), 'Wasmoon execute')
         } finally {
             state.close()
         }

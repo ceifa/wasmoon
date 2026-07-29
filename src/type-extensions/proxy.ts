@@ -14,16 +14,16 @@ class ProxyTypeExtension extends TypeExtension<any> {
 
         this.gcPointer = this.createGcFunction()
 
-        if (state.lua.luaL_newmetatable(state.address, this.name)) {
-            const metatableIndex = state.lua.lua_gettop(state.address)
+        if (state.module.luaL_newmetatable(state.address, this.name)) {
+            const metatableIndex = state.module.lua_gettop(state.address)
 
             // Mark it as uneditable
-            state.lua.lua_pushstring(state.address, 'protected metatable')
-            state.lua.lua_setfield(state.address, metatableIndex, '__metatable')
+            state.module.lua_pushstring(state.address, 'protected metatable')
+            state.module.lua_setfield(state.address, metatableIndex, '__metatable')
 
             // Add the gc function
-            state.lua.lua_pushcclosure(state.address, this.gcPointer, 0)
-            state.lua.lua_setfield(state.address, metatableIndex, '__gc')
+            state.module.lua_pushcclosure(state.address, this.gcPointer, 0)
+            state.module.lua_setfield(state.address, metatableIndex, '__gc')
 
             state.pushValue((self: any, key: unknown) => {
                 switch (typeof key) {
@@ -46,7 +46,7 @@ class ProxyTypeExtension extends TypeExtension<any> {
 
                 return value
             })
-            state.lua.lua_setfield(state.address, metatableIndex, '__index')
+            state.module.lua_setfield(state.address, metatableIndex, '__index')
 
             state.pushValue((self: any, key: unknown, value: any) => {
                 switch (typeof key) {
@@ -61,17 +61,17 @@ class ProxyTypeExtension extends TypeExtension<any> {
                 }
                 self[key as string | number] = value
             })
-            state.lua.lua_setfield(state.address, metatableIndex, '__newindex')
+            state.module.lua_setfield(state.address, metatableIndex, '__newindex')
 
             state.pushValue((self: any) => {
                 return self.toString?.() ?? typeof self
             })
-            state.lua.lua_setfield(state.address, metatableIndex, '__tostring')
+            state.module.lua_setfield(state.address, metatableIndex, '__tostring')
 
             state.pushValue((self: any) => {
                 return self.length || 0
             })
-            state.lua.lua_setfield(state.address, metatableIndex, '__len')
+            state.module.lua_setfield(state.address, metatableIndex, '__len')
 
             state.pushValue((self: any) => {
                 const keys = Object.getOwnPropertyNames(self)
@@ -87,12 +87,12 @@ class ProxyTypeExtension extends TypeExtension<any> {
                     null,
                 )
             })
-            state.lua.lua_setfield(state.address, metatableIndex, '__pairs')
+            state.module.lua_setfield(state.address, metatableIndex, '__pairs')
 
             state.pushValue((self: any, other: any) => {
                 return self === other
             })
-            state.lua.lua_setfield(state.address, metatableIndex, '__eq')
+            state.module.lua_setfield(state.address, metatableIndex, '__eq')
 
             state.pushValue((self: any, ...args: any[]) => {
                 if (args[0] === self) {
@@ -100,11 +100,11 @@ class ProxyTypeExtension extends TypeExtension<any> {
                 }
                 return self(...args)
             })
-            state.lua.lua_setfield(state.address, metatableIndex, '__call')
+            state.module.lua_setfield(state.address, metatableIndex, '__call')
         }
 
         // Pop the metatable from the stack.
-        state.lua.lua_pop(state.address, 1)
+        state.module.lua_pop(state.address, 1)
     }
 
     public isType(_thread: Thread, _index: number, type: LuaType, name?: string): boolean {
@@ -113,9 +113,9 @@ class ProxyTypeExtension extends TypeExtension<any> {
     }
 
     public getValue(thread: Thread, index: number): any {
-        const refUserdata = thread.lua.lua_touserdata(thread.address, index)
-        const referencePointer = thread.lua._emscripten.getValue(refUserdata, '*')
-        return thread.lua.getRef(referencePointer)
+        const refUserdata = thread.module.lua_touserdata(thread.address, index)
+        const referencePointer = thread.module.emscripten.getValue(refUserdata, '*')
+        return thread.module.getRef(referencePointer)
     }
 
     public pushValue(thread: Thread, decoratedValue: Decoration<unknown>): boolean {
@@ -153,7 +153,7 @@ class ProxyTypeExtension extends TypeExtension<any> {
     }
 
     public close(): void {
-        this.state.lua._emscripten.removeFunction(this.gcPointer)
+        this.state.module.emscripten.removeFunction(this.gcPointer)
     }
 }
 

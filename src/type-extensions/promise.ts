@@ -16,16 +16,16 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
 
         this.gcPointer = this.createGcFunction()
 
-        if (state.lua.luaL_newmetatable(state.address, this.name)) {
-            const metatableIndex = state.lua.lua_gettop(state.address)
+        if (state.module.luaL_newmetatable(state.address, this.name)) {
+            const metatableIndex = state.module.lua_gettop(state.address)
 
             // Mark it as uneditable
-            state.lua.lua_pushstring(state.address, 'protected metatable')
-            state.lua.lua_setfield(state.address, metatableIndex, '__metatable')
+            state.module.lua_pushstring(state.address, 'protected metatable')
+            state.module.lua_setfield(state.address, metatableIndex, '__metatable')
 
             // Add the gc function
-            state.lua.lua_pushcclosure(state.address, this.gcPointer, 0)
-            state.lua.lua_setfield(state.address, metatableIndex, '__gc')
+            state.module.lua_pushcclosure(state.address, this.gcPointer, 0)
+            state.module.lua_setfield(state.address, metatableIndex, '__gc')
 
             // A bare thenable reaches here too, and only `then` is guaranteed on one. Adopting it
             // into a real promise is what makes catch/finally/await work on it, and is a no-op for
@@ -47,7 +47,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
 
                         // Asking Lua covers every non-resumable context, not just the main
                         // thread: anything entered through lua_pcall cannot yield either.
-                        if (!state.lua.lua_isyieldable(functionThread.address)) {
+                        if (!state.module.lua_isyieldable(functionThread.address)) {
                             throw new Error('cannot await in a thread that cannot yield, use doString instead of doStringSync')
                         }
 
@@ -62,7 +62,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                                 promiseResult = { status: 'rejected', value: err }
                             })
 
-                        const continuance = this.state.lua._emscripten.addFunction((continuanceState: LuaAddress) => {
+                        const continuance = this.state.module.emscripten.addFunction((continuanceState: LuaAddress) => {
                             // If this yield has been called from within a coroutine and so manually resumed
                             // then there may not yet be any results. In that case yield again.
                             if (!promiseResult) {
@@ -71,16 +71,16 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                                 // 0 because this is called between resumes so the first one should've
                                 // popped the promise before returning the result. This is true within
                                 // Lua's coroutine.resume too.
-                                return state.lua.lua_yieldk(functionThread.address, 0, 0, continuance)
+                                return state.module.lua_yieldk(functionThread.address, 0, 0, continuance)
                             }
 
-                            this.state.lua._emscripten.removeFunction(continuance)
+                            this.state.module.emscripten.removeFunction(continuance)
 
                             const continuanceThread = state.stateToThread(continuanceState)
 
                             if (promiseResult.status === 'rejected') {
                                 continuanceThread.pushValue(promiseResult.value || new Error('promise rejected with no error'))
-                                return this.state.lua.lua_error(continuanceState)
+                                return this.state.module.lua_error(continuanceState)
                             }
 
                             if (promiseResult.value instanceof RawResult) {
@@ -97,18 +97,18 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                         }, 'iiii')
 
                         functionThread.pushValue(awaitPromise)
-                        return new RawResult(state.lua.lua_yieldk(functionThread.address, 1, 0, continuance))
+                        return new RawResult(state.module.lua_yieldk(functionThread.address, 1, 0, continuance))
                     },
                     { receiveThread: true },
                 ),
             })
-            state.lua.lua_setfield(state.address, metatableIndex, '__index')
+            state.module.lua_setfield(state.address, metatableIndex, '__index')
 
             state.pushValue((self: Promise<unknown>, other: Promise<unknown>) => self === other)
-            state.lua.lua_setfield(state.address, metatableIndex, '__eq')
+            state.module.lua_setfield(state.address, metatableIndex, '__eq')
         }
         // Pop the metatable from the stack.
-        state.lua.lua_pop(state.address, 1)
+        state.module.lua_pop(state.address, 1)
 
         if (injectObject) {
             // Lastly create a static Promise constructor.
@@ -127,7 +127,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     }
 
     public close(): void {
-        this.state.lua._emscripten.removeFunction(this.gcPointer)
+        this.state.module.emscripten.removeFunction(this.gcPointer)
     }
 
     public pushValue(thread: Thread, decoration: Decoration<unknown>): boolean {

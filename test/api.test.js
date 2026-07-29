@@ -108,18 +108,18 @@ describe('Custom type extensions', () => {
             super(state, 'js_point')
             this.gcPointer = this.createGcFunction()
 
-            if (state.lua.luaL_newmetatable(state.address, this.name)) {
-                const metatableIndex = state.lua.lua_gettop(state.address)
-                state.lua.lua_pushcclosure(state.address, this.gcPointer, 0)
-                state.lua.lua_setfield(state.address, metatableIndex, '__gc')
+            if (state.module.luaL_newmetatable(state.address, this.name)) {
+                const metatableIndex = state.module.lua_gettop(state.address)
+                state.module.lua_pushcclosure(state.address, this.gcPointer, 0)
+                state.module.lua_setfield(state.address, metatableIndex, '__gc')
                 state.pushValue((point) => `Point(${point.x})`)
-                state.lua.lua_setfield(state.address, metatableIndex, '__tostring')
+                state.module.lua_setfield(state.address, metatableIndex, '__tostring')
             }
-            state.lua.lua_pop(state.address, 1)
+            state.module.lua_pop(state.address, 1)
         }
 
         close() {
-            this.state.lua._emscripten.removeFunction(this.gcPointer)
+            this.state.module.emscripten.removeFunction(this.gcPointer)
         }
 
         pushValue(thread, decoration) {
@@ -204,7 +204,7 @@ describe('Thread lifecycle', () => {
     it('indexToString should call __tostring when there is one', async () => {
         using state = await getState()
         state.set('thing', decorate({}, { metatable: { __tostring: () => 'rendered' } }))
-        state.lua.lua_getglobal(state.address, 'thing')
+        state.module.lua_getglobal(state.address, 'thing')
 
         expect(state.indexToString(-1)).to.be.equal('rendered')
 

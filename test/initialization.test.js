@@ -1,4 +1,4 @@
-import { LuaRuntime } from '../dist/index.js'
+import { LUA_LIB_BITS, LuaRuntime } from '../dist/index.js'
 import { expect } from 'chai'
 
 describe('Initialization', () => {
@@ -102,10 +102,11 @@ describe('Standard libraries', () => {
         }
     })
 
-    it('an unknown library name is rejected', async () => {
+    it('an unknown library name is rejected, naming the valid ones', async () => {
         const lua = await LuaRuntime.load()
 
-        expect(() => lua.createState({ libs: ['nope'] })).to.throw('unknown Lua library: nope')
+        expect(() => lua.createState({ libs: ['nope'] })).to.throw("unknown Lua library 'nope'")
+        expect(() => lua.createState({ libs: ['nope'] })).to.throw(Object.keys(LUA_LIB_BITS).join(', '))
     })
 })
 
