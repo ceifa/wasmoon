@@ -47,6 +47,12 @@ export default class Thread {
     protected readonly typeExtensions: OrderedExtension[]
     protected readonly parent: Thread | undefined
     /**
+     * The state this thread belongs to, or itself when it is the state. Resolved once here rather
+     * than walked on demand: it is what {@link isClosed} and the shared slots below consult, and
+     * those sit in front of the entry points the interop benchmarks measure.
+     */
+    protected readonly rootThread: Thread
+    /**
      * The address of each registered extension's metatable, mapped to the extension's name.
      * Populated by `LuaState.registerTypeExtension` and shared with every thread on the same
      * state: those metatables are registry anchored for the state's whole life, so an address in
@@ -58,21 +64,30 @@ export default class Thread {
     private hookCount = INSTRUCTION_HOOK_COUNT
     private limits: LuaThreadLimits = {}
     private instructionsUsed = 0
+    /**
+     * The error the debug hook unwound the current run with. See {@link LuaModule.interruptToken}
+     * for why it is held here rather than pushed into Lua. Kept on the root thread, because the
+     * hook fires with whichever thread Lua is running -- a coroutine inherits it -- while the
+     * {@link assertOk} that reports it is the one the run was started on.
+     */
+    private pendingInterrupt: LuaInterruptError | undefined
 
     public constructor(cmodule: LuaModule, typeExtensions: OrderedExtension[], address: number, parent?: Thread) {
         this.module = cmodule
         this.typeExtensions = typeExtensions
         this.address = address
         this.parent = parent
+        this.rootThread = parent ?? this
         this.metatableNames = parent ? parent.metatableNames : new Map()
     }
 
     public newThread(): Thread {
+        this.assertNotClosed()
         const address = this.module.lua_newthread(this.address)
         if (!address) {
             throw new Error('lua_newthread returned a null pointer')
         }
-        return new Thread(this.module, this.typeExtensions, address, this.parent || this)
+        return new Thread(this.module, this.typeExtensions, address, this.rootThread)
     }
 
     /**
@@ -88,11 +103,13 @@ export default class Thread {
     }
 
     public resetThread(): void {
+        this.assertNotClosed()
         this.assertOk(this.module.lua_resetthread(this.address))
     }
 
     /** @param options.mode defaults to `'t'`. See {@link LuaLoadOptions.mode}. */
     public loadString(luaCode: string, options?: LuaLoadOptions): void {
+        this.assertNotClosed()
         // Lua copies the chunk while loading, so the shared buffer can be handed straight to it
         // rather than encoded into an allocation of its own.
         this.assertOk(
@@ -104,10 +121,14 @@ export default class Thread {
 
     /** @param options.mode defaults to `'t'`. See {@link LuaLoadOptions.mode}. */
     public loadFile(filename: string, options?: LuaLoadOptions): void {
+        this.assertNotClosed()
         this.assertOk(this.module.luaL_loadfilex(this.address, filename, options?.mode ?? 't'))
     }
 
     public resume(argCount = 0): LuaResumeResult {
+        // Also covers the resumes `run` makes after an await, where the state can have been closed
+        // by anything else that got to run in the meantime.
+        this.assertNotClosed()
         // The shared slot is safe for the same reason the one behind it is: C writes the count as it
         // returns and it is read straight after, with nothing interleaved. A nested resume has
         // finished with the slot by the time this one's lua_resume writes to it.
@@ -139,6 +160,7 @@ export default class Thread {
     }
 
     public async run(argCount = 0, options?: LuaRunOptions): Promise<MultiReturn> {
+        this.assertNotClosed()
         const restore = this.applyRunOptions(options)
         try {
             let resumeResult: LuaResumeResult = this.resume(argCount)
@@ -186,6 +208,7 @@ export default class Thread {
     }
 
     public runSync(argCount = 0, options?: LuaRunOptions): MultiReturn {
+        this.assertNotClosed()
         const restore = this.applyRunOptions(options)
         try {
             const base = this.getTop() - argCount - 1 // The 1 is for the function to run
@@ -201,6 +224,7 @@ export default class Thread {
     }
 
     public call(name: string, ...args: any[]): MultiReturn {
+        this.assertNotClosed()
         const type = this.module.lua_getglobal(this.address, name)
         if (type !== LuaType.Function) {
             throw new TypeError(`cannot call '${name}': expected a function, got ${LuaType[type]}`)
@@ -230,7 +254,7 @@ export default class Thread {
         if (L === this.address) {
             return this
         }
-        return L === this.parent?.address ? this.parent : new Thread(this.module, this.typeExtensions, L, this.parent || this)
+        return L === this.parent?.address ? this.parent : new Thread(this.module, this.typeExtensions, L, this.rootThread)
     }
 
     public pushValue(rawValue: unknown, cache?: LuaPushCache): void {
@@ -410,6 +434,7 @@ export default class Thread {
      * They share a single debug hook, because Lua only allows one hook per thread.
      */
     public setLimits(limits: LuaThreadLimits | undefined): void {
+        this.assertNotClosed()
         this.limits = { ...limits }
         this.instructionsUsed = 0
         this.applyHook()
@@ -425,6 +450,7 @@ export default class Thread {
      * `LuaRunOptions.timeout` is the per-run equivalent that does take a duration.
      */
     public setDeadline(deadline: number | undefined): void {
+        this.assertNotClosed()
         this.limits.deadline = deadline && deadline > 0 ? deadline : undefined
         this.applyHook()
     }
@@ -439,8 +465,7 @@ export default class Thread {
      * runtime's rather than straight to the console.
      */
     public warn(message: string, cause?: unknown): void {
-        const root = this.parent ?? this
-        ;(root.onWarn ?? this.module.onWarn ?? defaultWarnHandler)(message, cause)
+        ;(this.rootThread.onWarn ?? this.module.onWarn ?? defaultWarnHandler)(message, cause)
     }
 
     /** For identity checks on values JS cannot represent. */
@@ -449,7 +474,26 @@ export default class Thread {
     }
 
     public isClosed(): boolean {
-        return !this.address || this.closed || Boolean(this.parent?.isClosed())
+        // A thread's parent is always the state, so this is the whole chain rather than one step of
+        // it, and the guard in front of the benchmarked entry points is three field reads.
+        return !this.address || this.closed || this.rootThread.closed
+    }
+
+    /**
+     * Guards the calls that begin a Lua operation. `lua_close` frees the `lua_State` on the wasm
+     * heap, so without this one made afterwards reads and writes memory that has been handed back
+     * to the allocator: it might trap, might return a plausible value, or might corrupt whatever
+     * now owns those bytes.
+     *
+     * The rule is one check per operation, none per stack value: the primitives `getTop`, `setTop`,
+     * `pop`, `remove`, `pushValue`, `getValue` and the readers around them stay unguarded so an
+     * extension pays nothing for them, and everything that puts them to work is guarded here. A new
+     * method belongs on one side or the other of that line.
+     */
+    protected assertNotClosed(): void {
+        if (this.isClosed()) {
+            throw new Error('the Lua state is closed')
+        }
     }
 
     public indexToString(index: number): string {
@@ -498,11 +542,18 @@ export default class Thread {
             return
         }
 
+        const stackTop = this.getTop()
+
+        const interrupt = this.takePendingInterrupt(stackTop)
+        if (interrupt) {
+            throw interrupt
+        }
+
         // This is the default message if there's nothing on the stack.
         let luaMessage = `Lua Error(${LuaReturn[result]}/${result})`
         let luaValue: unknown
 
-        if (this.getTop() > 0) {
+        if (stackTop > 0) {
             if (result === LuaReturn.ErrorMem) {
                 // If there's no memory just do a normal to string.
                 luaMessage = this.module.lua_tolstring(this.address, -1, null)
@@ -519,6 +570,9 @@ export default class Thread {
             }
         }
 
+        // Not the hook's interrupts, which takePendingInterrupt above has already claimed: this is a
+        // JS function that threw one itself, marshalled back by reference through the extension that
+        // pushed it. Reported as thrown rather than wrapped, the same as one the hook raised.
         if (luaValue instanceof LuaInterruptError) {
             throw luaValue
         }
@@ -541,6 +595,26 @@ export default class Thread {
         }
 
         throw new LuaError(result, luaMessage, { traceback, luaValue })
+    }
+
+    /**
+     * The interrupt the hook unwound the run with, claimed only when the error being reported is
+     * the token it pushed. A script that pcalled the interrupt away leaves the slot set with the
+     * token nowhere on the stack, so whatever error did surface is still reported as itself.
+     */
+    private takePendingInterrupt(stackTop: number): LuaInterruptError | undefined {
+        const root = this.rootThread
+        if (root.pendingInterrupt === undefined || stackTop === 0) {
+            return undefined
+        }
+        // The token is a heap address the module never hands to Lua, so nothing else can be at it.
+        if (this.getPointer(-1) !== this.module.interruptToken) {
+            return undefined
+        }
+
+        const interrupt = root.pendingInterrupt
+        root.pendingInterrupt = undefined
+        return interrupt
     }
 
     private applyRunOptions(options: LuaRunOptions | undefined): () => void {
@@ -569,6 +643,13 @@ export default class Thread {
     }
 
     private applyHook(): void {
+        // The restore that `applyRunOptions` hands back runs in a finally, so it reaches here after
+        // a state closed midway through its own run. Returning rather than throwing, because that
+        // finally must not replace whatever error is already on its way out.
+        if (this.isClosed()) {
+            return
+        }
+
         const { deadline, maxInstructions, signal } = this.limits
         if (deadline === undefined && maxInstructions === undefined && signal === undefined) {
             this.module.lua_sethook(this.address, null, 0, 0)
@@ -585,7 +666,8 @@ export default class Thread {
                 // earlier configuration still honours the current one.
                 const error = this.checkHookLimits()
                 if (error) {
-                    this.pushValue(error)
+                    this.rootThread.pendingInterrupt = error
+                    this.module.lua_pushlightuserdata(this.address, this.module.interruptToken)
                     this.module.lua_error(this.address)
                 }
             }, 'vii')
@@ -594,7 +676,7 @@ export default class Thread {
         this.module.lua_sethook(this.address, this.hookFunctionPointer, LuaEventMasks.Count, this.hookCount)
     }
 
-    private checkHookLimits(): Error | undefined {
+    private checkHookLimits(): LuaInterruptError | undefined {
         const { maxInstructions } = this.limits
         if (maxInstructions !== undefined) {
             this.instructionsUsed += this.hookCount
@@ -605,7 +687,7 @@ export default class Thread {
         return this.checkYieldLimits()
     }
 
-    private checkYieldLimits(): Error | undefined {
+    private checkYieldLimits(): LuaInterruptError | undefined {
         const { deadline, signal } = this.limits
         if (signal?.aborted) {
             return new LuaAbortError('thread aborted')

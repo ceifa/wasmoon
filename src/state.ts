@@ -218,6 +218,9 @@ export default class LuaState extends Thread {
 
     /** Retrieves the value of a global variable. */
     public get<T = any>(name: string): T {
+        // Without this a read from a closed state returns whatever the freed memory now holds,
+        // which is the one failure mode with nothing to notice it by.
+        this.assertNotClosed()
         const type = this.module.lua_getglobal(this.address, name)
         const value = this.getValue(-1, type)
         this.pop()
@@ -226,11 +229,13 @@ export default class LuaState extends Thread {
 
     /** Sets the value of a global variable. */
     public set(name: string, value: unknown): void {
+        this.assertNotClosed()
         this.pushValue(value)
         this.module.lua_setglobal(this.address, name)
     }
 
     public getTable(name: string, callback: (index: number) => void): void {
+        this.assertNotClosed()
         const startStackTop = this.getTop()
         const type = this.module.lua_getglobal(this.address, name)
         try {
@@ -239,11 +244,14 @@ export default class LuaState extends Thread {
             }
             callback(startStackTop + 1)
         } finally {
-            // +1 for the table
-            if (this.getTop() !== startStackTop + 1) {
-                this.warn(`getTable: expected stack size ${startStackTop + 1} got ${this.getTop()}`)
+            // Nothing to check or rewind on a state the callback closed, the same as the do* paths.
+            if (!this.isClosed()) {
+                // +1 for the table
+                if (this.getTop() !== startStackTop + 1) {
+                    this.warn(`getTable: expected stack size ${startStackTop + 1} got ${this.getTop()}`)
+                }
+                this.setTop(startStackTop)
             }
-            this.setTop(startStackTop)
         }
     }
 
@@ -289,6 +297,10 @@ export default class LuaState extends Thread {
     }
 
     private callByteCodeSync(loader: (thread: Thread) => void, options?: LuaRunOptions): any {
+        // Ahead of the stack bookkeeping below rather than left to the loader, so that a closed
+        // state is refused before anything reads or rewinds the freed one.
+        this.assertNotClosed()
+
         // Runs on the main thread so the script sees itself as the main coroutine, the way the
         // reference implementation behaves. That makes leftovers outlive the call, hence the rewind.
         const startStackTop = this.getTop()
@@ -296,12 +308,17 @@ export default class LuaState extends Thread {
             loader(this)
             return this.runSync(0, options)[0]
         } finally {
-            this.setTop(startStackTop)
+            // Closing runs the state's own teardown, which leaves nothing here to rewind.
+            if (!this.isClosed()) {
+                this.setTop(startStackTop)
+            }
         }
     }
 
     // WARNING: It will not wait for open handles and can potentially cause bugs if JS code tries to reference Lua after executed
     private async callByteCode(loader: (thread: Thread) => void, options?: LuaRunOptions): Promise<any> {
+        this.assertNotClosed()
+
         // Anchored so the run doesn't pile threads up on the global stack.
         const { thread, reference } = this.newAnchoredThread()
         try {
@@ -312,7 +329,11 @@ export default class LuaState extends Thread {
             return (await thread.run(0, options))[0]
         } finally {
             thread.close()
-            this.module.luaL_unref(this.address, LUA_REGISTRYINDEX, reference)
+            // The await above gives anything else a chance to close the state, and lua_close has
+            // already released the registry this would be unreferencing from.
+            if (!this.isClosed()) {
+                this.module.luaL_unref(this.address, LUA_REGISTRYINDEX, reference)
+            }
         }
     }
 }

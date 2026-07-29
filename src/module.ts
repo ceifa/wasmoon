@@ -570,6 +570,19 @@ export default class LuaModule {
     private readonly sizeScratch: number
     /** The `nresults` out parameter for {@link lua_resume}, read by `Thread.resume`. */
     public readonly resultCountScratch: number
+    /**
+     * The light userdata a run interrupted by the debug hook is unwound with. Nothing but the hook
+     * ever pushes this address, and no Lua object can live at it, so finding it on the stack is
+     * proof that the error came from a limit rather than from the script -- see `Thread.assertOk`.
+     *
+     * Pushing the error itself is what this replaced: it goes through pushValue, and a state with no
+     * error extension registered marshals it into a plain table, losing the identity the recovery
+     * needs. `decorate(error, { as: 'userdata' })` would survive that, but not this: light userdata
+     * allocates nothing, and the hook fires at an arbitrary instruction, including under a
+     * `memory.max` tight enough that a real userdata would fail and report a memory error in place
+     * of the limit that was actually hit.
+     */
+    public readonly interruptToken: number
     private stringBuffer = 0
 
     public constructor(
@@ -738,7 +751,9 @@ export default class LuaModule {
 
         this.sizeScratch = module._malloc(PointerSize)
         this.resultCountScratch = module._malloc(PointerSize)
-        if (!this.sizeScratch || !this.resultCountScratch) {
+        // Never read or written, only compared: it exists so that the address is ours alone.
+        this.interruptToken = module._malloc(1)
+        if (!this.sizeScratch || !this.resultCountScratch || !this.interruptToken) {
             throw new Error('failed to allocate the scratch buffers for C out parameters')
         }
     }

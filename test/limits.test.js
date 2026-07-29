@@ -72,4 +72,51 @@ describe('Run limits', () => {
 
         expect(state.getLimits().maxInstructions).to.be.equal(999)
     })
+
+    // An interrupt used to be pushed into Lua as a JS error and recognised on the way back out by
+    // its identity, which only survived in a state whose extensions marshal an Error by reference.
+    // `objects: 'copy'` with `errors: false` -- a sandbox that keeps JS errors away from Lua, and so
+    // exactly the state most likely to set a limit in the first place -- turned every interrupt into
+    // an opaque `LuaError: table: 0x...`.
+    describe('state configurations', () => {
+        const configs = [
+            ['the default proxy state', {}],
+            ['objects: copy', { objects: 'copy' }],
+            ['objects: copy with errors off', { objects: 'copy', errors: false }],
+            ['no injected globals', { inject: false }],
+            ['no standard libraries', { libs: false }],
+            ['no libraries and nothing to marshal errors', { libs: false, objects: 'copy', errors: false, inject: false }],
+        ]
+
+        for (const [description, config] of configs) {
+            it(`reports every interrupt as itself in ${description}`, async function () {
+                this.timeout(20_000)
+                using state = await getState(config)
+
+                await expect(state.doString(busyLoop, { maxInstructions: 5_000 })).to.eventually.be.rejectedWith(LuaInstructionLimitError)
+                await expect(state.doString(busyLoop, { timeout: 20 })).to.eventually.be.rejectedWith(LuaTimeoutError)
+                await expect(state.doString(busyLoop, { signal: AbortSignal.abort() })).to.eventually.be.rejectedWith(LuaAbortError)
+                expect(() => state.doStringSync(busyLoop, { maxInstructions: 5_000 })).to.throw(LuaInstructionLimitError)
+            })
+        }
+    })
+
+    it('an interrupt the script caught does not stand in for the error that followed', async function () {
+        this.timeout(20_000)
+        using state = await getState({ objects: 'copy', errors: false })
+
+        // The budget is spent inside the pcall, so the interrupt is raised and swallowed there. The
+        // hook re-raises within another hookCount instructions, which is room enough for the error
+        // below and nothing much else.
+        const failure = state.doString(
+            `pcall(function () ${busyLoop} end)
+             error('raised after the interrupt was caught')`,
+            { maxInstructions: 5_000 },
+        )
+
+        await expect(failure).to.eventually.be.rejected.then((error) => {
+            expect(error).to.not.be.an.instanceOf(LuaInterruptError)
+            expect(error.message).to.contain('raised after the interrupt was caught')
+        })
+    })
 })

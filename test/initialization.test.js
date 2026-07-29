@@ -1,5 +1,6 @@
 import { LUA_LIB_BITS, LuaRuntime } from '../dist/index.js'
 import { expect } from 'chai'
+import { getLua, getState } from './utils.js'
 
 describe('Initialization', () => {
     it('create state should succeed', async () => {
@@ -154,5 +155,76 @@ describe('Disposal', () => {
         }
 
         expect(escaped.isClosed()).to.be.true
+    })
+
+    // lua_close hands the lua_State back to the wasm allocator, so a call that gets through
+    // afterwards is reading and writing memory something else may already own. These used to reach
+    // the bindings: some trapped with `table index is out of bounds`, `get` returned whatever was
+    // in the freed struct, and `call` reported the global as missing.
+    describe('use after close', () => {
+        // The guard is one check per operation and none per stack value, so these are every entry
+        // point on the guarded side of that line. Split by shape rather than wrapped in a promise,
+        // to hold each one to throwing the way it does when the state is open.
+        const syncEntryPoints = {
+            get: (state) => state.get('print'),
+            set: (state) => state.set('x', 1),
+            doStringSync: (state) => state.doStringSync('return 1'),
+            doFileSync: (state) => state.doFileSync('script.lua'),
+            call: (state) => state.call('print', 'hi'),
+            getTable: (state) => state.getTable('_G', () => undefined),
+            loadString: (state) => state.loadString('return 1'),
+            loadFile: (state) => state.loadFile('script.lua'),
+            newThread: (state) => state.newThread(),
+            resetThread: (state) => state.resetThread(),
+            resume: (state) => state.resume(),
+            runSync: (state) => state.runSync(),
+            setLimits: (state) => state.setLimits({ maxInstructions: 10 }),
+            setDeadline: (state) => state.setDeadline(Date.now() + 10),
+        }
+
+        for (const [name, use] of Object.entries(syncEntryPoints)) {
+            it(`${name} throws on a closed state instead of using freed memory`, async () => {
+                using state = await getState()
+                state.close()
+
+                expect(() => use(state)).to.throw('the Lua state is closed')
+            })
+        }
+
+        for (const name of ['doString', 'doFile']) {
+            it(`${name} rejects on a closed state instead of using freed memory`, async () => {
+                using state = await getState()
+                state.close()
+
+                await expect(state[name]('return 1')).to.eventually.be.rejectedWith('the Lua state is closed')
+            })
+        }
+
+        it('a state closed by its runtime is refused the same way', async () => {
+            const lua = await getLua()
+            const state = lua.createState()
+            lua.close()
+
+            expect(() => state.doStringSync('return 1')).to.throw('the Lua state is closed')
+        })
+
+        it('a thread outlives neither the state nor the check', async () => {
+            using state = await getState()
+            const thread = state.newThread()
+            state.close()
+
+            expect(thread.isClosed()).to.be.true
+            expect(() => thread.loadString('return 1')).to.throw('the Lua state is closed')
+        })
+
+        it('a state closed while a run is parked stops rather than resuming into freed memory', async () => {
+            using state = await getState()
+            state.set('sleep', (ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+
+            const running = state.doString('sleep(10):await() return 1')
+            state.close()
+
+            await expect(running).to.eventually.be.rejectedWith('the Lua state is closed')
+        })
     })
 })
