@@ -230,6 +230,10 @@ if (warnings) {
     lua.module.lua_warning(state.address, '@on', 0)
 }
 
+// Decorated as a value so `#arg` and `ipairs(arg)` behave like the standalone interpreter, and
+// set before -l and -e run, as it does, so those can read it.
+state.set('arg', decorate(scriptArgs, { as: 'value' }))
+
 for (const module of includeModules) {
     let [global, mod] = module.split('=')
     if (!mod) {
@@ -242,10 +246,6 @@ for (const module of includeModules) {
 for (const snippet of executeSnippets) {
     await state.doString(snippet)
 }
-
-// A real Lua table rather than a JS proxy, so `#arg` and `ipairs(arg)` behave like the
-// standalone interpreter.
-state.set('arg', decorate(scriptArgs, { as: 'value' }))
 
 const isTTY = process.stdin.isTTY
 const hasProgram = Boolean(scriptFile) || executeSnippets.length > 0

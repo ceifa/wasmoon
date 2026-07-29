@@ -7,28 +7,28 @@ describe('Run limits', () => {
 
     it('timeout interrupts a tight loop', async function () {
         this.timeout(20_000)
-        const state = await getState()
+        using state = await getState()
 
         await expect(state.doString(busyLoop, { timeout: 20 })).to.eventually.be.rejectedWith(LuaTimeoutError)
     })
 
     it('maxInstructions interrupts a tight loop', async function () {
         this.timeout(20_000)
-        const state = await getState()
+        using state = await getState()
 
         await expect(state.doString(busyLoop, { maxInstructions: 5_000 })).to.eventually.be.rejectedWith(LuaInstructionLimitError)
     })
 
     it('an already aborted signal stops the run', async function () {
         this.timeout(20_000)
-        const state = await getState()
+        using state = await getState()
 
         await expect(state.doString(busyLoop, { signal: AbortSignal.abort() })).to.eventually.be.rejectedWith(LuaAbortError)
     })
 
     it('a signal aborted while parked on a promise stops the run', async function () {
         this.timeout(20_000)
-        const state = await getState()
+        using state = await getState()
         state.set('sleep', (ms) => new Promise((resolve) => setTimeout(resolve, ms)))
         const controller = new AbortController()
         setTimeout(() => controller.abort(), 5)
@@ -65,7 +65,7 @@ describe('Run limits', () => {
     })
 
     it('limits are restored after a scoped run', async () => {
-        const state = await getState()
+        using state = await getState()
         state.setLimits({ maxInstructions: 999 })
 
         await state.doString('return 1', { maxInstructions: 10_000 })

@@ -4,25 +4,36 @@ import { expect } from 'chai'
 describe('Initialization', () => {
     it('create state should succeed', async () => {
         const lua = await LuaRuntime.load()
-        lua.createState()
+        using state = lua.createState()
+
+        expect(state.isClosed()).to.be.false
+        expect(state.address).to.be.greaterThan(0)
     })
 
-    it('create multiple states should succeed', async () => {
+    it('create multiple states should keep their globals independent', async () => {
         const lua = await LuaRuntime.load()
-        const state1 = lua.createState()
-        const state2 = lua.createState()
+        using state1 = lua.createState()
+        using state2 = lua.createState()
+
+        await state1.doString('x = 10')
+        await state2.doString('x = 20')
 
         expect(state1.address).to.not.be.equal(state2.address)
+        expect(await state1.doString('return x')).to.be.equal(10)
+        expect(await state2.doString('return x')).to.be.equal(20)
     })
 
-    it('create state with options should succeed', async () => {
+    it('create state with options should apply them', async () => {
         const lua = await LuaRuntime.load()
-        lua.createState({
+        using state = lua.createState({
             objects: 'proxy',
             inject: true,
             libs: true,
             memory: { trace: true },
         })
+
+        expect(state.memory.used).to.be.greaterThan(0)
+        expect(await state.doString('return type(null)')).to.be.equal('userdata')
     })
 
     it('create with environment variables should succeed', async () => {

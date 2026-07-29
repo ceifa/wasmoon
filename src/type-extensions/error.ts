@@ -60,6 +60,10 @@ class ErrorTypeExtension extends TypeExtension<Error> {
         if (!(decoration.target instanceof Error)) {
             return false
         }
+        // An explicit `as` names a representation this extension does not provide.
+        if (decoration.options.as !== undefined) {
+            return false
+        }
         return super.pushValue(thread, decoration)
     }
 

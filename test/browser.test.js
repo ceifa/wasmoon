@@ -274,6 +274,7 @@ describe('Browser environment', () => {
 
                 page.assertNoErrors()
                 expect(result).to.be.eql({ ok: 7 })
+                expect(requested).to.include(`http://127.0.0.1:${port}/glue.wasm`)
                 expectNoExternalRequests()
             } finally {
                 await page.close()

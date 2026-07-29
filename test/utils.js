@@ -1,7 +1,7 @@
 import { LuaRuntime } from '../dist/index.js'
 
-export const getLua = (env) => {
-    return LuaRuntime.load({ env })
+export const getLua = (options) => {
+    return LuaRuntime.load(options)
 }
 
 export const getState = async (config = {}) => {
@@ -16,3 +16,6 @@ export const getState = async (config = {}) => {
 export const tick = () => {
     return new Promise((resolve) => setImmediate(resolve))
 }
+
+/** Windows paths cannot go into a Lua string literal as they are. */
+export const luaPath = (path) => path.replace(/\\/g, '/')

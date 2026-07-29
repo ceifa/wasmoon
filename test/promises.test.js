@@ -4,7 +4,7 @@ import { mock } from 'node:test'
 
 describe('Promises', () => {
     it('use promise next should succeed', async () => {
-        const state = await getState()
+        using state = await getState()
         const check = mock.fn()
         state.set('check', check)
         const promise = new Promise((resolve) => setTimeout(() => resolve(60), 5))
@@ -21,7 +21,7 @@ describe('Promises', () => {
     })
 
     it('chain promises with next should succeed', async () => {
-        const state = await getState()
+        using state = await getState()
         const check = mock.fn()
         state.set('check', check)
         const promise = new Promise((resolve) => resolve(60))
@@ -42,7 +42,7 @@ describe('Promises', () => {
     })
 
     it('call an async function should succeed', async () => {
-        const state = await getState()
+        using state = await getState()
         state.set('asyncFunction', async () => Promise.resolve(60))
         const check = mock.fn()
         state.set('check', check)
@@ -57,7 +57,7 @@ describe('Promises', () => {
     })
 
     it('return an async function should succeed', async () => {
-        const state = await getState()
+        using state = await getState()
         state.set('asyncFunction', async () => Promise.resolve(60))
 
         const asyncFunction = await state.doString(`
@@ -69,7 +69,7 @@ describe('Promises', () => {
     })
 
     it('return a chained promise should succeed', async () => {
-        const state = await getState()
+        using state = await getState()
         state.set('asyncFunction', async () => Promise.resolve(60))
 
         const asyncFunction = await state.doString(`
@@ -81,7 +81,7 @@ describe('Promises', () => {
     })
 
     it('await an promise inside coroutine should succeed', async () => {
-        const state = await getState()
+        using state = await getState()
         const check = mock.fn()
         state.set('check', check)
         const promise = new Promise((resolve) => setTimeout(() => resolve(60), 5))
@@ -108,7 +108,7 @@ describe('Promises', () => {
     })
 
     it('awaited coroutines should ignore resume until it resolves the promise', async () => {
-        const state = await getState()
+        using state = await getState()
         const check = mock.fn()
         state.set('check', check)
         const promise = new Promise((resolve) => setTimeout(() => resolve(60), 5))
@@ -133,7 +133,7 @@ describe('Promises', () => {
     })
 
     it('await a thread run with async calls should succeed', async () => {
-        const state = await getState()
+        using state = await getState()
         state.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
         const asyncThread = state.newThread()
 
@@ -147,7 +147,7 @@ describe('Promises', () => {
     })
 
     it('run thread with async calls and yields should succeed', async () => {
-        const state = await getState()
+        using state = await getState()
         state.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
         const asyncThread = state.newThread()
 
@@ -165,7 +165,7 @@ describe('Promises', () => {
     })
 
     it('reject a promise should succeed', async () => {
-        const state = await getState()
+        using state = await getState()
         state.set('throw', () => new Promise((_, reject) => reject(new Error('expected test error'))))
         const asyncThread = state.newThread()
 
@@ -178,7 +178,7 @@ describe('Promises', () => {
     })
 
     it('pcall a promise await should succeed', async () => {
-        const state = await getState()
+        using state = await getState()
         state.set('throw', () => new Promise((_, reject) => reject(new Error('expected test error'))))
         const asyncThread = state.newThread()
 
@@ -192,7 +192,7 @@ describe('Promises', () => {
     })
 
     it('catch a promise rejection should succeed', async () => {
-        const state = await getState()
+        using state = await getState()
         const fulfilled = mock.fn()
         const rejected = mock.fn()
         state.set('handlers', { fulfilled, rejected })
@@ -209,7 +209,7 @@ describe('Promises', () => {
     })
 
     it('run with async callback', async () => {
-        const state = await getState()
+        using state = await getState()
         const thread = state.newThread()
 
         state.set('asyncCallback', async (input) => {
@@ -232,7 +232,7 @@ describe('Promises', () => {
     })
 
     it('promise creation from js', async () => {
-        const state = await getState()
+        using state = await getState()
         const res = await state.doString(`
             local promise = Promise.create(function (resolve)
                 resolve(10)
@@ -248,7 +248,7 @@ describe('Promises', () => {
     })
 
     it('reject promise creation from js', async () => {
-        const state = await getState()
+        using state = await getState()
         const res = await state.doString(`
             local rejection = Promise.create(function (resolve, reject)
                 reject("expected rejection")
@@ -261,7 +261,7 @@ describe('Promises', () => {
     })
 
     it('resolve multiple promises with promise.all', async () => {
-        const state = await getState()
+        using state = await getState()
         state.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
         const resPromise = state.doString(`
             local promises = {}
@@ -278,7 +278,7 @@ describe('Promises', () => {
     })
 
     it('error in promise next catchable', async () => {
-        const state = await getState()
+        using state = await getState()
         state.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
         const resPromise = state.doString(`
             return sleep(1):next(function ()
@@ -289,7 +289,7 @@ describe('Promises', () => {
     })
 
     it('should not be possible to await in synchronous run', async () => {
-        const state = await getState()
+        using state = await getState()
         state.set('sleep', (input) => new Promise((resolve) => setTimeout(resolve, input)))
 
         expect(() => {

@@ -30,6 +30,23 @@ export interface LuaMemory {
     max: number | undefined
 }
 
+/**
+ * A more specific handler has to be consulted before a more general one. The values themselves
+ * cannot be renumbered: they are the scale {@link LuaState.registerTypeExtension} exposes, so
+ * anything a user registered against them would move too.
+ */
+const BUILT_IN_PRIORITY = {
+    table: 0,
+    function: 0,
+    promise: 1,
+    proxy: 3,
+    /** Beats proxy, which would otherwise claim every Error before this one is consulted. */
+    error: 3.5,
+    /** Lets a custom userdata be exposed without its methods coming along. */
+    userdata: 4,
+    null: 5,
+} as const
+
 interface CreatedState {
     address: LuaAddress
     memory?: LuaMemory
@@ -117,31 +134,28 @@ export default class LuaState extends Thread {
         }
 
         // Generic handlers - These may be required to be registered for additional types.
-        this.registerTypeExtension(0, createTableType(this))
-        this.registerTypeExtension(0, createFunctionType(this, limits?.functionTimeout))
+        this.registerTypeExtension(BUILT_IN_PRIORITY.table, createTableType(this))
+        this.registerTypeExtension(BUILT_IN_PRIORITY.function, createFunctionType(this, limits?.functionTimeout))
 
         // Contains the :await functionality.
-        this.registerTypeExtension(1, createPromiseType(this, inject))
+        this.registerTypeExtension(BUILT_IN_PRIORITY.promise, createPromiseType(this, inject))
 
         if (inject) {
-            // Should be higher priority than table since that catches generic objects along
-            // with userdata so it doesn't end up a userdata type.
-            this.registerTypeExtension(5, createNullType(this))
+            this.registerTypeExtension(BUILT_IN_PRIORITY.null, createNullType(this))
         }
 
         if (errors) {
-            this.registerTypeExtension(1, createErrorType(this, inject))
+            this.registerTypeExtension(BUILT_IN_PRIORITY.error, createErrorType(this, inject))
         }
 
         if (objects === 'proxy') {
             // This extension only really overrides tables and arrays.
             // When a function is looked up in one of it's tables it's bound and then
             // handled by the function type extension.
-            this.registerTypeExtension(3, createProxyType(this))
+            this.registerTypeExtension(BUILT_IN_PRIORITY.proxy, createProxyType(this))
         }
 
-        // Higher priority than proxied objects to allow custom user data without exposing methods.
-        this.registerTypeExtension(4, createUserdataType(this))
+        this.registerTypeExtension(BUILT_IN_PRIORITY.userdata, createUserdataType(this))
 
         const libraryMask = resolveLibraryMask(libs)
         if (libraryMask !== 0) {

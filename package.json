@@ -24,6 +24,7 @@
         "build:wasm": "node utils/build-wasm",
         "start": "rolldown -w -c",
         "bench": "npm run build && node bench/index.js",
+        "pretest": "npm run build",
         "test": "mocha --parallel --exit --require ./test/boot.js test/*.test.js",
         "luatests": "node --experimental-import-meta-resolve test/luatests.js",
         "build": "rm -rf dist && rolldown -c && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",
