@@ -1,13 +1,21 @@
 #!/usr/bin/env node
-import { LuaRuntime, LuaReturn, LuaType, LUA_MULTRET, decorate } from '../dist/index.js'
+import { LuaRuntime, LuaReturn, LuaType, LUA_MULTRET, LuaError } from '../dist/index.js'
 import pkg from '../package.json' with { type: 'json' }
 import fs from 'node:fs'
 import readline from 'node:readline'
 
+// Prefixes diagnostics, the way the standalone interpreter prefixes them with its own argv[0].
+const PROGNAME = 'wasmoon'
+
+/** An argument the interpreter could not make sense of, which is reported with the usage text. */
+class UsageError extends Error {}
+
 function printUsage() {
-    console.log(
+    // Diagnostics go to stderr, as they do in the reference implementation, so a caller piping the
+    // interpreter's output never has to filter them out.
+    console.error(
         `
-usage: wasmoon [options] [script [args]]
+usage: ${PROGNAME} [options] [script [args]]
 Available options are:
   -e stat     execute string 'stat'
   -i          enter interactive mode after executing 'script'
@@ -20,143 +28,143 @@ Available options are:
   -           stop handling options and execute stdin
 `.trim(),
     )
-    process.exit(1)
 }
 
-function parseArgs(args) {
-    const executeSnippets = []
-    const includeModules = []
+/**
+ * @param argv the interpreter name followed by its arguments, mirroring the reference
+ * interpreter's argv so `arg` can be built with the same offsets.
+ */
+function parseArgs(argv) {
+    // -e, -l and -W all run in the order they were given, so they share one list.
+    const actions = []
     let forceInteractive = false
-    let warnings = false
-    let ignoreEnv = false
     let showVersion = false
-    let scriptFile = null
+    let ignoreEnv = false
+    // Index into argv of the script name, or 0 for no script, as in the reference implementation.
+    let scriptIndex = 0
+    // A '-' script means stdin, unless it came after '--', which makes it an ordinary file name.
+    let scriptIsStdin = false
 
-    const outArgs = []
+    for (let i = 1; i < argv.length; i++) {
+        const arg = argv[i]
 
-    let i = 0
-    for (; i < args.length; i++) {
-        const arg = args[i]
+        if (!arg.startsWith('-')) {
+            scriptIndex = i
+            break
+        }
+
+        if (arg === '-') {
+            scriptIndex = i
+            scriptIsStdin = true
+            break
+        }
 
         if (arg === '--') {
-            i++
+            // Whatever follows is the script, even when it looks like an option.
+            scriptIndex = i + 1 < argv.length ? i + 1 : 0
             break
         }
 
-        if (arg.startsWith('-') && arg.length > 1) {
-            switch (arg) {
-                case '-v':
-                    showVersion = true
-                    break
-                case '-W':
-                    warnings = true
-                    break
-                case '-E':
-                    ignoreEnv = true
-                    break
-                case '-i':
-                    forceInteractive = true
-                    break
-                case '-e':
-                    i++
-                    if (i >= args.length) {
-                        console.error('Missing argument after -e')
-                        printUsage()
-                    }
-                    executeSnippets.push(args[i])
-                    break
-                case '-l':
-                    i++
-                    if (i >= args.length) {
-                        console.error('Missing argument after -l')
-                        printUsage()
-                    }
-                    includeModules.push(args[i])
-                    break
-                case '-':
-                    scriptFile = '-'
-                    i++
-                    break
-                default:
-                    console.log(`unrecognized option: '${arg}'`)
-                    printUsage()
-                    break
-            }
-        } else {
-            scriptFile = arg
-            i++
-            break
+        switch (arg) {
+            case '-v':
+                showVersion = true
+                break
+            case '-W':
+                actions.push({ type: 'W' })
+                break
+            case '-E':
+                ignoreEnv = true
+                break
+            case '-i':
+                forceInteractive = true
+                break
+            case '-e':
+            case '-l':
+                i++
+                if (i >= argv.length) {
+                    throw new UsageError(`Missing argument after ${arg}`)
+                }
+                actions.push({ type: arg[1], value: argv[i] })
+                break
+            default:
+                throw new UsageError(`unrecognized option: '${arg}'`)
         }
     }
 
-    outArgs.push(...args.slice(i))
+    return { argv, actions, forceInteractive, showVersion, ignoreEnv, scriptIndex, scriptIsStdin }
+}
 
-    return {
-        executeSnippets,
-        includeModules,
-        forceInteractive,
-        warnings,
-        showVersion,
-        scriptFile,
-        scriptArgs: outArgs,
-        ignoreEnv,
+// os.exit unwinds by throwing rather than returning, so its status has to be picked back up here.
+const isExitStatus = (err) => Boolean(err) && err.name === 'ExitStatus' && typeof err.status === 'number'
+
+/**
+ * Reports the way the reference implementation does: the message goes to stderr behind the program
+ * name, and the interpreter stops with a failing status.
+ */
+function reportError(err) {
+    if (err instanceof UsageError) {
+        console.error(err.message)
+        printUsage()
+        return
+    }
+
+    process.stderr.write(`${PROGNAME}: ${err instanceof LuaError ? err.luaMessage : (err?.message ?? String(err))}\n`)
+    if (err instanceof LuaError && err.traceback) {
+        process.stderr.write(`${err.traceback}\n`)
     }
 }
 
-const { executeSnippets, includeModules, ignoreEnv, forceInteractive, warnings, showVersion, scriptFile, scriptArgs } = parseArgs(
-    process.argv.slice(2),
-)
-
-// When running interactively, process.stdin is used by readline.
-// To allow Lua’s io.read to work (even in interactive mode), we open
-// a separate file descriptor to the terminal (e.g. '/dev/tty' on Unix).
-let inputFD = 0
-if (process.stdin.isTTY) {
-    try {
-        inputFD = fs.openSync('/dev/tty', 'r')
-    } catch {
-        // If opening /dev/tty fails (or on non-Unix systems), fallback to fd 0.
-        inputFD = 0
-    }
-}
-
-// Created only for the REPL: an open interface holds process.stdin in flowing mode, which both
-// steals the bytes io.read is after and keeps the process alive after a script is done.
-let rl = null
-// Lua's io.read and the REPL share the terminal, so they can't be listening at the same time.
-const pauseReadline = () => rl && !rl.closed && rl.pause()
-const resumeReadline = () => rl && !rl.closed && rl.resume()
-
-// Bytes read past the end of a line: a single read can return more than one line, and dropping
-// the remainder would lose input.
-const inputChunk = Buffer.alloc(1024)
-let pendingLength = 0
-let pendingOffset = 0
-// Set when a line ended on CR, so the LF of a CRLF pair doesn't start an empty line.
-let skipLineFeed = false
-
-// Reading ahead in raw mode would strand whatever the user typed past the end of the line in here,
-// where the REPL (which reads process.stdin) can never see it.
-const refillInputChunk = (isRaw) => {
-    try {
-        pendingLength = fs.readSync(inputFD, inputChunk, 0, isRaw ? 1 : inputChunk.length)
-    } catch (err) {
-        // Both mean "nothing more right now", which for a blocking read is the end of the input.
-        if (err.code !== 'EOF' && err.code !== 'EAGAIN') {
-            throw err
-        }
-        pendingLength = 0
-    }
-    pendingOffset = 0
-    return pendingLength > 0
-}
-
-const lua = await LuaRuntime.load({
-    env: ignoreEnv ? undefined : process.env,
-    fs: 'node',
-    stdin: () => {
+/**
+ * Reads lines from the terminal for Lua's own io.read, which cannot share process.stdin with the
+ * REPL: an open readline interface holds it in flowing mode and would steal the bytes io.read is
+ * after. Owns the interface too, so the two take turns rather than listening at once.
+ */
+function createTerminalInput() {
+    // When running interactively, process.stdin is used by readline.
+    // To allow Lua’s io.read to work (even in interactive mode), we open
+    // a separate file descriptor to the terminal (e.g. '/dev/tty' on Unix).
+    let inputFD = 0
+    if (process.stdin.isTTY) {
         try {
-            pauseReadline()
+            inputFD = fs.openSync('/dev/tty', 'r')
+        } catch {
+            // If opening /dev/tty fails (or on non-Unix systems), fallback to fd 0.
+            inputFD = 0
+        }
+    }
+
+    // Created only for the REPL: an open interface also keeps the process alive after a script is done.
+    let rl = null
+
+    // Bytes read past the end of a line: a single read can return more than one line, and dropping
+    // the remainder would lose input.
+    const inputChunk = Buffer.alloc(1024)
+    let pendingLength = 0
+    let pendingOffset = 0
+    // Set when a line ended on CR, so the LF of a CRLF pair doesn't start an empty line.
+    let skipLineFeed = false
+
+    // Reading ahead in raw mode would strand whatever the user typed past the end of the line in here,
+    // where the REPL (which reads process.stdin) can never see it.
+    const refillInputChunk = (isRaw) => {
+        try {
+            pendingLength = fs.readSync(inputFD, inputChunk, 0, isRaw ? 1 : inputChunk.length)
+        } catch (err) {
+            // Both mean "nothing more right now", which for a blocking read is the end of the input.
+            if (err.code !== 'EOF' && err.code !== 'EAGAIN') {
+                throw err
+            }
+            pendingLength = 0
+        }
+        pendingOffset = 0
+        return pendingLength > 0
+    }
+
+    const readLine = () => {
+        try {
+            if (rl && !rl.closed) {
+                rl.pause()
+            }
 
             // Raw mode is what the REPL puts the terminal in, and it comes with no echo and no
             // line editing, so both have to be done by hand. Any other input already has them.
@@ -193,13 +201,15 @@ const lua = await LuaRuntime.load({
                 }
 
                 if (isRaw) {
-                    const echo = Buffer.from(line).toString('utf8')
-                    // A character whose remaining bytes are still on their way would flash as a
-                    // replacement character, so leave it for the next redraw.
                     if (terminated) {
                         process.stdout.write('\n')
-                    } else if (!echo.endsWith('�')) {
-                        process.stdout.write(`\x1b[2K\x1b[0G${echo}`)
+                    } else {
+                        const echo = Buffer.from(line).toString('utf8')
+                        // A character whose remaining bytes are still on their way would flash as a
+                        // replacement character, so leave it for the next redraw.
+                        if (!echo.endsWith('�')) {
+                            process.stdout.write(`\x1b[2K\x1b[0G${echo}`)
+                        }
                     }
                 }
             }
@@ -214,102 +224,201 @@ const lua = await LuaRuntime.load({
             console.error(err)
             return ''
         } finally {
-            resumeReadline()
+            if (rl && !rl.closed) {
+                rl.resume()
+            }
         }
-    },
-})
-
-const state = lua.createState()
-
-if (showVersion) {
-    console.log(`wasmoon ${pkg.version} (${state.get('_VERSION')})`)
-    process.exit(0)
-}
-
-if (warnings) {
-    lua.module.lua_warning(state.address, '@on', 0)
-}
-
-// Decorated as a value so `#arg` and `ipairs(arg)` behave like the standalone interpreter, and
-// set before -l and -e run, as it does, so those can read it.
-state.set('arg', decorate(scriptArgs, { as: 'value' }))
-
-for (const module of includeModules) {
-    let [global, mod] = module.split('=')
-    if (!mod) {
-        mod = global
     }
-    const require = state.get('require')
-    state.set(global, require(mod))
+
+    const openReadline = () => {
+        rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+            terminal: true,
+            removeHistoryDuplicates: true,
+            prompt: '> ',
+        })
+        return rl
+    }
+
+    return { readLine, openReadline }
 }
 
-for (const snippet of executeSnippets) {
-    await state.doString(snippet)
-}
-
-const isTTY = process.stdin.isTTY
-const hasProgram = Boolean(scriptFile) || executeSnippets.length > 0
-
-if (scriptFile === '-') {
-    const input = fs.readFileSync(0, 'utf-8')
-    await state.doString(input)
-} else if (scriptFile) {
-    await state.doFile(scriptFile)
-}
-
-const shouldInteractive = isTTY && (forceInteractive || !hasProgram)
-if (shouldInteractive) {
+async function repl(lua, state, terminal) {
     // Bypass result verification for interactive mode
     const loadcode = (code) => {
         state.setTop(0)
         return lua.module.luaL_loadstring(state.address, code) === LuaReturn.Ok
     }
 
-    const version = pkg.version
-    const luaversion = state.get('_VERSION')
-    console.log(`Welcome to Wasmoon ${version} (${luaversion})`)
+    console.log(`Welcome to Wasmoon ${pkg.version} (${state.get('_VERSION')})`)
     console.log('Type Lua code and press Enter to execute. Ctrl+C to exit.\n')
 
-    rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-        terminal: true,
-        removeHistoryDuplicates: true,
-        prompt: '> ',
-    })
-    rl.prompt()
+    const rl = terminal.openReadline()
 
-    for await (const line of rl) {
-        // try to load (compile) it first as an expression (return <line>) and second as a statement
-        const loaded = loadcode(`return ${line}`) || loadcode(line)
-        if (!loaded) {
-            // Failed to parse
-            const err = state.getValue(-1, LuaType.String)
-            console.log(err)
-            rl.prompt()
-            continue
-        }
-
-        const result = lua.module.lua_pcallk(state.address, 0, LUA_MULTRET, 0, 0, null)
-        if (result === LuaReturn.Ok) {
-            const count = state.getTop()
-            if (count > 0) {
-                const returnValues = []
-                for (let i = 1; i <= count; i++) {
-                    returnValues.push(state.indexToString(i))
-                }
-                console.log(...returnValues)
-            }
-        } else {
-            console.log(state.getValue(-1, LuaType.String))
-        }
-
+    try {
         rl.prompt()
+
+        for await (const line of rl) {
+            // try to load (compile) it first as an expression (return <line>) and second as a statement
+            const loaded = loadcode(`return ${line}`) || loadcode(line)
+            if (!loaded) {
+                // Failed to parse
+                const err = state.getValue(-1, LuaType.String)
+                console.log(err)
+                rl.prompt()
+                continue
+            }
+
+            const result = lua.module.lua_pcallk(state.address, 0, LUA_MULTRET, 0, 0, null)
+            if (result === LuaReturn.Ok) {
+                const count = state.getTop()
+                if (count > 0) {
+                    const returnValues = []
+                    for (let i = 1; i <= count; i++) {
+                        returnValues.push(state.indexToString(i))
+                    }
+                    console.log(...returnValues)
+                }
+            } else {
+                console.log(state.getValue(-1, LuaType.String))
+            }
+
+            rl.prompt()
+        }
+    } finally {
+        // os.exit inside the REPL leaves the interface holding stdin open, which would keep the
+        // process alive long after the code it was running asked to end it.
+        rl.close()
+        process.stdin.pause()
     }
-} else if (!hasProgram) {
-    // If we're not interactive, and we did NOT run a file or any -e snippet,
-    // read from stdin until EOF. (Non-TTY or no -i, no file).
-    // With -e, stdin belongs to the script, as in the standalone interpreter.
-    const input = fs.readFileSync(0, 'utf-8')
-    await state.doString(input)
+}
+
+/**
+ * Builds the global 'arg' the way 'createargtable' does, aligned on the script name so it sits at
+ * index 0, the arguments meant for it at positive indices and everything that came before it at
+ * negative ones. Filled through the raw bindings because no JS value maps to those indices.
+ */
+function setArgTable(state, argv, scriptIndex) {
+    const { module, address } = state
+
+    module.lua_createtable(address, Math.max(argv.length - scriptIndex - 1, 0), scriptIndex + 1)
+    for (let i = 0; i < argv.length; i++) {
+        module.lua_pushstring(address, argv[i])
+        module.lua_rawseti(address, -2, BigInt(i - scriptIndex))
+    }
+    module.lua_setglobal(address, 'arg')
+}
+
+/**
+ * Runs `globname = require(modname)` for a '-l' option, entirely inside Lua so the global ends up
+ * holding the very table 'package.loaded' has rather than a copy of it.
+ */
+function doLibrary(state, spec) {
+    const { module, address } = state
+    const separator = spec.indexOf('=')
+    const global = separator === -1 ? spec : spec.slice(0, separator)
+    const mod = separator === -1 ? spec : spec.slice(separator + 1)
+
+    module.lua_getglobal(address, 'require')
+    module.lua_pushstring(address, mod)
+    state.assertOk(module.lua_pcallk(address, 1, 1, 0, 0, null))
+    module.lua_setglobal(address, global)
+}
+
+async function run({ argv, actions, forceInteractive, showVersion, ignoreEnv, scriptIndex, scriptIsStdin }) {
+    const terminal = createTerminalInput()
+
+    const lua = await LuaRuntime.load({
+        env: ignoreEnv ? undefined : process.env,
+        fs: 'node',
+        stdin: terminal.readLine,
+    })
+
+    const state = lua.createState()
+
+    // Unlike the other options, -v does not stop the interpreter: the reference implementation
+    // prints the version and carries on with whatever else was asked for.
+    if (showVersion) {
+        console.log(`${PROGNAME} ${pkg.version} (${state.get('_VERSION')})`)
+    }
+
+    setArgTable(state, argv, scriptIndex)
+
+    for (const action of actions) {
+        switch (action.type) {
+            case 'W':
+                lua.module.lua_warning(state.address, '@on', 0)
+                break
+            case 'l':
+                doLibrary(state, action.value)
+                break
+            case 'e':
+                await state.doString(action.value, { name: '=(command line)' })
+                break
+        }
+    }
+
+    const hasScript = scriptIndex > 0
+    const hasSnippet = actions.some((action) => action.type === 'e')
+    // Only a named script is called with arguments. Stdin falling in as the program when nothing
+    // else was named is run bare, as the reference implementation runs it.
+    const scriptArgs = hasScript ? argv.slice(scriptIndex + 1) : []
+
+    // doString and doFile call the chunk with no arguments, and the reference implementation hands
+    // the script everything in 'arg', so the chunk is loaded and resumed here instead. A thread of
+    // its own is what those two do as well, and it is what lets the script await.
+    const runScript = async (load) => {
+        // newThread leaves the thread on the state's stack, which is what keeps it from being
+        // collected while it runs.
+        const stackTop = state.getTop()
+        const thread = state.newThread()
+        try {
+            thread.setLimits(state.getLimits())
+            load(thread)
+            for (const scriptArg of scriptArgs) {
+                thread.pushValue(scriptArg)
+            }
+            await thread.run(scriptArgs.length)
+        } finally {
+            thread.close()
+            state.setTop(stackTop)
+        }
+    }
+
+    // Reading stdin to EOF and loading it as one chunk is what 'luaL_loadfile(L, NULL)' does.
+    const runStdin = () => runScript((thread) => thread.loadString(fs.readFileSync(0, 'utf-8'), { name: '=stdin' }))
+
+    if (hasScript) {
+        await (scriptIsStdin ? runStdin() : runScript((thread) => thread.loadFile(argv[scriptIndex])))
+    }
+
+    const isTTY = process.stdin.isTTY
+
+    if (forceInteractive) {
+        if (isTTY) {
+            await repl(lua, state, terminal)
+        }
+    } else if (!hasScript && !hasSnippet && !showVersion) {
+        // Nothing to run was named, so stdin is the program. On a terminal that means the REPL,
+        // and anywhere else it is a script read to EOF.
+        if (isTTY) {
+            await repl(lua, state, terminal)
+        } else {
+            await runStdin()
+        }
+    }
+}
+
+try {
+    // The interpreter's own argv, the first entry being its name, so 'arg' can be built with the
+    // same offsets the reference implementation uses.
+    await run(parseArgs([process.argv[1], ...process.argv.slice(2)]))
+} catch (err) {
+    if (isExitStatus(err)) {
+        process.exitCode = err.status
+    } else {
+        reportError(err)
+        process.exitCode = 1
+    }
 }
