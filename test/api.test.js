@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { LuaMultiReturn, LuaRawResult, LuaTypeExtension, decorate } from '../dist/index.js'
+import { LuaMultiReturn, LuaRawResult, LuaReturn, LuaTypeExtension, decorate } from '../dist/index.js'
 import { getLua, getState } from './utils.js'
 
 describe('MultiReturn', () => {
@@ -209,5 +209,82 @@ describe('Thread lifecycle', () => {
         expect(state.indexToString(-1)).to.be.equal('rendered')
 
         state.pop()
+    })
+})
+
+// A lua_Integer is an i64, so pushValue converts a safe integer to a BigInt and anything outside
+// that range becomes a float. These cover both ends of the range, and the raw bindings, which take
+// the BigInt directly.
+describe('Lua integer arguments', () => {
+    const edges = [0, 1, -1, 2 ** 31, -(2 ** 31), 2 ** 32, Number.MAX_SAFE_INTEGER, -Number.MAX_SAFE_INTEGER]
+
+    it('should push every safe integer exactly, as an integer', async () => {
+        using state = await getState()
+
+        for (const value of edges) {
+            state.set('value', value)
+
+            expect(await state.doString('return math.type(value)'), `math.type of ${value}`).to.be.equal('integer')
+            expect(await state.doString('return value'), `round trip of ${value}`).to.be.equal(value)
+        }
+    })
+
+    it('should push negative zero as the integer zero, the way a bigint does', async () => {
+        using state = await getState()
+        state.set('value', -0)
+
+        expect(await state.doString('return math.type(value)')).to.be.equal('integer')
+        expect(await state.doString('return value == 0')).to.be.equal(true)
+    })
+
+    it('should take a raw table index as a bigint', async () => {
+        using state = await getState()
+        state.module.lua_createtable(state.address, 3, 0)
+
+        for (const [index, text] of ['a', 'b', 'c'].entries()) {
+            state.pushValue(text)
+            state.module.lua_rawseti(state.address, -2, BigInt(index + 1))
+        }
+        state.module.lua_setglobal(state.address, 'letters')
+
+        expect(await state.doString('return table.concat(letters, ",")')).to.be.equal('a,b,c')
+    })
+
+    it('should reach an index a double cannot hold exactly through a bigint', async () => {
+        using state = await getState()
+        const index = 2n ** 62n
+
+        state.module.lua_createtable(state.address, 0, 1)
+        state.pushValue('far')
+        state.module.lua_rawseti(state.address, -2, index)
+        state.module.lua_setglobal(state.address, 'sparse')
+
+        expect(await state.doString('return sparse[4611686018427387904]')).to.be.equal('far')
+    })
+})
+
+// A marshalled string goes on the wasm stack, which is 1MB and shared with the Lua calls made
+// through it, so one longer than that has to be put on the heap instead.
+describe('C string arguments', () => {
+    const OVER_STACK = 1_500_000
+
+    it('should marshal a name longer than the wasm stack', async () => {
+        using state = await getState()
+        const name = `long_${'n'.repeat(OVER_STACK)}`
+
+        // lua_setglobal and lua_getglobal both take the name as a C string.
+        state.set(name, 'reached')
+
+        expect(state.get(name)).to.be.equal('reached')
+    })
+
+    it('should marshal a chunk longer than the wasm stack', async () => {
+        using state = await getState()
+        // luaL_loadstring takes the whole chunk as a C string, unlike doString which hands over a
+        // pointer of its own.
+        const script = `${'-- padding\n'.repeat(OVER_STACK / 10)}return 'compiled'`
+
+        expect(state.module.luaL_loadstring(state.address, script)).to.be.equal(LuaReturn.Ok)
+        expect(state.runSync()[0]).to.be.equal('compiled')
     })
 })

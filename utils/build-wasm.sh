@@ -21,7 +21,6 @@ COMMON=(
     -s WASM=1
     "${extension[@]}"
     -s EXPORTED_RUNTIME_METHODS="[
-        'ccall', \
         'addFunction', \
         'removeFunction', \
         'FS', \

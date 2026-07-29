@@ -33,7 +33,6 @@ export interface EmscriptenPath {
 
 /** The instantiated wasm module, as {@link LuaModule.emscripten}. */
 export interface LuaEmscriptenModule extends EmscriptenModule {
-    ccall: typeof ccall
     addFunction: typeof addFunction
     removeFunction: typeof removeFunction
     setValue: typeof setValue
@@ -50,8 +49,8 @@ export interface LuaEmscriptenModule extends EmscriptenModule {
     lengthBytesUTF8: typeof lengthBytesUTF8
     stringToUTF8: typeof stringToUTF8
     UTF8ToString: (ptr: number, maxBytesToRead?: number, ignoreNul?: boolean) => string
-    // The scratch space `ccall` uses for its own C string arguments. Unwound by stackRestore
-    // rather than freed, so it stays correct when a Lua error longjmps out of the call.
+    // Scratch space for a C string argument, on the wasm stack. Unwound by stackRestore rather
+    // than freed, so it stays correct when a Lua error longjmps out of the call.
     stringToUTF8OnStack: (str: string) => number
     stackSave: () => number
     stackRestore: (pointer: number) => void
@@ -115,6 +114,20 @@ const MAX_UTF8_BYTES_PER_CHAR = 3
 // wasm stack is used the way ccall does it.
 const C_STRING_CACHE_LIMIT = 512
 const C_STRING_CACHE_MAX_LENGTH = 128
+
+/** How a marshalled string argument is turned into a pointer. Ordered so `None` is falsy. */
+const enum StringArgument {
+    None = 0,
+    /** A fixed name, worth keeping the encoded form of. */
+    Cached = 1,
+    /** A one-off, encoded into scratch space every time so it cannot fill the cache. */
+    Uncached = 2,
+}
+
+// Past this a marshalled string is put on the heap and freed as the call returns, rather than on the
+// wasm stack: that is 1MB, shared with the Lua calls made through it, and a whole chunk of source
+// passed to one of these would overflow it.
+const STACK_STRING_LIMIT = 1024
 
 // Above this, TextEncoder beats copying byte by byte in JS (measured; TEXTDECODER=1 covers the
 // other direction upstream).
@@ -1046,39 +1059,7 @@ export default class LuaModule {
         // upstream would fall back to ccall -- which rebuilds its converter table, argument array
         // and return handler on every call. That is most of the cost of the small C API functions,
         // and these are hot: metatable names, globals, table fields.
-        if (!argTypes.includes('string|number')) {
-            return this.wrapWithStringArguments(raw, returnType, argTypes as Emscripten.JSType[])
-        }
-
-        return (...args: any[]) => {
-            const pointersToBeFreed: number[] = []
-            const resolvedArgTypes: Emscripten.JSType[] = argTypes.map((argType, i) => {
-                if (argType === 'string|number') {
-                    if (typeof args[i] === 'number') {
-                        return 'number'
-                    } else {
-                        // because it will be freed later, this can only be used on functions that lua internally copies the string
-                        if (args[i]?.length > 1024) {
-                            const bufferPointer = this.emscripten.stringToNewUTF8(args[i] as string)
-                            args[i] = bufferPointer
-                            pointersToBeFreed.push(bufferPointer)
-                            return 'number'
-                        } else {
-                            return 'string'
-                        }
-                    }
-                }
-                return argType
-            })
-
-            try {
-                return this.emscripten.ccall(name, returnType, resolvedArgTypes, args as Emscripten.TypeCompatibleWithC[])
-            } finally {
-                for (const pointer of pointersToBeFreed) {
-                    this.emscripten._free(pointer)
-                }
-            }
-        }
+        return this.wrapWithStringArguments(raw, returnType, argTypes)
     }
 
     /**
@@ -1089,54 +1070,69 @@ export default class LuaModule {
     private wrapWithStringArguments(
         raw: (...args: any[]) => any,
         returnType: Emscripten.JSType | null,
-        argTypes: Emscripten.JSType[],
+        argTypes: Array<Emscripten.JSType | 'string|number'>,
     ): (...args: any[]) => any {
         const emscripten = this.emscripten
         const arity = argTypes.length
         if (arity < 2 || arity > 5) {
             throw new Error(`wrapWithStringArguments only unrolls arities 2 to 5, not ${arity}`)
         }
-        if (argTypes[0] === 'string') {
+        if (argTypes[0] !== 'number') {
             // Every binding takes the lua_State there, so that slot is not unrolled below.
             throw new Error('wrapWithStringArguments does not marshal the first argument')
         }
 
         const returnsString = returnType === 'string'
-        const [, s1, s2, s3, s4] = argTypes.map((argType) => argType === 'string')
+        // `string` is a fixed name worth caching; `string|number` is a chunk of source or another
+        // one-off, which would fill the cache and push the names that dominate these calls out of it.
+        const [, s1, s2, s3, s4] = argTypes.map((argType) =>
+            argType === 'string' ? StringArgument.Cached : argType === 'string|number' ? StringArgument.Uncached : StringArgument.None,
+        )
 
         return (a?: any, b?: any, c?: any, d?: any, e?: any): any => {
             // Only an argument that misses the cache needs scratch space, and the fixed names that
             // dominate these calls all hit it, so the stack is only touched when it is used.
             let stack = 0
+            // Lazily, so the common path where nothing is long enough to need the heap allocates
+            // nothing of its own.
+            let owned: number[] | undefined
             try {
                 let pointer: number
                 if (s1) {
-                    if ((pointer = this.toCString(b)) >= 0) {
+                    if ((pointer = this.toCString(b, s1)) >= 0) {
                         b = pointer
+                    } else if (b.length > STACK_STRING_LIMIT) {
+                        b = this.ownCString(b, (owned ??= []))
                     } else {
                         stack ||= emscripten.stackSave()
                         b = emscripten.stringToUTF8OnStack(b)
                     }
                 }
                 if (s2) {
-                    if ((pointer = this.toCString(c)) >= 0) {
+                    if ((pointer = this.toCString(c, s2)) >= 0) {
                         c = pointer
+                    } else if (c.length > STACK_STRING_LIMIT) {
+                        c = this.ownCString(c, (owned ??= []))
                     } else {
                         stack ||= emscripten.stackSave()
                         c = emscripten.stringToUTF8OnStack(c)
                     }
                 }
                 if (s3) {
-                    if ((pointer = this.toCString(d)) >= 0) {
+                    if ((pointer = this.toCString(d, s3)) >= 0) {
                         d = pointer
+                    } else if (d.length > STACK_STRING_LIMIT) {
+                        d = this.ownCString(d, (owned ??= []))
                     } else {
                         stack ||= emscripten.stackSave()
                         d = emscripten.stringToUTF8OnStack(d)
                     }
                 }
                 if (s4) {
-                    if ((pointer = this.toCString(e)) >= 0) {
+                    if ((pointer = this.toCString(e, s4)) >= 0) {
                         e = pointer
+                    } else if (e.length > STACK_STRING_LIMIT) {
+                        e = this.ownCString(e, (owned ??= []))
                     } else {
                         stack ||= emscripten.stackSave()
                         e = emscripten.stringToUTF8OnStack(e)
@@ -1149,18 +1145,35 @@ export default class LuaModule {
                 if (stack) {
                     emscripten.stackRestore(stack)
                 }
+                if (owned) {
+                    // Only reached by a binding Lua copies the string in, which is what lets these be
+                    // freed as the call returns.
+                    for (const allocated of owned) {
+                        emscripten._free(allocated)
+                    }
+                }
             }
         }
     }
 
     /**
-     * The C string pointer for a marshalled argument, or -1 when it has to go on the wasm stack
-     * instead. Cached pointers are kept for the lifetime of the module, so they stay valid across
-     * the reentrant calls a metamethod can make while one of them is still in flight.
+     * A string too long to put on the wasm stack, on the heap instead and recorded so the call that
+     * marshalled it can free it as it returns.
      */
-    private toCString(value: unknown): number {
-        // Matches ccall: a nullish argument is a null pointer rather than the text "null". A number
-        // is already one, which is what the `string|number` bindings pass.
+    private ownCString(value: string, owned: number[]): number {
+        const pointer = this.emscripten.stringToNewUTF8(value)
+        owned.push(pointer)
+        return pointer
+    }
+
+    /**
+     * The C string pointer for a marshalled argument, or -1 when the caller has to put it in
+     * scratch space instead. Cached pointers are kept for the lifetime of the module, so they stay
+     * valid across the reentrant calls a metamethod can make while one of them is still in flight.
+     */
+    private toCString(value: unknown, mode: StringArgument): number {
+        // A nullish argument is a null pointer rather than the text "null", as it was under ccall. A
+        // number is already one, which is what the `string|number` bindings pass.
         if (value === null || value === undefined) {
             return 0
         }
@@ -1170,7 +1183,7 @@ export default class LuaModule {
 
         // Checked before the lookup, because hashing a long string costs more than the call saves.
         const text = value as string
-        if (text.length > C_STRING_CACHE_MAX_LENGTH) {
+        if (mode === StringArgument.Uncached || text.length > C_STRING_CACHE_MAX_LENGTH) {
             return -1
         }
         const cached = this.cStringCache.get(text)
