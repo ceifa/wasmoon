@@ -62,7 +62,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                                 promiseResult = { status: 'rejected', value: err }
                             })
 
-                        const continuance = this.state.module.emscripten.addFunction((continuanceState: LuaAddress) => {
+                        const continuance = this.state.module.addFunction((continuanceState: LuaAddress) => {
                             // If this yield has been called from within a coroutine and so manually resumed
                             // then there may not yet be any results. In that case yield again.
                             if (!promiseResult) {
@@ -74,7 +74,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                                 return state.module.lua_yieldk(functionThread.address, 0, 0, continuance)
                             }
 
-                            this.state.module.emscripten.removeFunction(continuance)
+                            this.state.module.removeFunction(continuance)
 
                             const continuanceThread = state.stateToThread(continuanceState)
 
@@ -127,7 +127,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     }
 
     public close(): void {
-        this.state.module.emscripten.removeFunction(this.gcPointer)
+        this.state.module.removeFunction(this.gcPointer)
     }
 
     public pushValue(thread: Thread, decoration: Decoration<unknown>): boolean {

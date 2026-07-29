@@ -68,7 +68,7 @@ class ErrorTypeExtension extends TypeExtension<Error> {
     }
 
     public close(): void {
-        this.state.module.emscripten.removeFunction(this.gcPointer)
+        this.state.module.removeFunction(this.gcPointer)
     }
 }
 

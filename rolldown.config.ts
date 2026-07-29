@@ -59,6 +59,34 @@ export default defineConfig({
             },
         },
         {
+            // The glue is generated and already minified onto one line, so carrying its 85 KB of
+            // source in the published sourcemap costs a tenth of the package to map frames nobody
+            // reads. The mappings stay, only the inlined copy of the file goes.
+            name: 'drop-glue-source-content',
+            generateBundle(_options, bundle) {
+                // Rewritten through the emitted asset rather than the written file, because
+                // `chunk.map` is a snapshot of the Rust side and mutating it does not carry over.
+                let dropped = false
+                for (const file of Object.values(bundle)) {
+                    if (file.type !== 'asset' || !file.fileName.endsWith('.map')) {
+                        continue
+                    }
+                    const map = JSON.parse(file.source as string)
+                    const index = map.sources.findIndex((source: string) => source?.endsWith('glue.js'))
+                    if (index < 0 || !map.sourcesContent?.[index]) {
+                        continue
+                    }
+                    map.sourcesContent[index] = null
+                    file.source = JSON.stringify(map)
+                    dropped = true
+                }
+                if (!dropped) {
+                    // A silent miss would quietly put the 85 KB back into every published package.
+                    this.error('the glue source was not found in any sourcemap, so nothing was dropped')
+                }
+            },
+        },
+        {
             name: 'copy-glue-wasm',
             async writeBundle() {
                 await copyFile('build/glue.wasm', 'dist/glue.wasm')

@@ -11,7 +11,9 @@ if [ "$1" == "dev" ];
 then
     extension="-O0 -g3 -s ASSERTIONS=1 -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2"
 else
-    extension="-Oz -fno-inline-functions -s BINARYEN_EXTRA_PASSES=gufa-optimizing"
+    # TEXTDECODER=1 keeps Emscripten's short string decode path, which -Oz would otherwise drop
+    # in favour of always calling TextDecoder. LuaModule.readString relies on it.
+    extension="-Oz -fno-inline-functions -s TEXTDECODER=1 -s BINARYEN_EXTRA_PASSES=gufa-optimizing"
 fi
 
 emcc \
@@ -29,6 +31,9 @@ emcc \
         'lengthBytesUTF8', \
         'stringToUTF8', \
         'stringToNewUTF8', \
+        'stringToUTF8OnStack', \
+        'stackSave', \
+        'stackRestore', \
         'UTF8ToString', \
         'HEAPU8', \
         'HEAPU32'

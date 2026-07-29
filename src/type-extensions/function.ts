@@ -53,11 +53,11 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
         // Pop the metatable from the stack.
         state.module.lua_pop(state.address, 1)
 
-        this.functionWrapper = state.module.emscripten.addFunction((calledL: LuaAddress) => {
+        this.functionWrapper = state.module.addFunction((calledL: LuaAddress) => {
             const calledThread = state.stateToThread(calledL)
 
             const refUserdata = state.module.luaL_checkudata(calledL, state.module.lua_upvalueindex(1), this.name)
-            const refPointer = state.module.emscripten.getValue(refUserdata, '*')
+            const refPointer = state.module.readPointer(refUserdata)
             const { target, options: decorationOptions } = state.module.getRef(refPointer) as Decoration<FunctionType>
 
             const argsQuantity = calledThread.getTop()
@@ -105,8 +105,8 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
     }
 
     public close(): void {
-        this.state.module.emscripten.removeFunction(this.gcPointer)
-        this.state.module.emscripten.removeFunction(this.functionWrapper)
+        this.state.module.removeFunction(this.gcPointer)
+        this.state.module.removeFunction(this.functionWrapper)
         // Doesn't destroy the Lua thread, just function pointers.
         this.callbackContext.close()
         // Destroy the Lua thread
@@ -129,7 +129,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
         const pointer = thread.module.ref(decoration)
         // 4 = size of pointer in wasm.
         const userDataPointer = thread.module.lua_newuserdatauv(thread.address, PointerSize, 0)
-        thread.module.emscripten.setValue(userDataPointer, pointer, '*')
+        thread.module.writePointer(userDataPointer, pointer)
 
         if (LuaType.Nil === thread.module.luaL_getmetatable(thread.address, this.name)) {
             // Pop the pushed userdata.
@@ -153,6 +153,8 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
         thread.module.lua_pushvalue(thread.address, index)
         // Create a reference to the function which pops it from the stack
         const func = thread.module.luaL_ref(thread.address, LUA_REGISTRYINDEX)
+        // The reference never changes, so the bigint the i64 parameter needs is built once.
+        const funcReference = BigInt(func)
 
         const jsFunc = (...args: any[]): any => {
             // Calling a function would ideally be in the Lua context that's calling it. For example if the JS function
@@ -170,7 +172,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
             // they can be left in inconsistent states.
             const callThread = this.callbackContext.newThread()
             try {
-                const internalType = callThread.module.lua_rawgeti(callThread.address, LUA_REGISTRYINDEX, BigInt(func))
+                const internalType = callThread.module.lua_rawgeti(callThread.address, LUA_REGISTRYINDEX, funcReference)
                 if (internalType !== LuaType.Function) {
                     const callMetafieldType = callThread.module.luaL_getmetafield(callThread.address, -1, '__call')
                     callThread.pop()

@@ -34,7 +34,7 @@ class UserdataTypeExtension extends TypeExtension<any> {
 
     public getValue(thread: Thread, index: number): any {
         const refUserdata = thread.module.lua_touserdata(thread.address, index)
-        const referencePointer = thread.module.emscripten.getValue(refUserdata, '*')
+        const referencePointer = thread.module.readPointer(refUserdata)
         return thread.module.getRef(referencePointer)
     }
 
@@ -47,7 +47,7 @@ class UserdataTypeExtension extends TypeExtension<any> {
     }
 
     public close(): void {
-        this.state.module.emscripten.removeFunction(this.gcPointer)
+        this.state.module.removeFunction(this.gcPointer)
     }
 }
 

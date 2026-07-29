@@ -66,7 +66,7 @@ class NullTypeExtension extends TypeExtension<unknown> {
     }
 
     public close(): void {
-        this.state.module.emscripten.removeFunction(this.gcPointer)
+        this.state.module.removeFunction(this.gcPointer)
     }
 }
 

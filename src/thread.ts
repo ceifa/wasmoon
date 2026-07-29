@@ -21,7 +21,6 @@ import {
     LuaTimeoutError,
     LuaType,
     type LuaWarnHandler,
-    PointerSize,
 } from './types'
 import { isEmscriptenUnwind, isPromise, yieldToEventLoop } from './utils'
 
@@ -73,17 +72,13 @@ export default class Thread {
 
     /** @param options.mode defaults to `'t'`. See {@link LuaLoadOptions.mode}. */
     public loadString(luaCode: string, options?: LuaLoadOptions): void {
-        const size = this.module.emscripten.lengthBytesUTF8(luaCode)
-        const pointerSize = size + 1
-        const bufferPointer = this.module.emscripten._malloc(pointerSize)
-        try {
-            this.module.emscripten.stringToUTF8(luaCode, bufferPointer, pointerSize)
-            this.assertOk(
-                this.module.luaL_loadbufferx(this.address, bufferPointer, size, options?.name ?? bufferPointer, options?.mode ?? 't'),
-            )
-        } finally {
-            this.module.emscripten._free(bufferPointer)
-        }
+        // Lua copies the chunk while loading, so the shared buffer can be handed straight to it
+        // rather than encoded into an allocation of its own.
+        this.assertOk(
+            this.module.withCString(luaCode, (pointer, size) =>
+                this.module.luaL_loadbufferx(this.address, pointer, size, options?.name ?? pointer, options?.mode ?? 't'),
+            ),
+        )
     }
 
     /** @param options.mode defaults to `'t'`. See {@link LuaLoadOptions.mode}. */
@@ -92,16 +87,15 @@ export default class Thread {
     }
 
     public resume(argCount = 0): LuaResumeResult {
-        const dataPointer = this.module.emscripten._malloc(PointerSize)
-        try {
-            this.module.emscripten.setValue(dataPointer, 0, 'i32')
-            const luaResult = this.module.lua_resume(this.address, null, argCount, dataPointer)
-            return {
-                result: luaResult,
-                resultCount: this.module.emscripten.getValue(dataPointer, 'i32'),
-            }
-        } finally {
-            this.module.emscripten._free(dataPointer)
+        // The shared slot is safe for the same reason the one behind it is: C writes the count as it
+        // returns and it is read straight after, with nothing interleaved. A nested resume has
+        // finished with the slot by the time this one's lua_resume writes to it.
+        const dataPointer = this.module.resultCountScratch
+        this.module.writePointer(dataPointer, 0)
+        const luaResult = this.module.lua_resume(this.address, null, argCount, dataPointer)
+        return {
+            result: luaResult,
+            resultCount: this.module.readPointer(dataPointer),
         }
     }
 
@@ -118,7 +112,7 @@ export default class Thread {
     }
 
     public setField(index: number, name: string, value: unknown): void {
-        index = this.module.lua_absindex(this.address, index)
+        index = this.absIndex(index)
         this.pushValue(value)
         this.module.lua_setfield(this.address, index, name)
     }
@@ -212,12 +206,17 @@ export default class Thread {
     }
 
     public stateToThread(L: LuaAddress): Thread {
+        if (L === this.address) {
+            return this
+        }
         return L === this.parent?.address ? this.parent : new Thread(this.module, this.typeExtensions, L, this.parent || this)
     }
 
     public pushValue(rawValue: unknown, cache?: LuaPushCache): void {
-        const decoratedValue = this.getValueDecorations(rawValue)
-        const target = decoratedValue.target
+        // Only the type extensions take a decoration, so pushing a plain primitive never has to
+        // allocate one. The default branch below synthesises one for the values that do need it.
+        const decoration = rawValue instanceof Decoration ? rawValue : undefined
+        const target = decoration ? decoration.target : rawValue
 
         if (target instanceof Thread) {
             const isMain = this.module.lua_pushthread(target.address) === 1
@@ -226,8 +225,6 @@ export default class Thread {
             }
             return
         }
-
-        const startTop = this.getTop()
 
         // Handle primitive types
         switch (typeof target) {
@@ -255,28 +252,35 @@ export default class Thread {
             case 'boolean':
                 this.module.lua_pushboolean(this.address, target ? 1 : 0)
                 break
-            default:
-                if (this.typeExtensions.find((wrapper) => wrapper.extension.pushValue(this, decoratedValue, cache))) {
-                    break
-                }
-                if (target === null) {
+            default: {
+                // A type extension can be supplied by the caller, so unlike the pushes above it is
+                // not guaranteed to leave exactly one value behind. That is worth the two
+                // lua_gettop calls here, and not worth them on every primitive push.
+                const startTop = this.getTop()
+                if (this.pushWithExtension(decoration ?? new Decoration(target, {}), cache)) {
+                    const endTop = this.getTop()
+                    if (endTop !== startTop + 1) {
+                        throw new Error(`pushValue expected stack size ${startTop + 1}, got ${endTop}`)
+                    }
+                } else if (target === null) {
                     this.module.lua_pushnil(this.address)
-                    break
+                } else {
+                    throw new Error(`The type '${typeof target}' is not supported by Lua`)
                 }
-                throw new Error(`The type '${typeof target}' is not supported by Lua`)
+                break
+            }
         }
 
-        if (decoratedValue.options.metatable) {
-            this.setMetatable(-1, decoratedValue.options.metatable)
-        }
-
-        if (this.getTop() !== startTop + 1) {
-            throw new Error(`pushValue expected stack size ${startTop + 1}, got ${this.getTop()}`)
+        // A synthesised decoration always has empty options, so this only ever acts on one the
+        // caller supplied.
+        const metatable = decoration?.options.metatable
+        if (metatable) {
+            this.setMetatable(-1, metatable)
         }
     }
 
     public setMetatable(index: number, metatable: LuaMetatable): void {
-        index = this.module.lua_absindex(this.address, index)
+        index = this.absIndex(index)
 
         if (this.module.lua_getmetatable(this.address, index)) {
             this.pop(1)
@@ -308,7 +312,7 @@ export default class Thread {
     }
 
     public getValue(index: number, inputType?: LuaType, cache?: LuaGetCache): any {
-        index = this.module.lua_absindex(this.address, index)
+        index = this.absIndex(index)
 
         const type: LuaType = inputType ?? this.module.lua_type(this.address, index)
 
@@ -338,11 +342,12 @@ export default class Thread {
                     metatableName = this.getMetatableName(index)
                 }
 
-                const typeExtensionWrapper = this.typeExtensions.find((wrapper) =>
-                    wrapper.extension.isType(this, index, type, metatableName),
-                )
-                if (typeExtensionWrapper) {
-                    return typeExtensionWrapper.extension.getValue(this, index, cache)
+                const extensions = this.typeExtensions
+                for (let i = 0; i < extensions.length; i++) {
+                    const extension = extensions[i].extension
+                    if (extension.isType(this, index, type, metatableName)) {
+                        return extension.getValue(this, index, cache)
+                    }
                 }
 
                 // Handing back an opaque Pointer hid the failure until the value was used, and
@@ -363,7 +368,7 @@ export default class Thread {
         }
 
         if (this.hookFunctionPointer) {
-            this.module.emscripten.removeFunction(this.hookFunctionPointer)
+            this.module.removeFunction(this.hookFunctionPointer)
             this.hookFunctionPointer = undefined
         }
 
@@ -549,7 +554,7 @@ export default class Thread {
             maxInstructions !== undefined ? Math.max(1, Math.min(INSTRUCTION_HOOK_COUNT, maxInstructions)) : INSTRUCTION_HOOK_COUNT
 
         if (!this.hookFunctionPointer) {
-            this.hookFunctionPointer = this.module.emscripten.addFunction((): void => {
+            this.hookFunctionPointer = this.module.addFunction((): void => {
                 // Reads this.limits rather than closing over them, so a hook allocated for an
                 // earlier configuration still honours the current one.
                 const error = this.checkHookLimits()
@@ -585,7 +590,22 @@ export default class Thread {
         return undefined
     }
 
-    private getValueDecorations(value: any): Decoration {
-        return value instanceof Decoration ? value : new Decoration(value, {})
+    /**
+     * `lua_absindex` is the identity for an index that is already absolute, so the common case
+     * skips the call into wasm.
+     */
+    private absIndex(index: number): number {
+        return index > 0 ? index : this.module.lua_absindex(this.address, index)
+    }
+
+    /** Offers the value to each extension by descending priority. False if none claimed it. */
+    private pushWithExtension(decoration: Decoration<unknown>, cache: LuaPushCache | undefined): boolean {
+        const extensions = this.typeExtensions
+        for (let i = 0; i < extensions.length; i++) {
+            if (extensions[i].extension.pushValue(this, decoration, cache)) {
+                return true
+            }
+        }
+        return false
     }
 }

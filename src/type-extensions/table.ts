@@ -26,11 +26,10 @@ class TableTypeExtension extends TypeExtension<TableType> {
 
         let table = seenMap.get(pointer) as TableType | undefined
         if (!table) {
-            const keys = this.readTableKeys(thread, index)
+            table = this.isSequential(thread, index) ? [] : {}
 
-            const isSequential = keys.length > 0 && keys.every((key, keyIndex) => key === String(keyIndex + 1))
-            table = isSequential ? [] : {}
-
+            // Registered before the values are read, so a table that contains itself resolves to
+            // this same object rather than to a second copy of it.
             seenMap.set(pointer, table)
             this.readTableValues(thread, index, seenMap, table)
         }
@@ -93,19 +92,28 @@ class TableTypeExtension extends TypeExtension<TableType> {
         return true
     }
 
-    private readTableKeys(thread: Thread, index: number): string[] {
-        const keys = []
+    /**
+     * A table becomes a JS array only when `lua_next` walks exactly the keys "1".."n" in that
+     * order. Converting keys stops as soon as that is ruled out, because the keys this pass looks
+     * at are read again alongside the values.
+     */
+    private isSequential(thread: Thread, index: number): boolean {
+        let count = 0
 
         thread.module.lua_pushnil(thread.address)
         while (thread.module.lua_next(thread.address, index)) {
             // JS only supports string keys in objects.
-            const key = thread.indexToString(-2)
-            keys.push(key)
+            if (thread.indexToString(-2) !== String(count + 1)) {
+                // Pop the key and the value, since the walk is being abandoned part way.
+                thread.pop(2)
+                return false
+            }
+            count++
             // Pop the value.
             thread.pop()
         }
 
-        return keys
+        return count > 0
     }
 
     private readTableValues(thread: Thread, index: number, seenMap: LuaGetCache, table: TableType): void {
@@ -113,13 +121,12 @@ class TableTypeExtension extends TypeExtension<TableType> {
 
         thread.module.lua_pushnil(thread.address)
         while (thread.module.lua_next(thread.address, index)) {
-            const key = thread.indexToString(-2)
-            const value = thread.getValue(-1, undefined, seenMap)
-
             if (isArray) {
-                table.push(value)
+                // An array takes its order from the walk, so its keys are never converted.
+                table.push(thread.getValue(-1, undefined, seenMap))
             } else {
-                table[key] = value
+                const key = thread.indexToString(-2)
+                table[key] = thread.getValue(-1, undefined, seenMap)
             }
 
             thread.pop()

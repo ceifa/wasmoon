@@ -64,7 +64,7 @@ export function printBenchUsage() {
 Options:
   -i, --iterations <n>  Measured iterations per benchmark (default: ${DEFAULT_OPTIONS.iterations})
   -w, --warmup <n>      Warmup iterations per benchmark (default: ${DEFAULT_OPTIONS.warmup})
-  -s, --suite <name>    Which suite to run: all, steps, comparisons
+  -s, --suite <name>    Which suite to run: all, steps, interop, comparisons
   -f, --filter <text>   Only run benchmarks whose name includes the given text
   -h, --help            Show this help message`)
 }
@@ -221,8 +221,8 @@ function parseIntegerOption(rawValue, flagName, { min }) {
 
 function parseSuiteOption(rawValue, flagName) {
     const value = parseStringOption(rawValue, flagName)
-    if (!['all', 'comparisons', 'steps'].includes(value)) {
-        throw new Error(`${flagName} must be one of: all, comparisons, steps`)
+    if (!['all', 'comparisons', 'interop', 'steps'].includes(value)) {
+        throw new Error(`${flagName} must be one of: all, comparisons, interop, steps`)
     }
     return value
 }

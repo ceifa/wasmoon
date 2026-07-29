@@ -37,7 +37,12 @@ export interface LuaEmscriptenModule extends EmscriptenModule {
     stringToNewUTF8: typeof stringToNewUTF8
     lengthBytesUTF8: typeof lengthBytesUTF8
     stringToUTF8: typeof stringToUTF8
-    UTF8ToString: typeof UTF8ToString
+    UTF8ToString: (ptr: number, maxBytesToRead?: number, ignoreNul?: boolean) => string
+    // The scratch space `ccall` uses for its own C string arguments. Unwound by stackRestore
+    // rather than freed, so it stays correct when a Lua error longjmps out of the call.
+    stringToUTF8OnStack: (str: string) => number
+    stackSave: () => number
+    stackRestore: (pointer: number) => void
     ENV: EnvironmentVariables
     _realloc: (pointer: number, size: number) => number
 }
@@ -72,9 +77,9 @@ export interface LuaModuleOptions {
     onWarn?: LuaWarnHandler | undefined
 }
 
-// One-shot conversions, so a single stateless pair is shared by every module. Streaming output
-// keeps its own decoder in createOutputWriter.
-const textDecoder = new TextDecoder()
+// One-shot conversions, so a single stateless encoder is shared by every module. Decoding goes
+// through Emscripten's UTF8ToString, and streaming output keeps its own decoder in
+// createOutputWriter.
 const textEncoder = new TextEncoder()
 
 // Above this a dedicated allocation is used, so one huge string cannot permanently retain the
@@ -82,6 +87,51 @@ const textEncoder = new TextEncoder()
 const REUSABLE_STRING_BUFFER_LIMIT = 64 * 1024
 // Worst case UTF-8 expansion for a JS (UTF-16) string.
 const MAX_UTF8_BYTES_PER_CHAR = 3
+
+// C string arguments are nearly always a fixed name -- a metatable name, '__name', a global or a
+// table key -- so their encoded form is kept instead of being rebuilt on every call. Bounded in
+// both directions because a caller can also index with arbitrary strings; past either bound the
+// wasm stack is used the way ccall does it.
+const C_STRING_CACHE_LIMIT = 512
+const C_STRING_CACHE_MAX_LENGTH = 128
+
+// Above this, TextEncoder beats copying byte by byte in JS (measured; TEXTDECODER=1 covers the
+// other direction upstream).
+const INLINE_ENCODE_LIMIT = 40
+
+// The wasm value types Emscripten's function signature letters map to. `p` is a pointer, which is
+// an i32 in a build without MEMORY64.
+const WASM_SIGNATURE_TYPES: Record<string, number> = { i: 0x7f, p: 0x7f, j: 0x7e, f: 0x7d, d: 0x7c, e: 0x6f }
+
+function wasmType(signature: string, letter: string): number {
+    const type = WASM_SIGNATURE_TYPES[letter]
+    if (type === undefined) {
+        throw new Error(`unsupported wasm signature '${signature}': no type for '${letter}'`)
+    }
+    return type
+}
+
+/**
+ * A wasm module exporting a single imported function unchanged, which is how a JS callback is
+ * given the wasm identity the indirect function table requires. See {@link LuaModule.addFunction}.
+ */
+function buildTrampolineModule(signature: string): WebAssembly.Module {
+    const parameters = [...signature.slice(1)].map((letter) => wasmType(signature, letter))
+    const results = signature[0] === 'v' ? [] : [wasmType(signature, signature[0])]
+    // Every count below is written as one byte, which LEB128 agrees with under 128.
+    if (parameters.length > 0x7f) {
+        throw new Error(`unsupported wasm signature '${signature}': ${parameters.length} parameters`)
+    }
+
+    // func type: params -> results
+    const functionType = [0x60, parameters.length, ...parameters, results.length, ...results]
+    const typeSection = [0x01, functionType.length + 1, 0x01, ...functionType]
+    // import "e"."f" as function 0, then export it as "f"
+    const importSection = [0x02, 0x07, 0x01, 0x01, 0x65, 0x01, 0x66, 0x00, 0x00]
+    const exportSection = [0x07, 0x05, 0x01, 0x01, 0x66, 0x00, 0x00]
+
+    return new WebAssembly.Module(Uint8Array.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, ...typeSection, ...importSection, ...exportSection]))
+}
 
 interface ReferenceMetadata {
     index: number
@@ -380,6 +430,8 @@ export default class LuaModule {
     public luaopen_package: (L: LuaAddress) => number
     public luaL_openlibs: (L: LuaAddress) => void
 
+    private readonly cStringCache = new Map<string, number>()
+    private readonly trampolineModules = new Map<string, WebAssembly.Module>()
     private referenceTracker = new WeakMap<any, ReferenceMetadata>()
     private referenceMap = new Map<number, any>()
     private availableReferences: number[] = []
@@ -391,9 +443,11 @@ export default class LuaModule {
     private readonly rawLuaLToLString: (L: LuaAddress, idx: number, len: number) => number
     private readonly rawLuaPushString: (L: LuaAddress, s: number) => number
 
-    // C writes it immediately before returning and we read it straight after with no interleaving
-    // await, so a single shared slot stays reentrancy safe.
+    // C writes these immediately before returning and we read them straight after with no
+    // interleaving await, so a single shared slot each stays reentrancy safe.
     private readonly sizeScratch: number
+    /** The `nresults` out parameter for {@link lua_resume}, read by `Thread.resume`. */
+    public readonly resultCountScratch: number
     private stringBuffer = 0
 
     public constructor(module: LuaEmscriptenModule, onWarn?: LuaWarnHandler) {
@@ -554,8 +608,9 @@ export default class LuaModule {
         this.lua_pushlstring = this.cwrap('lua_pushlstring', 'number', ['number', 'number', 'number'])
 
         this.sizeScratch = module._malloc(PointerSize)
-        if (!this.sizeScratch) {
-            throw new Error('failed to allocate the scratch buffer for string lengths')
+        this.resultCountScratch = module._malloc(PointerSize)
+        if (!this.sizeScratch || !this.resultCountScratch) {
+            throw new Error('failed to allocate the scratch buffers for C out parameters')
         }
     }
 
@@ -578,7 +633,7 @@ export default class LuaModule {
             return undefined
         }
         // Copied, because the caller may outlive the next heap growth.
-        return this.heap.slice(pointer, pointer + this.readSize(this.sizeScratch))
+        return this.heap.slice(pointer, pointer + this.readPointer(this.sizeScratch))
     }
 
     /** A number is a pointer to a NUL-terminated C string, and `null` pushes nil, as in C. */
@@ -593,9 +648,7 @@ export default class LuaModule {
             const capacity = s.length * MAX_UTF8_BYTES_PER_CHAR
             const pointer = this.acquireStringBuffer(capacity)
             try {
-                // encodeInto avoids materialising an intermediate Uint8Array for the whole string.
-                const { written } = textEncoder.encodeInto(s, this.heap.subarray(pointer, pointer + capacity))
-                this.lua_pushlstring(L, pointer, written)
+                this.lua_pushlstring(L, pointer, this.writeString(s, pointer, capacity))
             } finally {
                 this.releaseStringBuffer(pointer)
             }
@@ -616,13 +669,104 @@ export default class LuaModule {
         if (!length) {
             return ''
         }
-        return textDecoder.decode(this.heap.subarray(pointer, pointer + length))
+        // The third argument keeps it from stopping at a NUL, since a Lua string can contain them
+        // and the length is already known. Built with TEXTDECODER=1 so this skips TextDecoder for
+        // the short names and keys that most of these are -- see utils/build-wasm.sh.
+        return this.emscripten.UTF8ToString(pointer, length, true)
+    }
+
+    /**
+     * Calls `use` with a NUL terminated copy of `value` in wasm memory, valid only for that call.
+     * Reuses the shared string buffer, so `use` must not push another string of its own.
+     */
+    public withCString<T>(value: string, use: (pointer: number, length: number) => T): T {
+        // The NUL is not part of the length, but a caller that reads the pointer as a C string
+        // (a chunk name, say) needs it there.
+        const capacity = value.length * MAX_UTF8_BYTES_PER_CHAR + 1
+        const pointer = this.acquireStringBuffer(capacity)
+        try {
+            const written = this.writeString(value, pointer, capacity - 1)
+            this.heap[pointer + written] = 0
+            return use(pointer, written)
+        } finally {
+            this.releaseStringBuffer(pointer)
+        }
+    }
+
+    /**
+     * Encodes `value` at `pointer` and returns the number of bytes written. The counterpart to
+     * {@link readString}: short ASCII takes a straight copy, because the subarray view TextEncoder
+     * needs costs more than the encoding does at that size.
+     */
+    private writeString(value: string, pointer: number, capacity: number): number {
+        const heap = this.heap
+        const length = value.length
+        if (length <= INLINE_ENCODE_LIMIT) {
+            let index = 0
+            while (index < length) {
+                const code = value.charCodeAt(index)
+                if (code > 0x7f) {
+                    break
+                }
+                heap[pointer + index] = code
+                index++
+            }
+            if (index === length) {
+                return length
+            }
+            // Anything non-ASCII is re-encoded from the start, overwriting what was copied above.
+        }
+
+        return textEncoder.encodeInto(value, heap.subarray(pointer, pointer + capacity)).written
+    }
+
+    /**
+     * The 32 bit word at `pointer`, without going through Emscripten's typed getValue. Also reads
+     * the out parameters the C API writes sizes and counts into, which are the same width.
+     */
+    public readPointer(pointer: number): number {
+        return this.emscripten.HEAPU32[pointer >>> 2]
+    }
+
+    /** The counterpart to {@link readPointer}. */
+    public writePointer(pointer: number, value: number): void {
+        this.emscripten.HEAPU32[pointer >>> 2] = value
+    }
+
+    /**
+     * Puts a JS callback in the indirect function table and returns the pointer Lua calls it
+     * through. Release it with {@link removeFunction}.
+     *
+     * A plain JS function cannot go into the table, so it has to be wrapped by a wasm module that
+     * imports and re-exports it. Emscripten's addFunction builds that module per callback, after
+     * first provoking a TypeError to discover it is needed. The module depends only on the
+     * signature, so compiling it once per signature is most of the cost: a state installs five
+     * callbacks, which was over half of what creating one cost.
+     *
+     * Each call takes a slot of its own. Unlike Emscripten's, these are not deduplicated by
+     * callback identity, so registering the same callback twice needs releasing twice.
+     */
+    public addFunction(callback: (...args: any[]) => any, signature: string): number {
+        let trampoline = this.trampolineModules.get(signature)
+        if (trampoline === undefined) {
+            trampoline = buildTrampolineModule(signature)
+            this.trampolineModules.set(signature, trampoline)
+        }
+
+        const wrapped = new WebAssembly.Instance(trampoline, { e: { f: callback } }).exports.f as (...args: any[]) => any
+        // Already a wasm function, so this now takes Emscripten's slot bookkeeping and nothing else.
+        return this.emscripten.addFunction(wrapped, signature)
+    }
+
+    /** Frees a table slot taken by {@link addFunction}. */
+    public removeFunction(pointer: number): void {
+        this.emscripten.removeFunction(pointer)
     }
 
     private toLString(raw: (L: LuaAddress, idx: number, len: number) => number, L: LuaAddress, idx: number, len: number | null): string {
         const lengthPointer = len ?? this.sizeScratch
         const pointer = raw(L, idx, lengthPointer)
-        return pointer ? this.readString(pointer, this.readSize(lengthPointer)) : ''
+        return pointer ? this.readString(pointer, this.readPointer(lengthPointer)) : ''
     }
 
     public lua_remove(luaState: LuaAddress, index: number): void {
@@ -708,10 +852,6 @@ export default class LuaModule {
         return this.emscripten.HEAPU8
     }
 
-    private readSize(pointer: number): number {
-        return this.emscripten.HEAPU32[pointer >>> 2]
-    }
-
     private acquireStringBuffer(size: number): number {
         if (size > REUSABLE_STRING_BUFFER_LIMIT) {
             const pointer = this.emscripten._malloc(size)
@@ -742,11 +882,24 @@ export default class LuaModule {
         returnType: Emscripten.JSType | null,
         argTypes: Array<Emscripten.JSType | 'string|number'>,
     ): (...args: any[]) => any {
-        // optimization for common case
-        const hasStringOrNumber = argTypes.some((argType) => argType === 'string|number')
-        if (!hasStringOrNumber) {
-            return (...args: any[]) =>
-                this.emscripten.ccall(name, returnType, argTypes as Emscripten.JSType[], args as Emscripten.TypeCompatibleWithC[])
+        const raw = (this.emscripten as unknown as Record<string, (...args: any[]) => any>)[`_${name}`]
+        if (typeof raw !== 'function') {
+            throw new Error(`the wasm module does not export '${name}'`)
+        }
+
+        // Emscripten's own cwrap specializes exactly this case and nothing else, so it is inlined
+        // here rather than exported: a signature that needs nothing marshalled in either direction
+        // is just the wasm export.
+        if (argTypes.every((argType) => argType === 'number') && returnType !== 'string') {
+            return raw
+        }
+
+        // Everything else, C string arguments included, goes through one hand rolled wrapper, since
+        // upstream would fall back to ccall -- which rebuilds its converter table, argument array
+        // and return handler on every call. That is most of the cost of the small C API functions,
+        // and these are hot: metatable names, globals, table fields.
+        if (!argTypes.includes('string|number')) {
+            return this.wrapWithStringArguments(raw, returnType, argTypes as Emscripten.JSType[])
         }
 
         return (...args: any[]) => {
@@ -778,6 +931,111 @@ export default class LuaModule {
                 }
             }
         }
+    }
+
+    /**
+     * Rest arguments and a spread call would land on every C API call that takes a name, so the
+     * arguments are named and both the argument positions and the arity are unrolled. Which slots
+     * hold a C string is fixed when the binding is wrapped, so it is not worked out per call.
+     */
+    private wrapWithStringArguments(
+        raw: (...args: any[]) => any,
+        returnType: Emscripten.JSType | null,
+        argTypes: Emscripten.JSType[],
+    ): (...args: any[]) => any {
+        const emscripten = this.emscripten
+        const arity = argTypes.length
+        if (arity < 2 || arity > 5) {
+            throw new Error(`wrapWithStringArguments only unrolls arities 2 to 5, not ${arity}`)
+        }
+        if (argTypes[0] === 'string') {
+            // Every binding takes the lua_State there, so that slot is not unrolled below.
+            throw new Error('wrapWithStringArguments does not marshal the first argument')
+        }
+
+        const returnsString = returnType === 'string'
+        const [, s1, s2, s3, s4] = argTypes.map((argType) => argType === 'string')
+
+        return (a?: any, b?: any, c?: any, d?: any, e?: any): any => {
+            // Only an argument that misses the cache needs scratch space, and the fixed names that
+            // dominate these calls all hit it, so the stack is only touched when it is used.
+            let stack = 0
+            try {
+                let pointer: number
+                if (s1) {
+                    if ((pointer = this.toCString(b)) >= 0) {
+                        b = pointer
+                    } else {
+                        stack ||= emscripten.stackSave()
+                        b = emscripten.stringToUTF8OnStack(b)
+                    }
+                }
+                if (s2) {
+                    if ((pointer = this.toCString(c)) >= 0) {
+                        c = pointer
+                    } else {
+                        stack ||= emscripten.stackSave()
+                        c = emscripten.stringToUTF8OnStack(c)
+                    }
+                }
+                if (s3) {
+                    if ((pointer = this.toCString(d)) >= 0) {
+                        d = pointer
+                    } else {
+                        stack ||= emscripten.stackSave()
+                        d = emscripten.stringToUTF8OnStack(d)
+                    }
+                }
+                if (s4) {
+                    if ((pointer = this.toCString(e)) >= 0) {
+                        e = pointer
+                    } else {
+                        stack ||= emscripten.stackSave()
+                        e = emscripten.stringToUTF8OnStack(e)
+                    }
+                }
+
+                const result = arity === 2 ? raw(a, b) : arity === 3 ? raw(a, b, c) : arity === 4 ? raw(a, b, c, d) : raw(a, b, c, d, e)
+                return returnsString ? emscripten.UTF8ToString(result) : result
+            } finally {
+                if (stack) {
+                    emscripten.stackRestore(stack)
+                }
+            }
+        }
+    }
+
+    /**
+     * The C string pointer for a marshalled argument, or -1 when it has to go on the wasm stack
+     * instead. Cached pointers are kept for the lifetime of the module, so they stay valid across
+     * the reentrant calls a metamethod can make while one of them is still in flight.
+     */
+    private toCString(value: unknown): number {
+        // Matches ccall: a nullish argument is a null pointer rather than the text "null". A number
+        // is already one, which is what the `string|number` bindings pass.
+        if (value === null || value === undefined) {
+            return 0
+        }
+        if (typeof value === 'number') {
+            return value
+        }
+
+        // Checked before the lookup, because hashing a long string costs more than the call saves.
+        const text = value as string
+        if (text.length > C_STRING_CACHE_MAX_LENGTH) {
+            return -1
+        }
+        const cached = this.cStringCache.get(text)
+        if (cached !== undefined) {
+            return cached
+        }
+        if (this.cStringCache.size >= C_STRING_CACHE_LIMIT) {
+            return -1
+        }
+
+        const pointer = this.emscripten.stringToNewUTF8(text)
+        this.cStringCache.set(text, pointer)
+        return pointer
     }
 }
 

@@ -22,13 +22,13 @@ export default abstract class LuaTypeExtension<T> {
 
     /**
      * The `__gc` handler every reference holding extension needs. The caller owns the returned
-     * pointer and has to release it with `removeFunction` in {@link close}.
+     * pointer and has to release it with the module's `removeFunction` in {@link close}.
      */
     protected createGcFunction(): number {
-        return this.state.module.emscripten.addFunction((calledL: LuaAddress) => {
+        return this.state.module.addFunction((calledL: LuaAddress) => {
             // Throws a lua error which does a jump if it does not match.
             const userDataPointer = this.state.module.luaL_checkudata(calledL, 1, this.name)
-            const referencePointer = this.state.module.emscripten.getValue(userDataPointer, '*')
+            const referencePointer = this.state.module.readPointer(userDataPointer)
             this.state.module.unref(referencePointer)
 
             return LuaReturn.Ok
@@ -41,7 +41,7 @@ export default abstract class LuaTypeExtension<T> {
         if (!refUserdata) {
             throw new Error(`data does not have the expected metatable: ${this.name}`)
         }
-        const referencePointer = thread.module.emscripten.getValue(refUserdata, '*')
+        const referencePointer = thread.module.readPointer(refUserdata)
         return thread.module.getRef(referencePointer) as T
     }
 
@@ -53,7 +53,7 @@ export default abstract class LuaTypeExtension<T> {
         const pointer = thread.module.ref(target)
         // 4 = size of pointer in wasm.
         const userDataPointer = thread.module.lua_newuserdatauv(thread.address, PointerSize, 0)
-        thread.module.emscripten.setValue(userDataPointer, pointer, '*')
+        thread.module.writePointer(userDataPointer, pointer)
 
         if (LuaType.Nil === thread.module.luaL_getmetatable(thread.address, this.name)) {
             // Pop the pushed nil value and the user data. Don't need to unref because it's

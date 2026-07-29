@@ -64,31 +64,28 @@ function createAddress(cmodule: LuaModule, memory: LuaMemoryOptions | undefined)
     }
 
     const stats = { used: 0, max: memory.max }
-    const allocatorFunctionPointer = cmodule.emscripten.addFunction(
-        (_userData: number, pointer: number, oldSize: number, newSize: number): number => {
-            if (newSize === 0) {
-                if (pointer) {
-                    stats.used -= oldSize
-                    cmodule.emscripten._free(pointer)
-                }
-                return 0
+    const allocatorFunctionPointer = cmodule.addFunction((_userData: number, pointer: number, oldSize: number, newSize: number): number => {
+        if (newSize === 0) {
+            if (pointer) {
+                stats.used -= oldSize
+                cmodule.emscripten._free(pointer)
             }
+            return 0
+        }
 
-            const endMemoryDelta = pointer ? newSize - oldSize : newSize
-            const endMemory = stats.used + endMemoryDelta
+        const endMemoryDelta = pointer ? newSize - oldSize : newSize
+        const endMemory = stats.used + endMemoryDelta
 
-            if (newSize > oldSize && stats.max && endMemory > stats.max) {
-                return 0
-            }
+        if (newSize > oldSize && stats.max && endMemory > stats.max) {
+            return 0
+        }
 
-            const reallocated = cmodule.emscripten._realloc(pointer, newSize)
-            if (reallocated) {
-                stats.used = endMemory
-            }
-            return reallocated
-        },
-        'iiiii',
-    )
+        const reallocated = cmodule.emscripten._realloc(pointer, newSize)
+        if (reallocated) {
+            stats.used = endMemory
+        }
+        return reallocated
+    }, 'iiiii')
 
     const address = cmodule.lua_newstate(
         allocatorFunctionPointer,
@@ -96,7 +93,7 @@ function createAddress(cmodule: LuaModule, memory: LuaMemoryOptions | undefined)
         ((Date.now() >>> 0) ^ Math.floor(Math.random() * 0x100000000)) >>> 0,
     )
     if (!address) {
-        cmodule.emscripten.removeFunction(allocatorFunctionPointer)
+        cmodule.removeFunction(allocatorFunctionPointer)
         // A cap the state cannot even be built under is the overwhelmingly likely cause, and it is
         // the one thing the caller can act on.
         throw new Error(
@@ -263,7 +260,7 @@ export default class LuaState extends Thread {
         this.module.lua_close(this.address)
 
         if (this.allocatorFunctionPointer) {
-            this.module.emscripten.removeFunction(this.allocatorFunctionPointer)
+            this.module.removeFunction(this.allocatorFunctionPointer)
         }
 
         for (const wrapper of this.typeExtensions) {
