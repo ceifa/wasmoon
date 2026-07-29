@@ -5,6 +5,20 @@
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
     "type": "module",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        },
+        "./glue.wasm": "./dist/glue.wasm",
+        "./dist/*": "./dist/*",
+        "./package.json": "./package.json"
+    },
+    "browser": {
+        "node:fs": false,
+        "node:module": false
+    },
+    "sideEffects": false,
     "scripts": {
         "build:wasm:dev": "node utils/build-wasm dev",
         "build:wasm": "node utils/build-wasm",
@@ -12,7 +26,7 @@
         "bench": "npm run build && node bench/index.js",
         "test": "mocha --parallel --exit --require ./test/boot.js test/*.test.js",
         "luatests": "node --experimental-import-meta-resolve test/luatests.js",
-        "build": "rolldown -c && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",
+        "build": "rm -rf dist && rolldown -c && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",
         "clean": "rm -rf dist build",
         "lint": "oxfmt --write . && oxlint --fix .",
         "lint:nofix": "oxfmt --check . && oxlint ."

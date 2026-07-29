@@ -4,8 +4,8 @@ mkdir -p ../build
 
 LUA_SRC=$(ls ../lua/*.c | grep -v "luac.c" | grep -v "lua.c" | tr "\n" " ")
 
-# Do not add --closure here: isEmscriptenUnwind identifies in-flight longjmps by class name, so
-# mangling them would silently turn every unwind into a Lua error.
+# Do not add --closure here: it renames properties, which would strip the brand the JS build puts on
+# the glue's longjmp unwind classes (see rolldown.config.ts) and turn every unwind into a Lua error.
 extension=""
 if [ "$1" == "dev" ];
 then

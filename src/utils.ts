@@ -9,14 +9,16 @@ export const isPromise = (target: unknown): target is PromiseLike<unknown> => {
     return typeof target === 'object' && target !== null && typeof (target as PromiseLike<unknown>).then === 'function'
 }
 
+/** Read by the build, which brands the glue's unwind classes with it. */
+export const UNWIND_BRAND = '__emscriptenUnwind'
+
 /**
- * Emscripten unwinds a Lua longjmp by throwing from its internal EmscriptenEH hierarchy. The
- * wasm caller gates on `instanceof EmscriptenEH` to resume unwinding, so these have to be
- * rethrown rather than raised as Lua errors. The class is module local in the generated glue,
- * which leaves the name as the only usable signal.
+ * Emscripten unwinds a Lua longjmp by throwing from its internal EmscriptenEH hierarchy. The wasm
+ * caller gates on `instanceof EmscriptenEH` to resume unwinding, so these have to be rethrown
+ * rather than raised as Lua errors. The class is module local, hence the brand.
  */
 export const isEmscriptenUnwind = (value: unknown): boolean => {
-    return typeof value === 'object' && value !== null && String(value.constructor?.name).startsWith('Emscripten')
+    return (value as Record<string, unknown> | null | undefined)?.[UNWIND_BRAND] === true
 }
 
 // Browsers have no setImmediate. The 4ms clamp on nested timers is acceptable here.

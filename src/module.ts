@@ -38,7 +38,10 @@ export interface LuaEmscriptenModule extends EmscriptenModule {
 }
 
 export interface LuaModuleOptions {
-    /** Custom URI for the Lua WebAssembly module. Defaults to unpkg in the browser. */
+    /**
+     * Where to load `glue.wasm` from. Defaults to next to this module, falling back to unpkg when
+     * there is nothing there to fetch (a page opened from `file:`, say).
+     */
     wasmFile?: string | undefined
     /** Environment variables for the Lua states. */
     env?: EnvironmentVariables | undefined
@@ -77,93 +80,133 @@ interface ReferenceMetadata {
 export default class LuaModule {
     public static async initialize(opts: Readonly<LuaModuleOptions> = {}): Promise<LuaModule> {
         const warn = opts.onWarn ?? defaultWarnHandler
-        const isBrowser =
-            (typeof window === 'object' && typeof window.document !== 'undefined') ||
-            (typeof self === 'object' && self?.constructor?.name === 'DedicatedWorkerGlobalScope')
+        // Node rather than the browser, because the lookalikes (jsdom, an Electron renderer) are
+        // Node with a DOM bolted on, and asking about `window` gets those wrong.
+        const isNode = typeof globalThis.process?.versions?.node === 'string'
 
-        const useNodeFS = !isBrowser && opts.fs === 'node' && typeof process !== 'undefined'
-        const fs = useNodeFS ? await import('node:fs') : null
+        const fs = isNode && opts.fs === 'node' ? await import('node:fs') : null
 
-        const module = await initWasmModule({
-            locateFile: (path: string, scriptDirectory: string) => {
-                // The wasm sits next to the bundle when it was built alongside it, which is not the
-                // case for a browser loading the published package.
-                if (opts.wasmFile) {
-                    return opts.wasmFile
-                }
-                return isBrowser ? `https://unpkg.com/wasmoon@${version}/dist/glue.wasm` : scriptDirectory + path
-            },
-            preRun: (initializedModule: LuaEmscriptenModule) => {
-                if (typeof opts?.env === 'object') {
-                    Object.assign(initializedModule.ENV, opts.env)
-                }
+        // Emscripten reports load failures itself, which is noise while one can still be recovered
+        // from below, so they are held until the outcome is known. Null once handed over.
+        let buffered: string[] | null = []
+        const printErr = (line: string): void => {
+            if (buffered) {
+                buffered.push(line)
+            } else {
+                warn(line)
+            }
+        }
 
-                if (fs) {
-                    const cwd = process.cwd().replace(/\\/g, '/')
-                    // Default to mounting the drive containing the CWD
-                    const cwdDrive = process.platform === 'win32' ? cwd.slice(0, 3) : '/'
-                    const mountPaths = opts.fsMountPaths ?? [cwdDrive]
+        const preRun = (initializedModule: LuaEmscriptenModule): void => {
+            if (typeof opts?.env === 'object') {
+                Object.assign(initializedModule.ENV, opts.env)
+            }
 
-                    // Deduplicate and remove paths that are children of other mount paths
-                    const normalized = [...new Set(mountPaths.map((p) => p.replace(/\\/g, '/')))]
-                    const filtered = normalized.filter(
-                        (path) => !normalized.some((other) => other !== path && path.startsWith(other + '/')),
-                    )
+            if (fs) {
+                const cwd = process.cwd().replace(/\\/g, '/')
+                // Default to mounting the drive containing the CWD
+                const cwdDrive = process.platform === 'win32' ? cwd.slice(0, 3) : '/'
+                const mountPaths = opts.fsMountPaths ?? [cwdDrive]
 
-                    // Expand drive roots into their subdirectories, since
-                    // Emscripten's VFS already owns "/" and cannot be mounted over.
-                    // Skip virtual/system filesystems that cause issues with NODEFS.
-                    const skipDirs = ['dev', 'proc', 'sys', 'run', 'snap', 'System Volume Information', '$Recycle.Bin', 'Recovery']
-                    const expanded: string[] = []
-                    for (const dir of filtered) {
-                        const isDriveRoot = dir === '/' || /^[A-Za-z]:\/$/.test(dir)
-                        if (isDriveRoot) {
-                            try {
-                                const children = fs
-                                    .readdirSync(dir)
-                                    .filter((child: string) => !skipDirs.includes(child))
-                                    .map((child: string) => (dir === '/' ? `/${child}` : `${dir}${child}`.replace(/\\/g, '/')))
-                                expanded.push(...children)
-                            } catch {
-                                // drive not readable
-                            }
-                        } else {
-                            expanded.push(dir)
-                        }
-                    }
+                // Deduplicate and remove paths that are children of other mount paths
+                const normalized = [...new Set(mountPaths.map((p) => p.replace(/\\/g, '/')))]
+                const filtered = normalized.filter((path) => !normalized.some((other) => other !== path && path.startsWith(other + '/')))
 
-                    for (const dir of expanded) {
+                // Expand drive roots into their subdirectories, since
+                // Emscripten's VFS already owns "/" and cannot be mounted over.
+                // Skip virtual/system filesystems that cause issues with NODEFS.
+                const skipDirs = ['dev', 'proc', 'sys', 'run', 'snap', 'System Volume Information', '$Recycle.Bin', 'Recovery']
+                const expanded: string[] = []
+                for (const dir of filtered) {
+                    const isDriveRoot = dir === '/' || /^[A-Za-z]:\/$/.test(dir)
+                    if (isDriveRoot) {
                         try {
-                            const moduleFS = initializedModule.FS
-                            moduleFS.mkdirTree(dir)
-                            moduleFS.mount(moduleFS.filesystems.NODEFS, { root: dir }, dir)
-                        } catch (err: any) {
-                            // Ignore permission/not-found errors from both Node.js
-                            // (string .code) and Emscripten ErrnoError (numeric .errno)
-                            const isIgnorableError = ['EACCES', 'EPERM', 'ENOENT'].includes(err?.code) || err?.name === 'ErrnoError'
-                            if (!isIgnorableError) {
-                                warn(`Failed to mount ${dir}`, err)
-                            }
+                            const children = fs
+                                .readdirSync(dir)
+                                .filter((child: string) => !skipDirs.includes(child))
+                                .map((child: string) => (dir === '/' ? `/${child}` : `${dir}${child}`.replace(/\\/g, '/')))
+                            expanded.push(...children)
+                        } catch {
+                            // drive not readable
+                        }
+                    } else {
+                        expanded.push(dir)
+                    }
+                }
+
+                for (const dir of expanded) {
+                    try {
+                        const moduleFS = initializedModule.FS
+                        moduleFS.mkdirTree(dir)
+                        moduleFS.mount(moduleFS.filesystems.NODEFS, { root: dir }, dir)
+                    } catch (err: any) {
+                        // Ignore permission/not-found errors from both Node.js
+                        // (string .code) and Emscripten ErrnoError (numeric .errno)
+                        const isIgnorableError = ['EACCES', 'EPERM', 'ENOENT'].includes(err?.code) || err?.name === 'ErrnoError'
+                        if (!isIgnorableError) {
+                            warn(`Failed to mount ${dir}`, err)
                         }
                     }
-
-                    try {
-                        initializedModule.FS.chdir(cwd)
-                    } catch {
-                        // CWD may not be within mounted paths
-                    }
                 }
 
-                if (opts.stdin || opts.stdout || opts.stderr) {
-                    initializedModule.FS.init(
-                        createInputReader(opts.stdin),
-                        createOutputWriter(opts.stdout),
-                        createOutputWriter(opts.stderr),
+                try {
+                    initializedModule.FS.chdir(cwd)
+                } catch {
+                    // CWD may not be within mounted paths
+                }
+            }
+
+            if (opts.stdin || opts.stdout || opts.stderr) {
+                initializedModule.FS.init(createInputReader(opts.stdin), createOutputWriter(opts.stdout), createOutputWriter(opts.stderr))
+            }
+        }
+
+        const load = async (wasmFile?: string): Promise<LuaModule> => {
+            return new LuaModule(
+                await initWasmModule({ ...(wasmFile === undefined ? {} : { locateFile: () => wasmFile }), preRun, printErr }),
+            )
+        }
+
+        try {
+            if (opts.wasmFile !== undefined) {
+                return await load(opts.wasmFile)
+            }
+
+            try {
+                // Left to emscripten, which resolves it with `new URL('glue.wasm', import.meta.url)`
+                // -- the shape bundlers look for to emit or inline the asset, and one a locateFile
+                // of our own would hide from them.
+                return await load()
+            } catch (err) {
+                // A browser can recover: a page opened from file: cannot fetch a sibling at all, and
+                // a bundler that neither emits nor inlines the asset leaves nothing there either. In
+                // Node it is just a broken install.
+                if (isNode) {
+                    throw err
+                }
+
+                // Pinned to this version, so it only covers a published release.
+                const remoteWasmFile = `https://unpkg.com/wasmoon@${version}/dist/glue.wasm`
+                warn(`could not load glue.wasm from next to the bundle, falling back to ${remoteWasmFile}`, err)
+                buffered = []
+
+                try {
+                    return await load(remoteWasmFile)
+                } catch (remoteErr) {
+                    throw new Error(
+                        `failed to load the Lua wasm module, both from next to the bundle and from ${remoteWasmFile}. ` +
+                            `The fallback only covers published versions of wasmoon, so pass wasmFile to point at your own copy.`,
+                        { cause: remoteErr },
                     )
                 }
-            },
-        })
-        return new LuaModule(module)
+            }
+        } finally {
+            // What is left belongs to the attempt that decided the outcome.
+            for (const line of buffered ?? []) {
+                warn(line)
+            }
+            buffered = null
+        }
     }
 
     public _emscripten: LuaEmscriptenModule
