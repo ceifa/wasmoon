@@ -12,6 +12,7 @@ export {
     type EmscriptenPath,
     type EnvironmentVariables,
     type LuaEmscriptenModule,
+    type LuaFileSystem,
     type LuaModuleOptions,
 } from './module'
 export { default as LuaTypeExtension } from './type-extension'

@@ -1,24 +1,25 @@
 #!/bin/bash -e
 cd $(dirname $0)
-mkdir -p ../build
+mkdir -p ../build/host
 
 LUA_SRC=$(ls ../lua/*.c | grep -v "luac.c" | grep -v "lua.c" | tr "\n" " ")
 
 # Do not add --closure here: it renames properties, which would strip the brand the JS build puts on
 # the glue's longjmp unwind classes (see rolldown.config.ts) and turn every unwind into a Lua error.
-extension=""
 if [ "$1" == "dev" ];
 then
-    extension="-O0 -g3 -s ASSERTIONS=1 -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2"
+    extension=(-O0 -g3 -s ASSERTIONS=1 -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2)
 else
     # TEXTDECODER=1 keeps Emscripten's short string decode path, which -Oz would otherwise drop
     # in favour of always calling TextDecoder. LuaModule.readString relies on it.
-    extension="-Oz -fno-inline-functions -s TEXTDECODER=1 -s BINARYEN_EXTRA_PASSES=gufa-optimizing"
+    extension=(-Oz -fno-inline-functions -s TEXTDECODER=1 -s BINARYEN_EXTRA_PASSES=gufa-optimizing)
 fi
 
-emcc \
-    -lnodefs.js \
-    -s WASM=1 $extension -o ../build/glue.js \
+# Everything that is not about the filesystem, shared by both glues below so they can share one
+# `glue.wasm`.
+COMMON=(
+    -s WASM=1
+    "${extension[@]}"
     -s EXPORTED_RUNTIME_METHODS="[
         'ccall', \
         'addFunction', \
@@ -37,28 +38,27 @@ emcc \
         'UTF8ToString', \
         'HEAPU8', \
         'HEAPU32'
-    ]" \
+    ]"
     -s DEFAULT_LIBRARY_FUNCS_TO_INCLUDE="[
         '\$FS_mkdirTree', \
         '\$PATH', \
         '\$PATH_FS'
-    ]" \
+    ]"
     -s INCOMING_MODULE_JS_API="[
         'locateFile', \
         'preRun', \
         'print', \
         'printErr' \
-    ]" \
-    -s ENVIRONMENT="web,worker,node" \
-    -s MODULARIZE=1 \
-    -s ALLOW_TABLE_GROWTH=1 \
-    -s EXPORT_NAME="initWasmModule" \
-    -s ALLOW_MEMORY_GROWTH=1 \
-    -s STRICT=1 \
-    -s EXPORT_ES6=1 \
-    -s MALLOC=emmalloc \
-    -s STACK_SIZE=1MB \
-    -s WASM_BIGINT \
+    ]"
+    -s MODULARIZE=1
+    -s ALLOW_TABLE_GROWTH=1
+    -s EXPORT_NAME="initWasmModule"
+    -s ALLOW_MEMORY_GROWTH=1
+    -s STRICT=1
+    -s EXPORT_ES6=1
+    -s MALLOC=emmalloc
+    -s STACK_SIZE=1MB
+    -s WASM_BIGINT
     -s EXPORTED_FUNCTIONS="[
         '_malloc', \
         '_free', \
@@ -210,5 +210,36 @@ emcc \
         '_luaopen_debug', \
         '_luaopen_package', \
         '_luaL_openselectedlibs' \
-    ]" \
+    ]"
+)
+
+# The default glue, for every environment. Its filesystem is Emscripten's in-memory one, and
+# -lnodefs.js adds the NODEFS backend so a host directory can be mounted into it (LuaModuleOptions
+# `mounts`). Nothing here reaches the host on its own.
+emcc "${COMMON[@]}" \
+    -lnodefs.js \
+    -s ENVIRONMENT="web,worker,node" \
+    -o ../build/glue.js \
     ${LUA_SRC}
+
+# The glue for `filesystem: 'host'`, which Emscripten only supports under Node. NODERAWFS forwards
+# every file operation straight to node:fs, so paths, the working directory, symlinks and
+# permissions are the host's rather than a mirror of them. NODE_HOST_ENV stays off so the
+# environment is still whatever LuaModuleOptions `env` says, as it is in the default glue.
+emcc "${COMMON[@]}" \
+    -s NODERAWFS=1 \
+    -s NODE_HOST_ENV=0 \
+    -s ENVIRONMENT="node" \
+    -o ../build/host/glue.js \
+    ${LUA_SRC}
+
+# Both glues are the same wasm with a different filesystem bolted on in JS, which is what lets the
+# package ship one binary and pick a glue at load time. Checked rather than assumed, because a
+# divergence would otherwise surface as a corrupt module for host users only.
+if ! cmp -s ../build/glue.wasm ../build/host/glue.wasm; then
+    echo "build-wasm: the host glue produced a different glue.wasm, so the two cannot share one binary" >&2
+    exit 1
+fi
+# Dropped so only one copy is published; the host glue resolves 'glue.wasm' next to itself, and the
+# bundle puts both of them in dist/ beside the shared binary.
+rm ../build/host/glue.wasm

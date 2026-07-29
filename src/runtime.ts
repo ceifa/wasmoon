@@ -41,15 +41,57 @@ export default class LuaRuntime {
     }
 
     /**
-     * Writes a file into the Lua environment, creating its directories as needed.
-     * @param path - Path to the file in the Lua environment.
-     * @param content - Content of the file to be mounted.
+     * Writes a file the Lua states can read, creating its directories as needed. A relative path is
+     * resolved against {@link cwd}.
+     *
+     * With `fs: 'host'`, and inside a mount, this writes to the real filesystem.
      */
-    public mountFile(path: string, content: string | ArrayBufferView): void {
-        this.filesystem.mkdirTree(this.path.dirname(path))
+    public writeFile(path: string, content: string | ArrayBufferView): void {
+        // Only when it is missing: mkdirTree walks every level and finds out by way of a thrown
+        // EEXIST, which costs several times the write itself once the directory is there -- and a
+        // real syscall per level with `fs: 'host'`.
+        const parent = this.path.dirname(path)
+        if (!this.exists(parent)) {
+            this.filesystem.mkdirTree(parent)
+        }
         this.filesystem.writeFile(path, content)
     }
 
+    /** The bytes of a file, for content that is not text. */
+    public readFile(path: string): Uint8Array {
+        return this.filesystem.readFile(path)
+    }
+
+    /** A file decoded as UTF-8, with invalid bytes replaced by U+FFFD. */
+    public readTextFile(path: string): string {
+        return this.filesystem.readFile(path, { encoding: 'utf8' })
+    }
+
+    public exists(path: string): boolean {
+        return this.filesystem.analyzePath(path).exists
+    }
+
+    /** Where relative paths resolve from, `/` unless something changed it or `fs` is `'host'`. */
+    public cwd(): string {
+        return this.filesystem.cwd()
+    }
+
+    /** With `fs: 'host'` this moves the Node process itself, since there is only one working directory. */
+    public chdir(path: string): void {
+        this.filesystem.chdir(path)
+    }
+
+    /** See {@link LuaModuleOptions.mounts}, whose entries this is the after-the-fact equivalent of. */
+    public mount(virtualPath: string, hostPath: string): void {
+        this.module.mount(virtualPath, hostPath)
+    }
+
+    /** See {@link LuaModule.unmount}. */
+    public unmount(virtualPath: string): void {
+        this.module.unmount(virtualPath)
+    }
+
+    /** Emscripten's own filesystem API, for everything the methods above do not cover. */
     public get filesystem(): EmscriptenFS {
         return this.module.emscripten.FS
     }

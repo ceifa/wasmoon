@@ -6,11 +6,24 @@ import { UNWIND_BRAND } from './src/utils'
 export default defineConfig({
     input: './src/index.ts',
     output: {
-        file: 'dist/index.js',
+        // A directory rather than a single file, because the host filesystem glue that module.ts
+        // imports on demand has to stay a chunk of its own: a browser bundle then leaves it alone,
+        // and Node loads it only when someone asks for `fs: 'host'`.
+        dir: 'dist',
+        entryFileNames: 'index.js',
+        // Named rather than hashed, so the `browser` field in package.json can point at it.
+        chunkFileNames: 'glue-host.js',
         format: 'esm',
         sourcemap: true,
+        // The glue arrives from emcc already minified and rolldown would otherwise re-print it
+        // several kilobytes larger than it started. Consumers minify us anyway -- which the
+        // Bundling suite covers -- so doing it here only decides what the package and a CDN
+        // consumer download. The sourcemap keeps our own frames readable.
+        minify: { mangle: { toplevel: false } },
     },
-    external: ['node:module', 'node:fs'],
+    // Only the glue imports a node builtin now; the mounts reach node:fs through
+    // process.getBuiltinModule, which a bundler never has to resolve.
+    external: ['node:module'],
     plugins: [
         {
             name: 'package-version',
@@ -45,44 +58,76 @@ export default defineConfig({
             },
         },
         {
-            // Both node builtins are imported behind a runtime check for Node, which a bundler
-            // targeting the browser does not see, so it refuses to resolve them. webpack takes the
-            // comment; the others go by the `browser` field in package.json.
+            // A node builtin is imported behind a runtime check for Node, which a bundler targeting
+            // the browser does not see, so it refuses to resolve it. webpack takes the comment; the
+            // others go by the `browser` field in package.json.
+            //
+            // In generateBundle rather than renderChunk because minification runs in between and
+            // strips comments: annotating earlier would leave the guard below passing while the
+            // published chunk had no annotation left in it. Column mappings on the one line this
+            // touches shift by the length of the comment, which only ever falls inside the glue --
+            // whose source the next plugin drops from the sourcemap anyway.
             name: 'annotate-node-imports',
-            renderChunk(code) {
-                const annotated = code.replace(/import\((['"])(node:[^'"]+)\1\)/g, 'import(/* webpackIgnore: true */ $1$2$1)')
-                const missed = /import\((?!\s*\/\*)(['"])node:/.exec(annotated)
-                if (missed) {
-                    this.error(`a node builtin import was left unannotated: ${missed[0]}`)
+            generateBundle(_options, bundle) {
+                for (const chunk of Object.values(bundle)) {
+                    if (chunk.type !== 'chunk') {
+                        continue
+                    }
+                    // Quotes of either kind, since a minifier picks its own, and the whitespace is
+                    // not optional to match: an import the output happens to wrap over several lines
+                    // is the same import, and skipping it would ship it unannotated.
+                    chunk.code = chunk.code.replace(/import\(\s*(['"`])(node:[^'"`]+)\1\s*\)/g, 'import(/* webpackIgnore: true */ $1$2$1)')
+                    const missed = /import\(\s*(?!\/\*)(['"`])node:/.exec(chunk.code)
+                    if (missed) {
+                        this.error(`${chunk.fileName} ships a node builtin import with no annotation: ${missed[0]}`)
+                    }
                 }
-                return { code: annotated, map: null }
             },
         },
         {
-            // The glue is generated and already minified onto one line, so carrying its 85 KB of
-            // source in the published sourcemap costs a tenth of the package to map frames nobody
-            // reads. The mappings stay, only the inlined copy of the file goes.
-            name: 'drop-glue-source-content',
+            // The glue is generated and already minified onto one line, so its source is not worth
+            // publishing: carrying it costs a tenth of the package to map frames nobody reads. What
+            // is left of each sourcemap depends on whether anything else is in the chunk.
+            name: 'trim-glue-sourcemaps',
             generateBundle(_options, bundle) {
-                // Rewritten through the emitted asset rather than the written file, because
+                // Rewritten through the emitted files rather than the written ones, because
                 // `chunk.map` is a snapshot of the Rust side and mutating it does not carry over.
-                let dropped = false
-                for (const file of Object.values(bundle)) {
-                    if (file.type !== 'asset' || !file.fileName.endsWith('.map')) {
+                // Counted per sourcemap: there is one for each glue now, and a single flag would
+                // call it a success while the other still shipped its copy.
+                let trimmed = 0
+                for (const chunk of Object.values(bundle)) {
+                    const map = bundle[`${chunk.fileName}.map`]
+                    if (chunk.type !== 'chunk' || map?.type !== 'asset') {
                         continue
                     }
-                    const map = JSON.parse(file.source as string)
-                    const index = map.sources.findIndex((source: string) => source?.endsWith('glue.js'))
-                    if (index < 0 || !map.sourcesContent?.[index]) {
+                    const parsed = JSON.parse(map.source as string)
+                    const index = parsed.sources.findIndex((source: string) => source?.endsWith('glue.js'))
+                    if (index < 0) {
                         continue
                     }
-                    map.sourcesContent[index] = null
-                    file.source = JSON.stringify(map)
-                    dropped = true
+
+                    if (parsed.sources.length === 1) {
+                        // Nothing but the glue in this chunk, so the mappings lead only to a file
+                        // that is not published and whose content is dropped below anyway. The whole
+                        // sourcemap goes, and with it the comment pointing at it.
+                        delete bundle[`${chunk.fileName}.map`]
+                        chunk.code = chunk.code.replace(/\n?\/\/# sourceMappingURL=.*$/, '\n')
+                        trimmed++
+                        continue
+                    }
+
+                    if (!parsed.sourcesContent?.[index]) {
+                        // A silent miss would quietly put the 85 KB back into every published package.
+                        this.error(`${map.fileName} maps a glue but carries no source to drop`)
+                    }
+                    // Our own sources are in here too, so only the glue's copy of itself goes.
+                    parsed.sourcesContent[index] = null
+                    map.source = JSON.stringify(parsed)
+                    trimmed++
                 }
-                if (!dropped) {
-                    // A silent miss would quietly put the 85 KB back into every published package.
-                    this.error('the glue source was not found in any sourcemap, so nothing was dropped')
+                // One for the entry's inlined glue, one for the host glue chunk.
+                if (trimmed !== 2) {
+                    this.error(`expected to trim the glue out of 2 sourcemaps, trimmed ${trimmed}`)
                 }
             },
         },

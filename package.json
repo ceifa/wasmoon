@@ -15,8 +15,8 @@
         "./package.json": "./package.json"
     },
     "browser": {
-        "node:fs": false,
-        "node:module": false
+        "node:module": false,
+        "./dist/glue-host.js": false
     },
     "sideEffects": false,
     "scripts": {
@@ -34,7 +34,8 @@
     },
     "files": [
         "bin/*",
-        "dist/*"
+        "dist/*",
+        "!dist/*.map"
     ],
     "engines": {
         "node": ">=24"

@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -23,9 +24,17 @@ describe('Bundling', () => {
 
         const bundle = await rolldown({
             input: join(DIST_DIR, 'index.js'),
-            external: ['node:module', 'node:fs'],
+            external: ['node:module'],
         })
-        await bundle.write({ file: join(tempDir, 'index.js'), format: 'esm', minify: true })
+        // A directory rather than a single file, because the host filesystem glue stays a chunk of
+        // its own -- which is also how a consumer has to bundle us when they target Node.
+        await bundle.write({
+            dir: tempDir,
+            entryFileNames: 'index.js',
+            chunkFileNames: 'glue-host.js',
+            format: 'esm',
+            minify: true,
+        })
         await bundle.close()
 
         minified = await import(join(tempDir, 'index.js'))
@@ -41,6 +50,19 @@ describe('Bundling', () => {
         const lua = await minified.LuaRuntime.load({ wasmFile: WASM_FILE })
         return lua.createState({ inject: true, ...config })
     }
+
+    it('the published host glue is the one the browser field stubs out', async () => {
+        // The name lives in three places that nothing else connects: rolldown's chunkFileNames, the
+        // `browser` field, and the import in module.ts. A rename in one of them would either ship
+        // the node-only glue into browser bundles or break fs: 'host', both of them quietly.
+        const pkg = JSON.parse(await readFile(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'))
+        const stubbed = Object.keys(pkg.browser).filter((key) => key.includes('glue'))
+
+        expect(stubbed).to.have.lengthOf(1)
+        expect(pkg.browser[stubbed[0]]).to.be.false
+        expect(join(DIST_DIR, stubbed[0].replace('./dist/', ''))).to.satisfy(existsSync)
+        expect(await readFile(join(DIST_DIR, 'index.js'), 'utf8')).to.include(stubbed[0].replace('./dist/', './'))
+    })
 
     it('minifying the bundle renames the unwind classes', async () => {
         // The premise of the tests below: a check by class name has nothing left to match on.

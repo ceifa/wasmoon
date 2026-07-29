@@ -6,7 +6,7 @@ const lua = await LuaRuntime.load()
 const testsPath = import.meta.resolve('../lua/testes')
 const filePath = fileURLToPath(typeof testsPath === 'string' ? testsPath : await Promise.resolve(testsPath))
 
-if (!lua.filesystem.analyzePath('/dev/full').exists) {
+if (!lua.exists('/dev/full')) {
     const deviceMode = lua.filesystem.lookupPath('/dev/null').node.mode
     const fullDevice = lua.filesystem.makedev(64, 0)
     lua.filesystem.registerDevice(fullDevice, {
@@ -29,7 +29,7 @@ if (!lua.filesystem.analyzePath('/dev/full').exists) {
 
 for await (const file of glob(`${filePath}/**/*.lua`)) {
     const relativeFile = file.replace(`${filePath}/`, '')
-    lua.mountFile(relativeFile, await readFile(file))
+    lua.writeFile(relativeFile, await readFile(file))
 }
 
 const state = lua.createState()

@@ -9,6 +9,18 @@ import version from 'package-version'
 
 export type EnvironmentVariables = Record<string, string | undefined>
 
+/**
+ * Which filesystem the Lua states see.
+ *
+ * - `'memory'`: Emscripten's in-memory filesystem, holding nothing but `/tmp`, `/home` and `/dev`.
+ *   Identical in every environment, and reaches nothing on the host until a directory is handed to
+ *   it through {@link LuaModuleOptions.mounts}.
+ * - `'host'`: the real filesystem, through Node. Paths, the working directory, symlinks and
+ *   permissions are the host's own, because every operation goes straight to `node:fs`. Node only,
+ *   and no sandbox: Lua can read and write anything the process can.
+ */
+export type LuaFileSystem = 'memory' | 'host'
+
 /** Emscripten's own path helpers, which work on the virtual filesystem rather than the host one. */
 export interface EmscriptenPath {
     isAbs: (path: string) => boolean
@@ -47,7 +59,10 @@ export interface LuaEmscriptenModule extends EmscriptenModule {
     _realloc: (pointer: number, size: number) => number
 }
 
-/** The virtual filesystem every state on a runtime shares, as {@link LuaModule.emscripten}'s `FS`. */
+/**
+ * The filesystem every state on a runtime shares, as {@link LuaModule.emscripten}'s `FS`. In memory
+ * unless the module was loaded with `fs: 'host'`, where the same API acts on the real one.
+ */
 export type EmscriptenFS = LuaEmscriptenModule['FS']
 
 export interface LuaModuleOptions {
@@ -58,10 +73,16 @@ export interface LuaModuleOptions {
     wasmFile?: string | undefined
     /** Environment variables for the Lua states. */
     env?: EnvironmentVariables | undefined
-    /** File system that should be used. */
-    fs?: 'node' | 'memory' | undefined
-    /** Host directories to mount when `fs` is `'node'`. Defaults to the drive holding the CWD. */
-    fsMountPaths?: string[] | undefined
+    /** Which filesystem the Lua states see. Defaults to `'memory'`. */
+    fs?: LuaFileSystem | undefined
+    /**
+     * Host directories to expose in the in-memory filesystem, keyed by the absolute path Lua sees.
+     * `{ '/scripts': './lua' }` makes `./lua/init.lua` readable and writable as `/scripts/init.lua`
+     * and leaves the rest of the host unreachable. Node only, and only with `fs: 'memory'`.
+     *
+     * Mount points cannot nest, and a host path has to name a directory that already exists.
+     */
+    mounts?: Readonly<Record<string, string>> | undefined
     /** Called once per read. An empty string (or nothing) means EOF. */
     stdin?: (() => string | null | undefined) | undefined
     /**
@@ -138,6 +159,122 @@ interface ReferenceMetadata {
     refCount: number
 }
 
+/** A {@link LuaModuleOptions.mounts} entry with both sides checked, ready for `FS.mount`. */
+interface ResolvedMount {
+    /** Absolute, with no trailing slash and no `.` or `..` in it. */
+    virtualPath: string
+    /** Absolute host path of a directory that exists. */
+    hostPath: string
+}
+
+// The only rule about `mounts` that is not about a single mount, so both the option and the method
+// report it with one voice.
+const MOUNTS_NEED_MEMORY_FS = `mounts belong to fs: 'memory'; with 'host' every host path is already reachable`
+
+/**
+ * Synchronous and lazy, which is what lets a mount be added after loading without the load path
+ * paying for a `node:fs` import it usually has no use for. Null anywhere but Node.
+ */
+function nodeBuiltin<T>(name: string): T | null {
+    return (globalThis.process?.getBuiltinModule?.(name) as T | undefined) ?? null
+}
+
+/**
+ * Nothing here is left to fail later: an unreadable host path, or a mount point Emscripten would
+ * put somewhere unexpected, is an error at once rather than a directory that silently turns up empty.
+ */
+function resolveMount(virtualPath: string, hostPath: string): ResolvedMount {
+    const where = `cannot mount '${hostPath}' at '${virtualPath}'`
+
+    const fs = nodeBuiltin<typeof import('node:fs')>('node:fs')
+    const path = nodeBuiltin<typeof import('node:path')>('node:path')
+    if (!fs || !path) {
+        throw new Error(`${where}: reaching a host directory needs node:fs, which only Node has`)
+    }
+
+    // Absolute, at least one segment deep, and nothing that would move the mount elsewhere. Not
+    // normalized on the caller's behalf, so a path that means something else is refused rather than
+    // quietly changed.
+    const mountPoint = virtualPath.replace(/\/+$/, '')
+    if (!/^(\/[^/]+)+$/.test(mountPoint)) {
+        throw new Error(`${where}: the mount point has to be an absolute path below the root, such as '/scripts'`)
+    }
+    if (mountPoint.split('/').some((segment) => segment === '.' || segment === '..')) {
+        throw new Error(`${where}: the mount point has to be a normalized path, with no '.' or '..' segments`)
+    }
+
+    if (hostPath.startsWith('~')) {
+        // Expanded by a shell rather than by node:path, so it would resolve to a directory named
+        // '~' below the cwd -- which is never what the caller meant.
+        throw new Error(`${where}: '~' is not expanded, so pass an absolute path (os.homedir() and a join)`)
+    }
+    const root = path.resolve(hostPath)
+
+    let isDirectory: boolean
+    try {
+        isDirectory = fs.statSync(root).isDirectory()
+    } catch (err) {
+        throw new Error(`${where}: '${root}' could not be read`, { cause: err })
+    }
+    if (!isDirectory) {
+        // NODEFS mounts lazily and would not notice until the first lookup inside it failed.
+        throw new Error(`${where}: '${root}' is not a directory`)
+    }
+
+    return { virtualPath: mountPoint, hostPath: root }
+}
+
+/**
+ * A mount inside another one would have its mount point created on the host it is mounted from, so
+ * the two have to be disjoint. Checked against the mounts that are already live, which is what makes
+ * the rule the same whether a mount arrives with the options or afterwards.
+ */
+function assertMountFits(live: readonly ResolvedMount[], candidate: ResolvedMount): void {
+    // The trailing slash on both sides keeps '/scripts2' from counting as being inside '/scripts',
+    // and an equal pair matches in both directions, so a mount point is never claimed twice.
+    const overlapping = live.find(
+        (mount) =>
+            `${candidate.virtualPath}/`.startsWith(`${mount.virtualPath}/`) ||
+            `${mount.virtualPath}/`.startsWith(`${candidate.virtualPath}/`),
+    )
+    if (overlapping) {
+        throw new Error(`cannot mount at '${candidate.virtualPath}': it overlaps the mount point '${overlapping.virtualPath}'`)
+    }
+}
+
+/** Everything the wasm module needs before it starts, and nothing that outlives that. */
+interface PreRunConfig {
+    env: EnvironmentVariables | undefined
+    mounts: readonly ResolvedMount[]
+    stdin: LuaModuleOptions['stdin']
+    stdout: LuaModuleOptions['stdout']
+    stderr: LuaModuleOptions['stderr']
+}
+
+/**
+ * Built from a record rather than closed over `initialize`'s scope, because Emscripten keeps
+ * `Module.preRun` for the module's lifetime and a closure would pin everything around it with it.
+ */
+function createPreRun(config: PreRunConfig): (initializedModule: LuaEmscriptenModule) => void {
+    return (initializedModule: LuaEmscriptenModule): void => {
+        if (typeof config.env === 'object') {
+            Object.assign(initializedModule.ENV, config.env)
+        }
+
+        // Nothing to do for `fs: 'host'`: that glue is NODERAWFS, so the filesystem already is the
+        // host's, working directory included.
+        for (const { virtualPath, hostPath } of config.mounts) {
+            const fs = initializedModule.FS
+            fs.mkdirTree(virtualPath)
+            fs.mount(fs.filesystems.NODEFS, { root: hostPath }, virtualPath)
+        }
+
+        if (config.stdin || config.stdout || config.stderr) {
+            initializedModule.FS.init(createInputReader(config.stdin), createOutputWriter(config.stdout), createOutputWriter(config.stderr))
+        }
+    }
+}
+
 export default class LuaModule {
     public static async initialize(opts: Readonly<LuaModuleOptions> = {}): Promise<LuaModule> {
         const warn = opts.onWarn ?? defaultWarnHandler
@@ -145,7 +282,25 @@ export default class LuaModule {
         // Node with a DOM bolted on, and asking about `window` gets those wrong.
         const isNode = typeof globalThis.process?.versions?.node === 'string'
 
-        const fs = isNode && opts.fs === 'node' ? await import('node:fs') : null
+        const fs = opts.fs ?? 'memory'
+        const mountEntries = Object.entries(opts.mounts ?? {})
+
+        if (fs === 'host' && !isNode) {
+            throw new Error(`fs: 'host' is the real filesystem, which only Node has; elsewhere use the default 'memory' one`)
+        }
+        if (fs === 'host' && mountEntries.length > 0) {
+            throw new Error(MOUNTS_NEED_MEMORY_FS)
+        }
+
+        // Resolved before the wasm is instantiated, so a mount that cannot work fails the load
+        // rather than leaving a module behind. Each one is checked against those already accepted,
+        // which is the same rule LuaModule.mount applies to a later arrival.
+        const mounts: ResolvedMount[] = []
+        for (const [virtualPath, hostPath] of mountEntries) {
+            const mount = resolveMount(virtualPath, hostPath)
+            assertMountFits(mounts, mount)
+            mounts.push(mount)
+        }
 
         // Emscripten reports load failures itself, which is noise while one can still be recovered
         // from below, so they are held until the outcome is known. Null once handed over.
@@ -158,74 +313,23 @@ export default class LuaModule {
             }
         }
 
-        const preRun = (initializedModule: LuaEmscriptenModule): void => {
-            if (typeof opts?.env === 'object') {
-                Object.assign(initializedModule.ENV, opts.env)
-            }
+        const preRun = createPreRun({ env: opts.env, mounts, stdin: opts.stdin, stdout: opts.stdout, stderr: opts.stderr })
 
-            if (fs) {
-                const cwd = process.cwd().replace(/\\/g, '/')
-                // Default to mounting the drive containing the CWD
-                const cwdDrive = process.platform === 'win32' ? cwd.slice(0, 3) : '/'
-                const mountPaths = opts.fsMountPaths ?? [cwdDrive]
-
-                // Deduplicate and remove paths that are children of other mount paths
-                const normalized = [...new Set(mountPaths.map((p) => p.replace(/\\/g, '/')))]
-                const filtered = normalized.filter((path) => !normalized.some((other) => other !== path && path.startsWith(other + '/')))
-
-                // Expand drive roots into their subdirectories, since
-                // Emscripten's VFS already owns "/" and cannot be mounted over.
-                // Skip virtual/system filesystems that cause issues with NODEFS.
-                const skipDirs = ['dev', 'proc', 'sys', 'run', 'snap', 'System Volume Information', '$Recycle.Bin', 'Recovery']
-                const expanded: string[] = []
-                for (const dir of filtered) {
-                    const isDriveRoot = dir === '/' || /^[A-Za-z]:\/$/.test(dir)
-                    if (isDriveRoot) {
-                        try {
-                            const children = fs
-                                .readdirSync(dir)
-                                .filter((child: string) => !skipDirs.includes(child))
-                                .map((child: string) => (dir === '/' ? `/${child}` : `${dir}${child}`.replace(/\\/g, '/')))
-                            expanded.push(...children)
-                        } catch {
-                            // drive not readable
-                        }
-                    } else {
-                        expanded.push(dir)
-                    }
-                }
-
-                for (const dir of expanded) {
-                    try {
-                        const moduleFS = initializedModule.FS
-                        moduleFS.mkdirTree(dir)
-                        moduleFS.mount(moduleFS.filesystems.NODEFS, { root: dir }, dir)
-                    } catch (err: any) {
-                        // Ignore permission/not-found errors from both Node.js
-                        // (string .code) and Emscripten ErrnoError (numeric .errno)
-                        const isIgnorableError = ['EACCES', 'EPERM', 'ENOENT'].includes(err?.code) || err?.name === 'ErrnoError'
-                        if (!isIgnorableError) {
-                            warn(`Failed to mount ${dir}`, err)
-                        }
-                    }
-                }
-
-                try {
-                    initializedModule.FS.chdir(cwd)
-                } catch {
-                    // CWD may not be within mounted paths
-                }
-            }
-
-            if (opts.stdin || opts.stdout || opts.stderr) {
-                initializedModule.FS.init(createInputReader(opts.stdin), createOutputWriter(opts.stdout), createOutputWriter(opts.stderr))
-            }
+        // Two glues over the one wasm, differing only in their filesystem (see
+        // utils/build-wasm.sh). The host one is imported on demand, both because it throws outside
+        // Node and so that a browser bundle leaves it in a chunk it never loads.
+        const init = fs === 'host' ? (await import('../build/host/glue.js')).default : initWasmModule
+        if (typeof init !== 'function') {
+            // The `browser` field points bundlers at a stub, since the glue only runs under Node.
+            throw new Error(`fs: 'host' needs glue-host.js, which the bundle replaced with a stub because it targets the browser`)
         }
 
         const load = async (wasmFile?: string): Promise<LuaModule> => {
             return new LuaModule(
-                await initWasmModule({ ...(wasmFile === undefined ? {} : { locateFile: () => wasmFile }), preRun, printErr }),
+                await init({ ...(wasmFile === undefined ? {} : { locateFile: () => wasmFile }), preRun, printErr }),
                 opts.onWarn,
+                fs,
+                mounts,
             )
         }
 
@@ -274,6 +378,8 @@ export default class LuaModule {
     public emscripten: LuaEmscriptenModule
     /** The handler passed to {@link LuaModule.initialize}, which states created on it inherit. */
     public readonly onWarn: LuaWarnHandler | undefined
+    /** Which filesystem this module was loaded with, as {@link LuaModuleOptions.fs}. */
+    public readonly fs: LuaFileSystem
 
     public luaL_checkversion_: (L: LuaAddress, ver: number, sz: number) => void
     public luaL_getmetafield: (L: LuaAddress, obj: number, e: string | null) => LuaType
@@ -430,6 +536,9 @@ export default class LuaModule {
     public luaopen_package: (L: LuaAddress) => number
     public luaL_openlibs: (L: LuaAddress) => void
 
+    /** The mounts that are live, so a later one can be checked against them. */
+    private readonly mounts: ResolvedMount[]
+
     private readonly cStringCache = new Map<string, number>()
     private readonly trampolineModules = new Map<string, WebAssembly.Module>()
     private referenceTracker = new WeakMap<any, ReferenceMetadata>()
@@ -450,9 +559,16 @@ export default class LuaModule {
     public readonly resultCountScratch: number
     private stringBuffer = 0
 
-    public constructor(module: LuaEmscriptenModule, onWarn?: LuaWarnHandler) {
+    public constructor(
+        module: LuaEmscriptenModule,
+        onWarn?: LuaWarnHandler,
+        fs: LuaFileSystem = 'memory',
+        mounts: readonly ResolvedMount[] = [],
+    ) {
         this.emscripten = module
         this.onWarn = onWarn
+        this.fs = fs
+        this.mounts = [...mounts]
 
         this.luaL_checkversion_ = this.cwrap('luaL_checkversion_', null, ['number', 'number', 'number'])
         this.luaL_getmetafield = this.cwrap('luaL_getmetafield', 'number', ['number', 'number', 'string'])
@@ -611,6 +727,35 @@ export default class LuaModule {
         this.resultCountScratch = module._malloc(PointerSize)
         if (!this.sizeScratch || !this.resultCountScratch) {
             throw new Error('failed to allocate the scratch buffers for C out parameters')
+        }
+    }
+
+    /**
+     * Exposes a host directory in the in-memory filesystem, the way {@link LuaModuleOptions.mounts}
+     * does at load time and with the same checks. Node only, and only with `fs: 'memory'`.
+     */
+    public mount(virtualPath: string, hostPath: string): void {
+        if (this.fs === 'host') {
+            throw new Error(MOUNTS_NEED_MEMORY_FS)
+        }
+
+        const mount = resolveMount(virtualPath, hostPath)
+        assertMountFits(this.mounts, mount)
+
+        const fs = this.emscripten.FS
+        fs.mkdirTree(mount.virtualPath)
+        fs.mount(fs.filesystems.NODEFS, { root: mount.hostPath }, mount.virtualPath)
+        this.mounts.push(mount)
+    }
+
+    /** Detaches a {@link LuaModule.mount}, leaving its mount point behind as an empty directory. */
+    public unmount(virtualPath: string): void {
+        this.emscripten.FS.unmount(virtualPath)
+        // Dropped only once Emscripten agrees it was a mount point, so a failed unmount leaves the
+        // bookkeeping matching what is actually mounted.
+        const index = this.mounts.findIndex((mount) => mount.virtualPath === virtualPath)
+        if (index >= 0) {
+            this.mounts.splice(index, 1)
         }
     }
 

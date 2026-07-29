@@ -180,7 +180,7 @@ describe('Browser environment', () => {
         this.timeout(30_000)
         const result = await runInBrowser(`
             const lua = await LuaRuntime.load({ wasmFile })
-            lua.mountFile('mymodule.lua', 'return 42')
+            lua.writeFile('mymodule.lua', 'return 42')
             const state = lua.createState()
             return await state.doString('return require("mymodule")')
         `)

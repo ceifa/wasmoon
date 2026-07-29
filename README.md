@@ -48,6 +48,46 @@ sandbox. `lua.close()` closes every state created from it, and both types suppor
 await using lua = await LuaRuntime.load()
 ```
 
+## Filesystem
+
+Every state on a runtime shares one filesystem. By default it is in memory: the same in Node, the
+browser and a worker, and it holds nothing but what you put in it.
+
+```js
+const lua = await LuaRuntime.load()
+lua.writeFile('/scripts/greet.lua', 'return "hello"')
+
+const state = lua.createState()
+await state.doString('return require("scripts.greet")')
+```
+
+`writeFile`, `readFile`, `readTextFile`, `exists`, `cwd` and `chdir` cover the everyday cases;
+`lua.filesystem` is Emscripten's own API for everything else.
+
+### Reaching the host
+
+Two ways, and neither is the default:
+
+```js
+// One host directory, at a path you choose. Node only. Nothing else on the host is reachable.
+const lua = await LuaRuntime.load({ mounts: { '/scripts': './lua' } })
+await lua.createState().doString('return dofile("/scripts/init.lua")')
+
+// Or the real filesystem, with the process working directory, absolute paths and symlinks.
+// Node only, and not a sandbox: Lua can read and write whatever the process can.
+const cli = await LuaRuntime.load({ fs: 'host' })
+```
+
+`mounts` maps the path Lua sees to a host directory that has to exist; mount points cannot nest, and
+`lua.mount(virtualPath, hostPath)` / `lua.unmount(virtualPath)` do the same after loading. With
+`fs: 'host'` there is nothing to mount, because every host path already resolves — and `lua.chdir`
+moves the Node process itself, since a process has only one working directory.
+
+> [!WARNING]
+> A filesystem is not a sandbox on its own. Lua's `os.execute` runs a real command through the shell
+> in Node whichever filesystem you pick, and `os.exit` sets the host process exit code. Leave `os`
+> out of the state (`createState({ libs: [...] })`) if untrusted code must not do either.
+
 ## CLI Usage
 
 Although Wasmoon has been designed to be embedded, you can run it on command line as well, but, if you want something more robust on this, we recommend to take a look at [demoon](https://github.com/ceifa/demoon).

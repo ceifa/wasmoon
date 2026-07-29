@@ -331,7 +331,8 @@ async function run({ argv, actions, forceInteractive, showVersion, ignoreEnv, sc
 
     const lua = await LuaRuntime.load({
         env: ignoreEnv ? undefined : process.env,
-        fs: 'node',
+        // An interpreter is expected to see the files the shell that started it sees.
+        fs: 'host',
         stdin: terminal.readLine,
     })
 
