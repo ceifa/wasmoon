@@ -207,6 +207,13 @@ export default class LuaState extends Thread {
     public registerTypeExtension(priority: number, extension: LuaTypeExtension<unknown>): void {
         this.typeExtensions.push({ extension, priority })
         this.typeExtensions.sort((a, b) => b.priority - a.priority)
+
+        // The extension's metatable is registry anchored for the life of the state, so from here
+        // on its address alone identifies its name -- getMetatableName's fast path.
+        if (this.module.luaL_getmetatable(this.address, extension.name) !== LuaType.Nil) {
+            this.metatableNames.set(this.getPointer(-1), extension.name)
+        }
+        this.pop(1)
     }
 
     /** Retrieves the value of a global variable. */
@@ -295,9 +302,8 @@ export default class LuaState extends Thread {
 
     // WARNING: It will not wait for open handles and can potentially cause bugs if JS code tries to reference Lua after executed
     private async callByteCode(loader: (thread: Thread) => void, options?: LuaRunOptions): Promise<any> {
-        const thread = this.newThread()
-        // Move the thread off the global stack and into the registry as a GC anchor so it doesn't pile threads up into the stack
-        const ref = this.module.luaL_ref(this.address, LUA_REGISTRYINDEX)
+        // Anchored so the run doesn't pile threads up on the global stack.
+        const { thread, reference } = this.newAnchoredThread()
         try {
             // Seeded from the state so a state wide setLimits reaches the async path too, which
             // runs on a child thread rather than on the state itself.
@@ -306,7 +312,7 @@ export default class LuaState extends Thread {
             return (await thread.run(0, options))[0]
         } finally {
             thread.close()
-            this.module.luaL_unref(this.address, LUA_REGISTRYINDEX, ref)
+            this.module.luaL_unref(this.address, LUA_REGISTRYINDEX, reference)
         }
     }
 }

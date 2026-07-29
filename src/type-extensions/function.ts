@@ -19,6 +19,14 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
     private gcPointer: number
     private functionWrapper: number
     private callbackContext: Thread
+    /**
+     * One call thread kept ready instead of a `lua_newthread` per call, which was most of the cost
+     * of calling a Lua function from JS. Anchored in the registry rather than on the callback
+     * context's stack, and handed out only when no other call is using it: a reentrant call (Lua →
+     * JS → Lua) falls back to a thread of its own.
+     */
+    private readonly pooledCallThread: Thread
+    private pooledCallThreadInUse = false
     /** Milliseconds a Lua function called from JS may run before being interrupted. */
     private readonly functionTimeout: number | undefined
 
@@ -28,11 +36,10 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
         this.functionTimeout = functionTimeout
         // Create a thread off of the global thread to be used to create function call threads without
         // interfering with the global context. This creates a callback context that will always exist
-        // even if the thread that called getValue() has been destroyed.
-        this.callbackContext = state.newThread()
-        // Pops it from the global stack but keeps it alive. The reference is never released, for the
-        // reason given on LuaTypeExtension.close.
-        this.state.module.luaL_ref(state.address, LUA_REGISTRYINDEX)
+        // even if the thread that called getValue() has been destroyed. Neither anchor is ever
+        // released, for the reason given on LuaTypeExtension.close.
+        this.callbackContext = state.newAnchoredThread().thread
+        this.pooledCallThread = this.callbackContext.newAnchoredThread().thread
 
         if (!this.functionRegistry) {
             state.warn('FunctionTypeExtension: FinalizationRegistry not found. Memory leaks likely.')
@@ -56,9 +63,20 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
         this.functionWrapper = state.module.addFunction((calledL: LuaAddress) => {
             const calledThread = state.stateToThread(calledL)
 
-            const refUserdata = state.module.luaL_checkudata(calledL, state.module.lua_upvalueindex(1), this.name)
-            const refPointer = state.module.readPointer(refUserdata)
-            const { target, options: decorationOptions } = state.module.getRef(refPointer) as Decoration<FunctionType>
+            // The upvalue is always the userdata pushValue closed this wrapper over, so the
+            // metatable check luaL_checkudata does (and the name it marshals) is saved on every
+            // call. Only a ref that does not resolve to a function decoration -- the upvalue
+            // replaced through the debug library -- falls back to it, for the error the C API
+            // would have raised.
+            const upvalueIndex = state.module.lua_upvalueindex(1)
+            const refUserdata = state.module.lua_touserdata(calledL, upvalueIndex)
+            const reference = refUserdata ? state.module.getRef(state.module.readPointer(refUserdata)) : undefined
+            if (!(reference instanceof Decoration) || typeof reference.target !== 'function') {
+                // Raises the error the C API would have; the throw below is unreachable.
+                state.module.luaL_checkudata(calledL, upvalueIndex, this.name)
+                throw new Error('a js_function upvalue does not hold a function reference')
+            }
+            const { target, options: decorationOptions } = reference
 
             const argsQuantity = calledThread.getTop()
             const args = []
@@ -107,9 +125,41 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
     public close(): void {
         this.state.module.removeFunction(this.gcPointer)
         this.state.module.removeFunction(this.functionWrapper)
-        // Doesn't destroy the Lua thread, just function pointers. The thread itself went with the
-        // state.
+        // Doesn't destroy the Lua threads, just function pointers. The threads themselves went
+        // with the state.
+        this.pooledCallThread.close()
         this.callbackContext.close()
+    }
+
+    private acquireCallThread(): Thread {
+        if (this.pooledCallThreadInUse) {
+            return this.callbackContext.newThread()
+        }
+
+        this.pooledCallThreadInUse = true
+        return this.pooledCallThread
+    }
+
+    private releaseCallThread(callThread: Thread, failed: boolean): void {
+        if (callThread !== this.pooledCallThread) {
+            callThread.close()
+            // Pop thread used for function call.
+            this.callbackContext.pop()
+            return
+        }
+
+        if (failed) {
+            // A failed call can leave more behind than stack values: a suspended coroutine, or
+            // pending to-be-closed variables. Resetting closes those, so the thread is always
+            // reusable afterwards. Not on every release, because a reset also shrinks the stack
+            // just to regrow it on the next call; and not Thread.resetThread, whose status
+            // assertion would throw out of the finally this runs in while the call error is
+            // already propagating -- the setTop clears the error object a failed reset leaves
+            // behind instead.
+            this.state.module.lua_resetthread(callThread.address)
+        }
+        callThread.setTop(0)
+        this.pooledCallThreadInUse = false
     }
 
     public isType(_thread: Thread, _index: number, type: LuaType): boolean {
@@ -167,9 +217,10 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
                 throw new Error('cannot call a Lua function after its state has been closed')
             }
 
-            // Function calls back to value should always be within a new thread because
-            // they can be left in inconsistent states.
-            const callThread = this.callbackContext.newThread()
+            // A call can leave its thread in an inconsistent state, so each one gets a thread that
+            // is either fresh or has been reset since the last call.
+            const callThread = this.acquireCallThread()
+            let failed = false
             try {
                 const internalType = callThread.module.lua_rawgeti(callThread.address, LUA_REGISTRYINDEX, funcReference)
                 if (internalType !== LuaType.Function) {
@@ -198,10 +249,11 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
                     return callThread.getValue(-1)
                 }
                 return undefined
+            } catch (err) {
+                failed = true
+                throw err
             } finally {
-                callThread.close()
-                // Pop thread used for function call.
-                this.callbackContext.pop()
+                this.releaseCallThread(callThread, failed)
             }
         }
 

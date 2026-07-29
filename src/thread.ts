@@ -5,6 +5,7 @@ import type LuaTypeExtension from './type-extension'
 import {
     defaultWarnHandler,
     LUA_MULTRET,
+    LUA_REGISTRYINDEX,
     LuaAbortError,
     type LuaAddress,
     LuaError,
@@ -35,10 +36,6 @@ const INSTRUCTION_HOOK_COUNT = 1000
 
 const LUA_INTEGER_BITS = 64
 
-// LUAI_MAXSHORTLEN. At or below it Lua interns the string, which is what lets getMetatableName treat
-// an address as the identity of a name.
-const LUA_MAX_SHORT_STRING = 40
-
 const NO_RESTORE = (): void => undefined
 
 export default class Thread {
@@ -50,10 +47,12 @@ export default class Thread {
     protected readonly typeExtensions: OrderedExtension[]
     protected readonly parent: Thread | undefined
     /**
-     * Shared with every thread on the same state, and only ever holding names anchored by that
-     * state, so it goes when the state does and nothing in it can outlive what it describes.
+     * The address of each registered extension's metatable, mapped to the extension's name.
+     * Populated by `LuaState.registerTypeExtension` and shared with every thread on the same
+     * state: those metatables are registry anchored for the state's whole life, so an address in
+     * here can never be reused by anything else while the map exists.
      */
-    private readonly metatableNames: Map<LuaAddress, string>
+    protected readonly metatableNames: Map<LuaAddress, string>
     private closed = false
     private hookFunctionPointer: number | undefined
     private hookCount = INSTRUCTION_HOOK_COUNT
@@ -74,6 +73,18 @@ export default class Thread {
             throw new Error('lua_newthread returned a null pointer')
         }
         return new Thread(this.module, this.typeExtensions, address, this.parent || this)
+    }
+
+    /**
+     * A new thread anchored in the registry instead of left on this thread's stack. The reference
+     * is what keeps it alive: `luaL_unref` it to let the thread go, or keep it forever for a
+     * thread meant to live as long as the state.
+     */
+    public newAnchoredThread(): { thread: Thread; reference: number } {
+        const thread = this.newThread()
+        // Taken on this thread's stack, where newThread left the new one.
+        const reference = this.module.luaL_ref(this.address, LUA_REGISTRYINDEX)
+        return { thread, reference }
     }
 
     public resetThread(): void {
@@ -303,33 +314,26 @@ export default class Thread {
     }
 
     public getMetatableName(index: number): string | undefined {
-        const metatableNameType = this.module.luaL_getmetafield(this.address, index, '__name')
-        if (metatableNameType === LuaType.Nil) {
+        // Resolving __name on every table and userdata read is most of what getValue spends on its
+        // dispatch, and it is nearly always one of the extension metatables that registration
+        // already recorded in metatableNames -- so the common case is these three raw calls and a
+        // map hit, with no string crossing the boundary in either direction.
+        if (!this.module.lua_getmetatable(this.address, index)) {
             return undefined
         }
-
-        if (metatableNameType !== LuaType.String) {
-            // Pop the metafield if it's not a string
-            this.pop(1)
-            return undefined
-        }
-
-        // Decoding this again on every table and userdata read is most of what getValue spends on
-        // its dispatch, and it is nearly always one of a handful of extension names. Lua interns a
-        // short string, so the address of the characters is the identity of the name: an extension's
-        // own copy is anchored in the registry for as long as the state lives, which both keeps the
-        // address from being reused and makes it the one every equal name resolves to.
         const pointer = this.module.lua_topointer(this.address, -1)
-        let name = this.metatableNames.get(pointer)
-        if (name === undefined) {
-            name = this.module.lua_tolstring(this.address, -1, null)
-            if (name.length <= LUA_MAX_SHORT_STRING && this.isExtensionName(name)) {
-                this.metatableNames.set(pointer, name)
-            }
-        }
-        // This is popping the luaL_getmetafield result which only pushes with type is not nil.
-        this.pop(1)
 
+        let name = this.metatableNames.get(pointer)
+        if (name !== undefined) {
+            this.pop(1)
+            return name
+        }
+
+        // Anything else reads __name off the metatable that is still on the stack.
+        if (this.module.lua_getfield(this.address, -1, '__name') === LuaType.String) {
+            name = this.module.lua_tolstring(this.address, -1, null)
+        }
+        this.pop(2)
         return name
     }
 
@@ -618,21 +622,6 @@ export default class Thread {
      */
     private absIndex(index: number): number {
         return index > 0 ? index : this.module.lua_absindex(this.address, index)
-    }
-
-    /**
-     * Whether a name belongs to a registered extension, which is what makes it safe to remember the
-     * address of: those are the only ones the state keeps alive itself. Only reached the first time
-     * a name is seen.
-     */
-    private isExtensionName(name: string): boolean {
-        const extensions = this.typeExtensions
-        for (let i = 0; i < extensions.length; i++) {
-            if (extensions[i].extension.name === name) {
-                return true
-            }
-        }
-        return false
     }
 
     /** Offers the value to each extension by descending priority. False if none claimed it. */

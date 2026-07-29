@@ -996,6 +996,11 @@ export default class LuaModule {
         return this.referenceMap.get(index)
     }
 
+    /** The index {@link ref} already holds for `data`, without taking a count, or undefined. */
+    public getRefIndex(data: unknown): number | undefined {
+        return this.referenceTracker.get(data)?.index
+    }
+
     // This is needed for some tests
     public getLastRefIndex(): number | undefined {
         return this.lastRefIndex

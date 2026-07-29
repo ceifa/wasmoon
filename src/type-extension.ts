@@ -1,17 +1,34 @@
 import type { Decoration } from './decoration'
 import type LuaState from './state'
 import type Thread from './thread'
-import { type LuaAddress, type LuaGetCache, type LuaPushCache, LuaReturn, LuaType, PointerSize } from './types'
+import { LUA_REGISTRYINDEX, type LuaAddress, type LuaGetCache, type LuaPushCache, LuaReturn, LuaType, PointerSize } from './types'
 
 export default abstract class LuaTypeExtension<T> {
     // Type name, for metatables and lookups.
     public readonly name: string
     /** Owns this extension's metatable and function pointers, so its lifetime bounds theirs. */
     protected state: LuaState
+    /**
+     * A weak valued table in the registry mapping a reference index to the userdata pushed for it,
+     * so pushing the same value again returns that userdata instead of allocating another one --
+     * which also gives it a stable identity in Lua. Weak, so the cache never keeps a userdata
+     * alive: an entry goes as soon as Lua drops the userdata, before its `__gc` releases the
+     * reference index it is keyed by. Per extension, because the same value pushed through two
+     * extensions must not share a userdata carrying the wrong metatable.
+     */
+    private readonly userdataCacheReference: bigint
 
     public constructor(state: LuaState, name: string) {
         this.state = state
         this.name = name
+
+        const module = state.module
+        module.lua_createtable(state.address, 0, 0)
+        module.lua_createtable(state.address, 0, 1)
+        module.lua_pushstring(state.address, 'v')
+        module.lua_setfield(state.address, -2, '__mode')
+        module.lua_setmetatable(state.address, -2)
+        this.userdataCacheReference = BigInt(module.luaL_ref(state.address, LUA_REGISTRYINDEX))
     }
 
     public isType(_thread: Thread, _index: number, type: LuaType, name?: string): boolean {
@@ -59,23 +76,46 @@ export default abstract class LuaTypeExtension<T> {
     // check the type. That must be done by the class extending this.
     public pushValue(thread: Thread, decoratedValue: Decoration<unknown>, _cache?: LuaPushCache): boolean {
         const { target } = decoratedValue
+        const module = thread.module
 
-        const pointer = thread.module.ref(target)
+        // The cache table stays at the bottom for the whole push, so the probe and the store
+        // below share the one registry fetch.
+        module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, this.userdataCacheReference)
+
+        const existingIndex = module.getRefIndex(target)
+        if (existingIndex !== undefined) {
+            if (module.lua_rawgeti(thread.address, -1, BigInt(existingIndex)) === LuaType.Userdata) {
+                // Drop the cache table, keeping the userdata.
+                module.lua_remove(thread.address, -2)
+                return true
+            }
+            // Pop the miss; the cache table stays for the store.
+            thread.pop(1)
+        }
+
+        const pointer = module.ref(target)
         // 4 = size of pointer in wasm.
-        const userDataPointer = thread.module.lua_newuserdatauv(thread.address, PointerSize, 0)
-        thread.module.writePointer(userDataPointer, pointer)
+        const userDataPointer = module.lua_newuserdatauv(thread.address, PointerSize, 0)
+        module.writePointer(userDataPointer, pointer)
 
-        if (LuaType.Nil === thread.module.luaL_getmetatable(thread.address, this.name)) {
-            // Pop the pushed nil value and the user data. The reference has to be released by hand:
-            // without a metatable the userdata has no __gc, so nothing else ever would.
-            thread.pop(2)
-            thread.module.unref(pointer)
+        if (LuaType.Nil === module.luaL_getmetatable(thread.address, this.name)) {
+            // Pop the pushed nil value, the user data and the cache table. The reference has to be
+            // released by hand: without a metatable the userdata has no __gc, so nothing else ever
+            // would.
+            thread.pop(3)
+            module.unref(pointer)
             throw new Error(`metatable not found: ${this.name}`)
         }
 
         // Set as the metatable for the userdata.
         // -1 is the metatable, -2 is the user data.
-        thread.module.lua_setmetatable(thread.address, -2)
+        module.lua_setmetatable(thread.address, -2)
+
+        // Remember the userdata for the next push of the same value, then drop the cache table
+        // from under it.
+        module.lua_pushvalue(thread.address, -1)
+        module.lua_rawseti(thread.address, -3, BigInt(pointer))
+        module.lua_remove(thread.address, -2)
 
         return true
     }
