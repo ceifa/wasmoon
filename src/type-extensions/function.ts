@@ -19,7 +19,6 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
     private gcPointer: number
     private functionWrapper: number
     private callbackContext: Thread
-    private callbackContextIndex: number
     /** Milliseconds a Lua function called from JS may run before being interrupted. */
     private readonly functionTimeout: number | undefined
 
@@ -31,8 +30,9 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
         // interfering with the global context. This creates a callback context that will always exist
         // even if the thread that called getValue() has been destroyed.
         this.callbackContext = state.newThread()
-        // Pops it from the global stack but keeps it alive
-        this.callbackContextIndex = this.state.module.luaL_ref(state.address, LUA_REGISTRYINDEX)
+        // Pops it from the global stack but keeps it alive. The reference is never released, for the
+        // reason given on LuaTypeExtension.close.
+        this.state.module.luaL_ref(state.address, LUA_REGISTRYINDEX)
 
         if (!this.functionRegistry) {
             state.warn('FunctionTypeExtension: FinalizationRegistry not found. Memory leaks likely.')
@@ -107,10 +107,9 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
     public close(): void {
         this.state.module.removeFunction(this.gcPointer)
         this.state.module.removeFunction(this.functionWrapper)
-        // Doesn't destroy the Lua thread, just function pointers.
+        // Doesn't destroy the Lua thread, just function pointers. The thread itself went with the
+        // state.
         this.callbackContext.close()
-        // Destroy the Lua thread
-        this.callbackContext.module.luaL_unref(this.callbackContext.address, LUA_REGISTRYINDEX, this.callbackContextIndex)
     }
 
     public isType(_thread: Thread, _index: number, type: LuaType): boolean {

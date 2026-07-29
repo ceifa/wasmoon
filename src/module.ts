@@ -818,7 +818,10 @@ export default class LuaModule {
         }
         const metadata = this.referenceTracker.get(ref)
         if (metadata === undefined) {
-            this.referenceTracker.delete(ref)
+            // Dropping the map entry too, both to release the value and to keep the invariant the
+            // index allocation above relies on: every index below the high water mark is either
+            // live in referenceMap or waiting in availableReferences, never neither and never both.
+            this.referenceMap.delete(index)
             this.availableReferences.push(index)
             return
         }
@@ -1077,6 +1080,12 @@ function createInputReader(reader?: () => string | null | undefined): (() => num
 // Emscripten hands output over one byte at a time, so it has to be reassembled before it can be
 // decoded. Doubles from here as lines get longer.
 const INITIAL_OUTPUT_CAPACITY = 256
+// Grown past this the buffer is dropped back to it once the line is out, rather than kept for the
+// module's lifetime: a single huge `io.write` would otherwise retain its whole capacity forever,
+// twice over for a runtime with both stdout and stderr. Dropping all the way back to the initial
+// capacity instead would make a script that writes long lines in a loop regrow from 256 bytes on
+// every one.
+const MAX_RETAINED_OUTPUT_CAPACITY = 64 * 1024
 
 function createOutputWriter(writer?: (content: string) => void): ((charCode: number | null) => void) | null {
     if (!writer) {
@@ -1100,6 +1109,9 @@ function createOutputWriter(writer?: (content: string) => void): ((charCode: num
         // dangling character in the decoder to be completed by the next flush.
         const content = decoder.decode(buffer.subarray(0, length), { stream: !endOfLine })
         length = 0
+        if (buffer.length > MAX_RETAINED_OUTPUT_CAPACITY) {
+            buffer = new Uint8Array(MAX_RETAINED_OUTPUT_CAPACITY)
+        }
         // An empty line is worth reporting, an incomplete character is not.
         if (endOfLine || content.length > 0) {
             writer(content)

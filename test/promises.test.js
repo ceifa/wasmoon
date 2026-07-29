@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { getState, tick } from './utils.js'
+import { getLua, getState, tick } from './utils.js'
 import { mock } from 'node:test'
 
 describe('Promises', () => {
@@ -295,5 +295,74 @@ describe('Promises', () => {
         expect(() => {
             state.doStringSync(`sleep(5):await()`)
         }).to.throw('cannot await in a thread that cannot yield')
+    })
+
+    it('an await abandoned mid flight should not leak a function table slot', async function () {
+        // Building the trampolines the probe needs is what makes this slow, not the Lua work.
+        this.timeout(30000)
+        const lua = await getLua()
+        // The table object itself is not exported, so its length is probed instead: Emscripten
+        // reuses freed slots before growing the table, so a batch bigger than any plausible
+        // freelist exhausts that and the highest index handed out tracks the real length.
+        const tableHighWater = () => {
+            const pointers = []
+            for (let i = 0; i < 200; i++) {
+                pointers.push(lua.module.addFunction(() => 0, 'ii'))
+            }
+            const max = Math.max(...pointers)
+            for (const pointer of pointers) {
+                lua.module.removeFunction(pointer)
+            }
+            return max
+        }
+
+        const runAbandonedAwait = async () => {
+            using state = lua.createState({ inject: true })
+            state.set('slow', () => new Promise((resolve) => setTimeout(resolve, 50)))
+            await expect(state.doString('slow():await()', { timeout: 5 })).eventually.to.be.rejectedWith('timeout')
+        }
+
+        // Once first, so nothing the first state builds is counted as growth.
+        await runAbandonedAwait()
+        const before = tableHighWater()
+        for (let i = 0; i < 10; i++) {
+            await runAbandonedAwait()
+        }
+
+        expect(tableHighWater()).to.equal(before)
+    })
+
+    it('several coroutines awaiting at once should each get their own result', async () => {
+        using state = await getState()
+        state.set('sleep', (ms) => new Promise((resolve) => setTimeout(() => resolve(ms), ms)))
+
+        // Resumed in the opposite order to the one they settle in, so a continuation that mixed up
+        // which thread it belonged to would show up here.
+        const res = await state.doString(`
+            local threads, results = {}, {}
+            for i = 1, 5 do
+                threads[i] = coroutine.create(function()
+                    return sleep((6 - i) * 5):await()
+                end)
+            end
+            local done = 0
+            while done < 5 do
+                -- Hand control back to JS so the timers behind the promises can fire.
+                coroutine.yield()
+                for i = 1, 5 do
+                    if coroutine.status(threads[i]) == 'suspended' then
+                        local ok, value = coroutine.resume(threads[i])
+                        if not ok then error(value) end
+                        if coroutine.status(threads[i]) == 'dead' then
+                            done = done + 1
+                            results[i] = value
+                        end
+                    end
+                end
+            end
+            return table.concat(results, ',')
+        `)
+
+        expect(res).to.equal('25,20,15,10,5')
     })
 })

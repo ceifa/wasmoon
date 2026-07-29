@@ -8,13 +8,68 @@ import type { LuaAddress } from '../types'
 import { isPromise } from '../utils'
 import { decorate } from '../decoration'
 
+/** The half of an in flight `:await()` the continuation needs once the promise has settled. */
+interface PendingAwait {
+    result: { status: 'fulfilled' | 'rejected'; value: any } | undefined
+}
+
 class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     private gcPointer: number
+    /**
+     * Keyed by the address of the thread parked in the await. A thread suspended in `lua_yieldk`
+     * cannot reach another `:await()`, so at most one is ever in flight per thread.
+     */
+    private readonly pendingAwaits = new Map<LuaAddress, PendingAwait>()
+    /**
+     * One continuation for every await on this state. Building one per await meant compiling and
+     * instantiating a wasm trampoline each time, and leaked the table slot whenever the coroutine
+     * was abandoned before the continuation ran -- a run cut short by a deadline, say.
+     */
+    private readonly continuancePointer: number
 
     public constructor(state: LuaState, injectObject: boolean) {
         super(state, 'js_promise')
 
         this.gcPointer = this.createGcFunction()
+        this.continuancePointer = state.module.addFunction((continuanceState: LuaAddress): number => {
+            const pending = this.pendingAwaits.get(continuanceState)
+            if (!pending) {
+                // Nothing sensible is left to resume with, and returning would hand Lua a stack it
+                // does not expect.
+                throw new Error('a promise continuation ran without a pending await')
+            }
+
+            // If this yield has been called from within a coroutine and so manually resumed
+            // then there may not yet be any results. In that case yield again. The continuation
+            // runs on the thread that yielded, so this is the address the await parked on.
+            if (!pending.result) {
+                // 0 because this is called between resumes so the first one should've popped the
+                // promise before returning the result. This is true within Lua's coroutine.resume
+                // too.
+                return state.module.lua_yieldk(continuanceState, 0, 0, this.continuancePointer)
+            }
+
+            const { status, value } = pending.result
+            this.pendingAwaits.delete(continuanceState)
+            const continuanceThread = state.stateToThread(continuanceState)
+
+            if (status === 'rejected') {
+                continuanceThread.pushValue(value || new Error('promise rejected with no error'))
+                return state.module.lua_error(continuanceState)
+            }
+
+            if (value instanceof RawResult) {
+                return value.count
+            } else if (value instanceof MultiReturn) {
+                for (const arg of value) {
+                    continuanceThread.pushValue(arg)
+                }
+                return value.length
+            } else {
+                continuanceThread.pushValue(value)
+                return 1
+            }
+        }, 'iiii')
 
         if (state.module.luaL_newmetatable(state.address, this.name)) {
             const metatableIndex = state.module.lua_gettop(state.address)
@@ -51,53 +106,22 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                             throw new Error('cannot await in a thread that cannot yield, use doString instead of doStringSync')
                         }
 
-                        let promiseResult: { status: 'fulfilled' | 'rejected'; value: any } | undefined = undefined
+                        const pending: PendingAwait = { result: undefined }
+                        this.pendingAwaits.set(functionThread.address, pending)
 
                         const awaitPromise = self
                             .then((res) => {
-                                promiseResult = { status: 'fulfilled', value: res }
+                                pending.result = { status: 'fulfilled', value: res }
                                 return res
                             })
                             .catch((err) => {
-                                promiseResult = { status: 'rejected', value: err }
+                                pending.result = { status: 'rejected', value: err }
                             })
 
-                        const continuance = this.state.module.addFunction((continuanceState: LuaAddress) => {
-                            // If this yield has been called from within a coroutine and so manually resumed
-                            // then there may not yet be any results. In that case yield again.
-                            if (!promiseResult) {
-                                // 1 is because the initial yield pushed a promise reference so this pops
-                                // it and re-returns it.
-                                // 0 because this is called between resumes so the first one should've
-                                // popped the promise before returning the result. This is true within
-                                // Lua's coroutine.resume too.
-                                return state.module.lua_yieldk(functionThread.address, 0, 0, continuance)
-                            }
-
-                            this.state.module.removeFunction(continuance)
-
-                            const continuanceThread = state.stateToThread(continuanceState)
-
-                            if (promiseResult.status === 'rejected') {
-                                continuanceThread.pushValue(promiseResult.value || new Error('promise rejected with no error'))
-                                return this.state.module.lua_error(continuanceState)
-                            }
-
-                            if (promiseResult.value instanceof RawResult) {
-                                return promiseResult.value.count
-                            } else if (promiseResult.value instanceof MultiReturn) {
-                                for (const arg of promiseResult.value) {
-                                    continuanceThread.pushValue(arg)
-                                }
-                                return promiseResult.value.length
-                            } else {
-                                continuanceThread.pushValue(promiseResult.value)
-                                return 1
-                            }
-                        }, 'iiii')
-
+                        // 1 result, because the yield hands the promise reference back so the
+                        // resume that follows can wait on it.
                         functionThread.pushValue(awaitPromise)
-                        return new RawResult(state.module.lua_yieldk(functionThread.address, 1, 0, continuance))
+                        return new RawResult(state.module.lua_yieldk(functionThread.address, 1, 0, this.continuancePointer))
                     },
                     { receiveThread: true },
                 ),
@@ -128,6 +152,11 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
 
     public close(): void {
         this.state.module.removeFunction(this.gcPointer)
+        this.state.module.removeFunction(this.continuancePointer)
+        // A coroutine abandoned mid await never reaches its continuation, so its record is still
+        // here holding whatever the promise settled with. Nothing tells us when Lua's own GC took
+        // that coroutine, so these are bounded by the state's lifetime rather than the await's.
+        this.pendingAwaits.clear()
     }
 
     public pushValue(thread: Thread, decoration: Decoration<unknown>): boolean {

@@ -18,6 +18,16 @@ export default abstract class LuaTypeExtension<T> {
         return type === LuaType.Userdata && name === this.name
     }
 
+    /**
+     * Releases what the extension owns outside Lua: the function pointers it took from
+     * `addFunction`, and any JS side bookkeeping.
+     *
+     * Called only from {@link LuaState.close}, and only after `lua_close` has already run every
+     * `__gc` handler and freed the state along with its registry and every thread anchored there.
+     * So the pointers are still valid here and the `__gc` handlers still needed them a moment ago,
+     * but nothing may touch the state itself -- unreffing a registry slot or calling into a thread
+     * at this point is a use after free.
+     */
     public abstract close(): void
 
     /**
@@ -56,9 +66,10 @@ export default abstract class LuaTypeExtension<T> {
         thread.module.writePointer(userDataPointer, pointer)
 
         if (LuaType.Nil === thread.module.luaL_getmetatable(thread.address, this.name)) {
-            // Pop the pushed nil value and the user data. Don't need to unref because it's
-            // already associated with the user data pointer.
+            // Pop the pushed nil value and the user data. The reference has to be released by hand:
+            // without a metatable the userdata has no __gc, so nothing else ever would.
             thread.pop(2)
+            thread.module.unref(pointer)
             throw new Error(`metatable not found: ${this.name}`)
         }
 
