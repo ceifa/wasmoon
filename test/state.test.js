@@ -139,6 +139,31 @@ describe('State', () => {
         expect(value).to.be.eql(arr)
     })
 
+    it('only a lua sequence becomes a JS array', async () => {
+        using state = await getState()
+        const value = await state.doString(`
+            return {
+                sequence = { 10, 20, 30 },
+                float_keys = { [1.0] = 'a', [2.0] = 'b' },
+                hole = { [2] = 'b' },
+                string_keys = { ['1'] = 'a', ['2'] = 'b' },
+                mixed = { 'a', 'b', name = 'c' },
+                empty = {},
+            }
+        `)
+
+        expect(value).to.be.eql({
+            sequence: [10, 20, 30],
+            float_keys: ['a', 'b'],
+            hole: { 2: 'b' },
+            string_keys: { 1: 'a', 2: 'b' },
+            mixed: { 1: 'a', 2: 'b', name: 'c' },
+            empty: {},
+        })
+        expect(Array.isArray(value.string_keys)).to.be.false
+        expect(Array.isArray(value.empty)).to.be.false
+    })
+
     it('receive JS object with multiple circular references on lua should succeed', async () => {
         using state = await getState()
         const obj1 = {

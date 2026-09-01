@@ -93,17 +93,26 @@ class TableTypeExtension extends TypeExtension<TableType> {
     }
 
     /**
-     * A table becomes a JS array only when `lua_next` walks exactly the keys "1".."n" in that
-     * order. Converting keys stops as soon as that is ruled out, because the keys this pass looks
-     * at are read again alongside the values.
+     * A table becomes a JS array only when `lua_next` walks exactly the integer keys 1..n in that
+     * order, which is Lua's own notion of a sequence. The keys this pass looks at are read again
+     * alongside the values, so it stops as soon as that is ruled out.
      */
     private isSequential(thread: Thread, index: number): boolean {
-        let count = 0
+        const module = thread.module
 
-        thread.module.lua_pushnil(thread.address)
-        while (thread.module.lua_next(thread.address, index)) {
-            // JS only supports string keys in objects.
-            if (thread.indexToString(-2) !== String(count + 1)) {
+        // A border of 0 means t[1] is nil, which settles every table read as an object -- the
+        // common case -- with one call instead of starting a walk.
+        if (module.lua_rawlen(thread.address, index) === 0n) {
+            return false
+        }
+
+        let count = 0
+        module.lua_pushnil(thread.address)
+        while (module.lua_next(thread.address, index)) {
+            // Compared as a number rather than through tostring, which would format the key in C
+            // and decode it in JS for every element. A float key with an integral value is stored
+            // as an integer, so this is the same test.
+            if (module.lua_type(thread.address, -2) !== LuaType.Number || module.lua_tonumberx(thread.address, -2, null) !== count + 1) {
                 // Pop the key and the value, since the walk is being abandoned part way.
                 thread.pop(2)
                 return false
@@ -113,24 +122,39 @@ class TableTypeExtension extends TypeExtension<TableType> {
             thread.pop()
         }
 
-        return count > 0
+        // Non-empty, since a border above 0 means some element is present.
+        return true
     }
 
     private readTableValues(thread: Thread, index: number, seenMap: LuaGetCache, table: TableType): void {
         const isArray = Array.isArray(table)
+        // lua_next leaves each key and value in the same two slots, so the indexes are resolved
+        // once here rather than by a lua_absindex per entry.
+        const keyIndex = thread.getTop() + 1
+        const valueIndex = keyIndex + 1
 
         thread.module.lua_pushnil(thread.address)
         while (thread.module.lua_next(thread.address, index)) {
             if (isArray) {
                 // An array takes its order from the walk, so its keys are never converted.
-                table.push(thread.getValue(-1, undefined, seenMap))
+                table.push(thread.getValue(valueIndex, undefined, seenMap))
             } else {
-                const key = thread.indexToString(-2)
-                table[key] = thread.getValue(-1, undefined, seenMap)
+                table[this.readKey(thread, keyIndex)] = thread.getValue(valueIndex, undefined, seenMap)
             }
 
             thread.pop()
         }
+    }
+
+    /**
+     * A key as the JS property name, which is how Lua would print it. A string, the usual case, is
+     * read in place: luaL_tolstring would look for a __tostring on it, push a copy and need a pop.
+     */
+    private readKey(thread: Thread, index: number): string {
+        if (thread.module.lua_type(thread.address, index) === LuaType.String) {
+            return thread.module.lua_tolstring(thread.address, index, null)
+        }
+        return thread.indexToString(index)
     }
 }
 
