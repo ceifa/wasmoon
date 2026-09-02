@@ -548,6 +548,7 @@ export default class LuaModule {
     public luaopen_debug: (L: LuaAddress) => number
     public luaopen_package: (L: LuaAddress) => number
     public luaL_openlibs: (L: LuaAddress) => void
+    public lua_gc: (L: LuaAddress, what: number, a: number, b: number) => number
 
     /** The mounts that are live, so a later one can be checked against them. */
     private readonly mounts: ResolvedMount[]
@@ -568,6 +569,9 @@ export default class LuaModule {
     // C writes these immediately before returning and we read them straight after with no
     // interleaving await, so a single shared slot each stays reentrancy safe.
     private readonly sizeScratch: number
+    /** The two 32 bit slots {@link lua_gc} passes its variadic arguments through. */
+    private readonly gcArgsScratch: number
+    private readonly rawLuaGc: (L: LuaAddress, what: number, args: number) => number
     /** The `nresults` out parameter for {@link lua_resume}, read by `Thread.resume`. */
     public readonly resultCountScratch: number
     /**
@@ -743,6 +747,14 @@ export default class LuaModule {
         this.luaopen_debug = this.cwrap('luaopen_debug', 'number', ['number'])
         this.luaopen_package = this.cwrap('luaopen_package', 'number', ['number'])
         this.luaL_openlibs = (L) => this.luaL_openselectedlibs(L, -1, 0)
+        // lua_gc is variadic: the wasm32 ABI passes `...` as a pointer to the arguments laid out
+        // in memory, and every argument lua_gc reads is 32 bit.
+        this.rawLuaGc = this.cwrap('lua_gc', 'number', ['number', 'number', 'number'])
+        this.lua_gc = (L, what, a, b) => {
+            this.writePointer(this.gcArgsScratch, a)
+            this.writePointer(this.gcArgsScratch + PointerSize, b)
+            return this.rawLuaGc(L, what, this.gcArgsScratch)
+        }
 
         this.rawLuaToLString = this.cwrap('lua_tolstring', 'number', ['number', 'number', 'number'])
         this.rawLuaLToLString = this.cwrap('luaL_tolstring', 'number', ['number', 'number', 'number'])
@@ -751,9 +763,10 @@ export default class LuaModule {
 
         this.sizeScratch = module._malloc(PointerSize)
         this.resultCountScratch = module._malloc(PointerSize)
+        this.gcArgsScratch = module._malloc(2 * PointerSize)
         // Never read or written, only compared: it exists so that the address is ours alone.
         this.interruptToken = module._malloc(1)
-        if (!this.sizeScratch || !this.resultCountScratch || !this.interruptToken) {
+        if (!this.sizeScratch || !this.resultCountScratch || !this.gcArgsScratch || !this.interruptToken) {
             throw new Error('failed to allocate the scratch buffers for C out parameters')
         }
     }

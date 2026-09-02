@@ -76,6 +76,20 @@ export interface LuaLimitOptions {
     maxInstructions?: number | undefined
 }
 
+/**
+ * The tunables of `collectgarbage('param', ...)`. `pause`, `stepmul` and `stepsize` drive the
+ * incremental collector, the other three the generational one.
+ */
+export type LuaGcParam = 'minormul' | 'majorminor' | 'minormajor' | 'pause' | 'stepmul' | 'stepsize'
+
+export type LuaGcMode = 'incremental' | 'generational'
+
+/** Applied before the standard libraries open, so even their tables are allocated under it. */
+export interface LuaGcOptions {
+    mode?: LuaGcMode | undefined
+    params?: Partial<Record<LuaGcParam, number>> | undefined
+}
+
 export interface CreateStateOptions {
     /**
      * Which standard libraries to open. `true` opens all of them, `false` opens none (which
@@ -96,6 +110,7 @@ export interface CreateStateOptions {
     inject?: boolean | undefined
     memory?: LuaMemoryOptions | undefined
     limits?: LuaLimitOptions | undefined
+    gc?: LuaGcOptions | undefined
     /** Where diagnostics go. Defaults to the runtime's handler, and then to `console.warn`. */
     onWarn?: LuaWarnHandler | undefined
 }
@@ -182,6 +197,30 @@ export enum LuaType {
     Function = 6,
     Userdata = 7,
     Thread = 8,
+}
+
+/** The `what` argument of `lua_gc`. */
+export enum LuaGcWhat {
+    Stop = 0,
+    Restart = 1,
+    Collect = 2,
+    Count = 3,
+    CountB = 4,
+    Step = 5,
+    IsRunning = 6,
+    Gen = 7,
+    Inc = 8,
+    Param = 9,
+}
+
+/** The `LUA_GCP*` indices of `lua_gc(L, LUA_GCPARAM, ...)`. */
+export const LUA_GC_PARAMS: Record<LuaGcParam, number> = {
+    minormul: 0,
+    majorminor: 1,
+    minormajor: 2,
+    pause: 3,
+    stepmul: 4,
+    stepsize: 5,
 }
 
 export enum LuaEventCodes {

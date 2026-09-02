@@ -208,7 +208,8 @@ COMMON=(
         '_luaopen_math', \
         '_luaopen_debug', \
         '_luaopen_package', \
-        '_luaL_openselectedlibs' \
+        '_luaL_openselectedlibs', \
+        '_lua_gc' \
     ]"
 )
 

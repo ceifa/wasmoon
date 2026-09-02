@@ -445,6 +445,105 @@ describe('State', () => {
         expect(state.memory).to.be.undefined
     })
 
+    it('gc.count and gc.collect agree with collectgarbage', async () => {
+        using state = await getState()
+        state.gc.stop()
+        const counts = []
+        state.set('record', () => counts.push(state.gc.count()))
+        const luaCount = await state.doString(`
+            local t = {}
+            for i = 1, 10000 do t[i] = { i } end
+            record()
+            local count = collectgarbage('count') * 1024
+            record()
+            return count
+        `)
+        expect(counts[1]).to.be.equal(luaCount)
+
+        state.gc.collect()
+        expect(state.gc.count()).to.be.lessThan(luaCount)
+    })
+
+    it('gc.stop and gc.restart toggle automatic collection', async () => {
+        using state = await getState()
+        expect(state.gc.isRunning()).to.be.true
+
+        state.gc.stop()
+        expect(state.gc.isRunning()).to.be.false
+        expect(await state.doString(`return collectgarbage('isrunning')`)).to.be.false
+
+        state.gc.restart()
+        expect(state.gc.isRunning()).to.be.true
+    })
+
+    it('gc.step reports the end of a cycle', async () => {
+        using state = await getState()
+        state.gc.stop()
+        let finished = false
+        for (let i = 0; i < 100 && !finished; i++) {
+            finished = state.gc.step(1 << 20)
+        }
+        expect(finished).to.be.true
+        expect(() => state.gc.step(-1)).to.throw(RangeError)
+    })
+
+    it('gc mode switches between the collectors', async () => {
+        using state = await getState()
+        expect(state.gc.getMode()).to.be.equal('incremental')
+
+        expect(state.gc.setMode('generational')).to.be.equal('incremental')
+        expect(state.gc.getMode()).to.be.equal('generational')
+        expect(await state.doString(`return collectgarbage('incremental')`)).to.be.equal('generational')
+        expect(state.gc.getMode()).to.be.equal('incremental')
+
+        expect(() => state.gc.setMode('nope')).to.throw(TypeError)
+    })
+
+    it('gc.param reads and sets every tunable', async () => {
+        using state = await getState()
+        for (const name of ['minormul', 'majorminor', 'minormajor', 'pause', 'stepmul', 'stepsize']) {
+            const initial = state.gc.param(name)
+            expect(initial, name).to.be.greaterThan(0)
+            expect(await state.doString(`return collectgarbage('param', '${name}')`), name).to.be.equal(initial)
+
+            expect(state.gc.param(name, 400), name).to.be.equal(initial)
+            expect(state.gc.param(name), name).to.be.equal(400)
+            expect(await state.doString(`return collectgarbage('param', '${name}')`), name).to.be.equal(400)
+        }
+
+        expect(() => state.gc.param('bogus')).to.throw(TypeError)
+        expect(() => state.gc.param('pause', -1)).to.throw(RangeError)
+        expect(() => state.gc.param('pause', 1.5)).to.throw(RangeError)
+    })
+
+    it('gc options apply at state creation', async () => {
+        using state = await getState({ gc: { mode: 'generational', params: { pause: 200, stepmul: 400 } } })
+        expect(state.gc.getMode()).to.be.equal('generational')
+        expect(state.gc.param('pause')).to.be.equal(200)
+        expect(state.gc.param('stepmul')).to.be.equal(400)
+    })
+
+    it('gc refuses to run from inside a finalizer', async () => {
+        using state = await getState()
+        state.set('collectFromJs', () => state.gc.collect())
+        const message = await state.doString(`
+            local message
+            setmetatable({}, { __gc = function()
+                local ok, err = pcall(collectFromJs)
+                message = tostring(err)
+            end })
+            collectgarbage()
+            return message
+        `)
+        expect(message).to.contain('inside a finalizer')
+    })
+
+    it('gc throws on a closed state', async () => {
+        const state = await getState()
+        state.close()
+        expect(() => state.gc.collect()).to.throw('the Lua state is closed')
+    })
+
     it('limit memory use causes program loading failure succeeds', async () => {
         using state = await getState({ memory: { trace: true } })
         state.memory.max = state.memory.used

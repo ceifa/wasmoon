@@ -1,5 +1,6 @@
 export { default as LuaRuntime } from './runtime'
 export { default as LuaState, type LuaMemory } from './state'
+export type { default as LuaGarbageCollector } from './gc'
 export { default as LuaThread, type OrderedExtension } from './thread'
 export { default as LuaMultiReturn } from './multireturn'
 export { default as LuaRawResult } from './raw-result'
@@ -43,6 +44,9 @@ export {
     type CreateStateOptions,
     type LuaMemoryOptions,
     type LuaLimitOptions,
+    type LuaGcOptions,
+    type LuaGcMode,
+    type LuaGcParam,
     type LuaRunOptions,
     type LuaLoadOptions,
     type LuaDoOptions,

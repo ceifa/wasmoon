@@ -490,7 +490,7 @@ export default class Thread {
      * extension pays nothing for them, and everything that puts them to work is guarded here. A new
      * method belongs on one side or the other of that line.
      */
-    protected assertNotClosed(): void {
+    public assertNotClosed(): void {
         if (this.isClosed()) {
             throw new Error('the Lua state is closed')
         }

@@ -1,3 +1,4 @@
+import LuaGarbageCollector from './gc'
 import type LuaModule from './module'
 import Thread from './thread'
 import type LuaTypeExtension from './type-extension'
@@ -115,13 +116,14 @@ function createAddress(cmodule: LuaModule, memory: LuaMemoryOptions | undefined)
 export default class LuaState extends Thread {
     /** Present only when the state was created with `memory.trace` or `memory.max`. */
     public readonly memory: LuaMemory | undefined
+    public readonly gc: LuaGarbageCollector
 
     private readonly allocatorFunctionPointer: number | undefined
     private readonly defaultMaxInstructions: number | undefined
     private readonly closeListeners: (() => void)[] = []
 
     public constructor(cmodule: LuaModule, options: CreateStateOptions = {}) {
-        const { libs = true, objects = 'proxy', errors = objects === 'copy', inject = false, memory, limits, onWarn } = options
+        const { libs = true, objects = 'proxy', errors = objects === 'copy', inject = false, memory, limits, gc, onWarn } = options
 
         const created = createAddress(cmodule, memory)
         super(cmodule, [], created.address)
@@ -133,6 +135,8 @@ export default class LuaState extends Thread {
         if (this.isClosed()) {
             throw new Error('Lua state could not be created (probably due to lack of memory)')
         }
+
+        this.gc = new LuaGarbageCollector(this, gc)
 
         // Generic handlers - These may be required to be registered for additional types.
         this.registerTypeExtension(BUILT_IN_PRIORITY.table, createTableType(this))
