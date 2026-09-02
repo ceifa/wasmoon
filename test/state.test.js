@@ -633,6 +633,83 @@ describe('State', () => {
         expect(res).to.be.equal('demo name 2')
     })
 
+    it('calling a class from lua constructs it', async () => {
+        using state = await getState()
+        state.set('TestClass', TestClass)
+
+        const res = await state.doString(`
+        local instance = TestClass("demo name 3")
+        return instance:getName() .. " " .. TestClass.hello()
+    `)
+        expect(res).to.be.equal('demo name 3 world')
+    })
+
+    it('calling a class with no methods still constructs it', async () => {
+        using state = await getState()
+        class Empty {}
+        state.set('Empty', Empty)
+
+        expect(await state.doString('return Empty()')).to.be.an.instanceOf(Empty)
+    })
+
+    it('a function-style class is indexable but called, not constructed', async () => {
+        using state = await getState()
+        function Legacy(name) {
+            this.name = name
+        }
+        Legacy.prototype.getName = function () {
+            return this.name
+        }
+        Legacy.create = (name) => new Legacy(name)
+        state.set('Legacy', Legacy)
+
+        // Statics are reachable through the proxy.
+        expect(await state.doString('return Legacy.create("legacy name"):getName()')).to.be.equal('legacy name')
+        // A plain call stays a plain call: strict-mode `this` is undefined, as it would be in JS.
+        await expect(state.doString('return Legacy("legacy name")')).to.eventually.be.rejectedWith('Cannot set properties of undefined')
+    })
+
+    it('calling Date constructs a date', async () => {
+        using state = await getState()
+        state.set('Date', Date)
+
+        expect(await state.doString('return Date()')).to.be.an.instanceOf(Date)
+        expect(await state.doString('return Date(0):getTime()')).to.be.equal(0)
+        expect(await state.doString('return Date.UTC(2020, 0, 1)')).to.be.equal(1577836800000)
+    })
+
+    it('builtins that must not be constructed are still called', async () => {
+        using state = await getState()
+        state.set('String', String)
+        state.set('BigInt', BigInt)
+
+        expect(await state.doString('return String(5)')).to.be.equal('5')
+        // A BigInt round-trips through Lua as an integer; the point is that the call did not throw.
+        expect(await state.doString('return BigInt(5)')).to.be.equal(5)
+    })
+
+    it('a builtin function-style class is indexable and constructible', async () => {
+        using state = await getState()
+        state.set('Buffer', Buffer)
+
+        expect(await state.doString('return Buffer.from("abc"):toString("hex")')).to.be.equal('616263')
+        expect(await state.doString('return Buffer.alloc(2).length')).to.be.equal(2)
+    })
+
+    it('a plain function is called, not constructed', async () => {
+        using state = await getState()
+        function add(a, b) {
+            return a + b
+        }
+        state.set('add', add)
+        state.set('addArrow', (a, b) => a + b)
+        state.set('addProxied', decorate(add, { as: 'proxy' }))
+
+        expect(await state.doString('return add(1, 2)')).to.be.equal(3)
+        expect(await state.doString('return addArrow(1, 2)')).to.be.equal(3)
+        expect(await state.doString('return addProxied(1, 2)')).to.be.equal(3)
+    })
+
     it('wrap a js object using proxy and apply metatable in lua', async () => {
         using state = await getState()
         state.set('TestClass', {

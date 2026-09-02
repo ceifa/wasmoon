@@ -6,6 +6,16 @@ import TypeExtension from '../type-extension'
 import { LuaType } from '../types'
 import { isPromise } from '../utils'
 
+const isClass = (target: unknown): target is new (...args: any[]) => any =>
+    target === Date || (typeof target === 'function' && target.prototype?.constructor === target && target.toString().startsWith('class '))
+
+const isClassLike = (target: unknown): boolean => {
+    if (typeof target !== 'function' || !target.prototype || target.prototype.constructor !== target) {
+        return false
+    }
+    return isClass(target) || Object.getOwnPropertyNames(target.prototype).length > 1
+}
+
 class ProxyTypeExtension extends TypeExtension<any> {
     private readonly gcPointer: number
 
@@ -98,7 +108,7 @@ class ProxyTypeExtension extends TypeExtension<any> {
                 if (args[0] === self) {
                     args.shift()
                 }
-                return self(...args)
+                return isClass(self) ? new self(...args) : self(...args)
             })
             state.module.lua_setfield(state.address, metatableIndex, '__call')
         }
@@ -125,13 +135,8 @@ class ProxyTypeExtension extends TypeExtension<any> {
                 return false
             }
 
-            if (typeof target !== 'object') {
-                const isClass =
-                    typeof target === 'function' && target.prototype?.constructor === target && target.toString().startsWith('class ')
-
-                if (!isClass) {
-                    return false
-                }
+            if (typeof target !== 'object' && !isClassLike(target)) {
+                return false
             }
 
             if (isPromise(target)) {
