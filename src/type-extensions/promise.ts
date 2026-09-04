@@ -1,4 +1,4 @@
-import { Decoration } from '../decoration'
+import { decorate, type Decoration } from '../decoration'
 import type LuaState from '../state'
 import MultiReturn from '../multireturn'
 import RawResult from '../raw-result'
@@ -6,15 +6,25 @@ import type Thread from '../thread'
 import TypeExtension from '../type-extension'
 import type { LuaAddress } from '../types'
 import { isPromise } from '../utils'
-import { decorate } from '../decoration'
 
 /** The half of an in flight `:await()` the continuation needs once the promise has settled. */
 interface PendingAwait {
     result: { status: 'fulfilled' | 'rejected'; value: any } | undefined
 }
 
+/**
+ * A bare thenable reaches here too, and only `then` is guaranteed on one. Adopting it into a real
+ * promise is what makes catch/finally/await work on it, and is a no-op for the native promises
+ * that make up almost every case.
+ */
+const asPromise = (self: unknown): Promise<any> => {
+    if (!isPromise(self)) {
+        throw new Error('self instance is not a promise')
+    }
+    return Promise.resolve(self)
+}
+
 class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
-    private gcPointer: number
     /**
      * Keyed by the address of the thread parked in the await. A thread suspended in `lua_yieldk`
      * cannot reach another `:await()`, so at most one is ever in flight per thread.
@@ -30,7 +40,6 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     public constructor(state: LuaState, injectObject: boolean) {
         super(state, 'js_promise')
 
-        this.gcPointer = this.createGcFunction()
         this.continuancePointer = state.module.addFunction((continuanceState: LuaAddress): number => {
             const pending = this.pendingAwaits.get(continuanceState)
             if (!pending) {
@@ -71,28 +80,10 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
             }
         }, 'iiii')
 
-        if (state.module.luaL_newmetatable(state.address, this.name)) {
-            const metatableIndex = state.module.lua_gettop(state.address)
-
-            // Mark it as uneditable
-            state.module.lua_pushstring(state.address, 'protected metatable')
-            state.module.lua_setfield(state.address, metatableIndex, '__metatable')
-
-            // Add the gc function
-            state.module.lua_pushcclosure(state.address, this.gcPointer, 0)
-            state.module.lua_setfield(state.address, metatableIndex, '__gc')
-
-            // A bare thenable reaches here too, and only `then` is guaranteed on one. Adopting it
-            // into a real promise is what makes catch/finally/await work on it, and is a no-op for
-            // the native promises that make up almost every case.
-            const asPromise = (self: unknown): Promise<any> => {
-                if (!isPromise(self)) {
-                    throw new Error('self instance is not a promise')
-                }
-                return Promise.resolve(self)
-            }
-
-            state.pushValue({
+        this.defineMetatable({
+            // A plain object, which the table extension (registered before this one) copies into a
+            // Lua table of methods.
+            __index: {
                 next: (self: unknown, ...args: Parameters<Promise<unknown>['then']>) => asPromise(self).then(...args),
                 catch: (self: unknown, ...args: Parameters<Promise<unknown>['catch']>) => asPromise(self).catch(...args),
                 finally: (self: unknown, ...args: Parameters<Promise<unknown>['finally']>) => asPromise(self).finally(...args),
@@ -125,14 +116,9 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                     },
                     { receiveThread: true },
                 ),
-            })
-            state.module.lua_setfield(state.address, metatableIndex, '__index')
-
-            state.pushValue((self: Promise<unknown>, other: Promise<unknown>) => self === other)
-            state.module.lua_setfield(state.address, metatableIndex, '__eq')
-        }
-        // Pop the metatable from the stack.
-        state.module.lua_pop(state.address, 1)
+            },
+            __eq: (self: Promise<unknown>, other: Promise<unknown>) => self === other,
+        })
 
         if (injectObject) {
             // Lastly create a static Promise constructor.
@@ -150,8 +136,8 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
         }
     }
 
-    public close(): void {
-        this.state.module.removeFunction(this.gcPointer)
+    public override close(): void {
+        super.close()
         this.state.module.removeFunction(this.continuancePointer)
         // A coroutine abandoned mid await never reaches its continuation, so its record is still
         // here holding whatever the promise settled with. Nothing tells us when Lua's own GC took

@@ -1,4 +1,4 @@
-import { Decoration, type LuaMetatable } from './decoration'
+import { Decoration, type DecorationOptions, type LuaMetatable } from './decoration'
 import type LuaModule from './module'
 import MultiReturn from './multireturn'
 import type LuaTypeExtension from './type-extension'
@@ -37,6 +37,7 @@ const INSTRUCTION_HOOK_COUNT = 1000
 const LUA_INTEGER_BITS = 64
 
 const NO_RESTORE = (): void => undefined
+const NO_OPTIONS: Readonly<DecorationOptions> = Object.freeze({})
 
 export default class Thread {
     public readonly address: LuaAddress
@@ -283,7 +284,7 @@ export default class Thread {
                 // Only integers JS can represent exactly become Lua integers. Values like 1e300
                 // are integral but far outside int64, and would wrap silently if pushed as one.
                 if (Number.isSafeInteger(target)) {
-                    this.module.lua_pushinteger(this.address, BigInt(target))
+                    this.module.lua_pushinteger(this.address, target)
                 } else {
                     this.module.lua_pushnumber(this.address, target)
                 }
@@ -305,7 +306,7 @@ export default class Thread {
                 // not guaranteed to leave exactly one value behind. That is worth the two
                 // lua_gettop calls here, and not worth them on every primitive push.
                 const startTop = this.getTop()
-                if (this.pushWithExtension(decoration ?? new Decoration(target, {}), cache)) {
+                if (this.pushWithExtension(decoration ?? new Decoration(target, NO_OPTIONS), cache)) {
                     const endTop = this.getTop()
                     if (endTop !== startTop + 1) {
                         throw new Error(`pushValue expected stack size ${startTop + 1}, got ${endTop}`)
@@ -365,8 +366,6 @@ export default class Thread {
     }
 
     public getValue(index: number, inputType?: LuaType, cache?: LuaGetCache): any {
-        index = this.absIndex(index)
-
         const type: LuaType = inputType ?? this.module.lua_type(this.address, index)
 
         switch (type) {
@@ -390,6 +389,8 @@ export default class Thread {
             case LuaType.Thread:
                 return this.stateToThread(this.module.lua_tothread(this.address, index))
             default: {
+                index = this.absIndex(index)
+
                 let metatableName: string | undefined
                 if (type === LuaType.Table || type === LuaType.Userdata) {
                     metatableName = this.getMetatableName(index)

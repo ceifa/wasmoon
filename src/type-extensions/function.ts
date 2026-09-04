@@ -4,7 +4,7 @@ import MultiReturn from '../multireturn'
 import RawResult from '../raw-result'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LUA_REGISTRYINDEX, LuaReturn, type LuaAddress, LuaType, PointerSize } from '../types'
+import { LUA_REGISTRYINDEX, LuaReturn, type LuaAddress, LuaType } from '../types'
 import { isEmscriptenUnwind } from '../utils'
 
 export type FunctionType = (...args: any[]) => Promise<any> | any
@@ -23,7 +23,6 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
         }
     })
 
-    private gcPointer: number
     private functionWrapper: number
     private callbackContext: Thread
     /**
@@ -48,20 +47,9 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
         this.callbackContext = state.newAnchoredThread().thread
         this.pooledCallThread = this.callbackContext.newAnchoredThread().thread
 
-        this.gcPointer = this.createGcFunction()
-
-        // Creates metatable if it doesn't exist, always pushes it onto the stack.
-        if (state.module.luaL_newmetatable(state.address, this.name)) {
-            state.module.lua_pushstring(state.address, '__gc')
-            state.module.lua_pushcclosure(state.address, this.gcPointer, 0)
-            state.module.lua_settable(state.address, -3)
-
-            state.module.lua_pushstring(state.address, '__metatable')
-            state.module.lua_pushstring(state.address, 'protected metatable')
-            state.module.lua_settable(state.address, -3)
-        }
-        // Pop the metatable from the stack.
-        state.module.lua_pop(state.address, 1)
+        // Nothing but the box's own __gc: the metatable goes on the upvalue, not on the closure
+        // Lua sees, so no metamethod on it could ever be reached.
+        this.defineMetatable()
 
         this.functionWrapper = state.module.addFunction((calledL: LuaAddress) => {
             const calledThread = state.stateToThread(calledL)
@@ -72,8 +60,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
             // upvalue replaced through the debug library -- falls back to it, for the error the C
             // API would have raised.
             const upvalueIndex = state.module.lua_upvalueindex(1)
-            const refUserdata = state.module.lua_touserdata(calledL, upvalueIndex)
-            const reference = refUserdata ? state.module.getRef(state.module.readPointer(refUserdata)) : undefined
+            const reference = state.module.getReferenceBox(calledL, upvalueIndex)
             let target: FunctionType
             let decorationOptions: DecorationOptions
             if (typeof reference === 'function') {
@@ -133,7 +120,6 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
     }
 
     public close(): void {
-        this.state.module.removeFunction(this.gcPointer)
         this.state.module.removeFunction(this.functionWrapper)
         // Doesn't destroy the Lua threads, just function pointers. The threads themselves went
         // with the state.
@@ -181,8 +167,6 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
             return false
         }
 
-        const module = thread.module
-
         // It's surprisingly inefficient to map JS functions to C functions so this creates a reference to the
         // function which stays solely in JS. The cfunction called from Lua is created at the top of the class
         // and it accesses the JS data through an upvalue.
@@ -195,49 +179,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
         // the same function under different options stays distinct, as its behaviour is.
         const referent: unknown = affectsCall(decoration.options) ? decoration : decoration.target
 
-        // The cache table stays at the bottom for the whole push, so the probe and the store
-        // below share the one registry fetch.
-        module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, this.pushedValueCacheReference)
-
-        const existingIndex = module.getRefIndex(referent)
-        if (existingIndex !== undefined) {
-            if (module.lua_rawgeti(thread.address, -1, BigInt(existingIndex)) === LuaType.Function) {
-                // Drop the cache table, keeping the closure.
-                module.lua_remove(thread.address, -2)
-                return true
-            }
-            // Pop the miss; the cache table stays for the store.
-            thread.pop(1)
-        }
-
-        const pointer = module.ref(referent)
-        // 4 = size of pointer in wasm.
-        const userDataPointer = module.lua_newuserdatauv(thread.address, PointerSize, 0)
-        module.writePointer(userDataPointer, pointer)
-
-        if (LuaType.Nil === module.luaL_getmetatable(thread.address, this.name)) {
-            // Pop the pushed nil, the userdata and the cache table. The reference has to be
-            // released by hand: without a metatable the userdata has no __gc, so nothing else ever
-            // would.
-            thread.pop(3)
-            module.unref(pointer)
-            throw new Error(`metatable not found: ${this.name}`)
-        }
-
-        // Set as the metatable for the function.
-        // -1 is the metatable, -2 is the userdata
-        module.lua_setmetatable(thread.address, -2)
-
-        // Pass 1 to associate the closure with the userdata, pops the userdata.
-        module.lua_pushcclosure(thread.address, this.functionWrapper, 1)
-
-        // Remember the closure for the next push of the same function, then drop the cache table
-        // from under it. Weak, so this never outlives the closure: once Lua collects it the
-        // userdata upvalue goes too, and its __gc releases the reference.
-        module.lua_pushvalue(thread.address, -1)
-        module.lua_rawseti(thread.address, -3, BigInt(pointer))
-        module.lua_remove(thread.address, -2)
-
+        this.pushReference(thread, referent, this.functionWrapper)
         return true
     }
 
@@ -246,8 +188,6 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
         thread.module.lua_pushvalue(thread.address, index)
         // Create a reference to the function which pops it from the stack
         const func = thread.module.luaL_ref(thread.address, LUA_REGISTRYINDEX)
-        // The reference never changes, so the bigint the i64 parameter needs is built once.
-        const funcReference = BigInt(func)
 
         const jsFunc = (...args: any[]): any => {
             // Calling a function would ideally be in the Lua context that's calling it. For example if the JS function
@@ -266,7 +206,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
             const callThread = this.acquireCallThread()
             let failed = false
             try {
-                const internalType = callThread.module.lua_rawgeti(callThread.address, LUA_REGISTRYINDEX, funcReference)
+                const internalType = callThread.module.lua_rawgeti(callThread.address, LUA_REGISTRYINDEX, func)
                 if (internalType !== LuaType.Function) {
                     const callMetafieldType = callThread.module.luaL_getmetafield(callThread.address, -1, '__call')
                     callThread.pop()
@@ -289,10 +229,8 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
                 }
                 callThread.assertOk(status)
 
-                if (callThread.getTop() > 0) {
-                    return callThread.getValue(-1)
-                }
-                return undefined
+                // Asking for one result leaves exactly one, nil included, so the top is where it is.
+                return callThread.getValue(1)
             } catch (err) {
                 failed = true
                 throw err

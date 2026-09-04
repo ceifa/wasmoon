@@ -1,44 +1,24 @@
-import { Decoration } from '../decoration'
+import type { Decoration } from '../decoration'
 import type LuaState from '../state'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
 import { LUA_REGISTRYINDEX } from '../types'
 
 class NullTypeExtension extends TypeExtension<unknown> {
-    private gcPointer: number
     private nullReference: number
 
     public constructor(state: LuaState) {
         super(state, 'js_null')
 
-        this.gcPointer = this.createGcFunction()
+        this.defineMetatable({
+            __index: () => undefined,
+            __tostring: () => 'null',
+            __eq: (self: unknown, other: unknown) => self === other,
+        })
 
-        if (state.module.luaL_newmetatable(state.address, this.name)) {
-            const metatableIndex = state.module.lua_gettop(state.address)
-
-            // Mark it as uneditable
-            state.module.lua_pushstring(state.address, 'protected metatable')
-            state.module.lua_setfield(state.address, metatableIndex, '__metatable')
-
-            // Add the gc function
-            state.module.lua_pushcclosure(state.address, this.gcPointer, 0)
-            state.module.lua_setfield(state.address, metatableIndex, '__gc')
-
-            state.pushValue(() => undefined)
-            state.module.lua_setfield(state.address, metatableIndex, '__index')
-
-            state.pushValue(() => 'null')
-            state.module.lua_setfield(state.address, metatableIndex, '__tostring')
-
-            state.pushValue((self: unknown, other: unknown) => self === other)
-            state.module.lua_setfield(state.address, metatableIndex, '__eq')
-        }
-        // Pop the metatable from the stack.
-        state.module.lua_pop(state.address, 1)
-
-        // Create a new table, this is unique and will be the "null" value by attaching the
-        // metatable created above. The first argument is the target, the second options.
-        super.pushValue(state, new Decoration<unknown>({}, {}))
+        // A box like any other, around an object nothing else ever holds, is what makes the sentinel
+        // unique: it carries the metatable above, so it reads back as null.
+        this.pushReference(state, {})
 
         // Lua code is free to reassign the `null` global, so marshalling anchors the sentinel in
         // the registry instead of looking it up by name.
@@ -62,10 +42,6 @@ class NullTypeExtension extends TypeExtension<unknown> {
         }
         thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(this.nullReference))
         return true
-    }
-
-    public close(): void {
-        this.state.module.removeFunction(this.gcPointer)
     }
 }
 

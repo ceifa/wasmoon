@@ -11,10 +11,6 @@ class TableTypeExtension extends TypeExtension<TableType> {
         super(state, 'js_table')
     }
 
-    public close(): void {
-        // Nothing to do
-    }
-
     public isType(_thread: Thread, _index: number, type: LuaType): boolean {
         return type === LuaType.Table
     }
@@ -46,7 +42,7 @@ class TableTypeExtension extends TypeExtension<TableType> {
         const seenMap: LuaPushCache = cache ?? new Map()
         const existingReference = seenMap.get(target)
         if (existingReference !== undefined) {
-            thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(existingReference))
+            thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, existingReference)
             return true
         }
 
@@ -57,7 +53,7 @@ class TableTypeExtension extends TypeExtension<TableType> {
                 thread.module.lua_createtable(thread.address, arrayCount, keyCount)
                 const ref = thread.module.luaL_ref(thread.address, LUA_REGISTRYINDEX)
                 seenMap.set(target, ref)
-                thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(ref))
+                thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, ref)
             }
 
             if (Array.isArray(target)) {
@@ -66,7 +62,7 @@ class TableTypeExtension extends TypeExtension<TableType> {
                 for (let i = 0; i < target.length; i++) {
                     thread.pushValue(target[i], seenMap)
                     // Raw, so the table being built cannot be observed through metamethods.
-                    thread.module.lua_rawseti(thread.address, tableIndex, BigInt(i + 1))
+                    thread.module.lua_rawseti(thread.address, tableIndex, i + 1)
                 }
             } else {
                 // A for..in loop would also walk the prototype chain and copy inherited members.

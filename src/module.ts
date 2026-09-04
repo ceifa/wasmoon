@@ -97,10 +97,10 @@ export interface LuaModuleOptions {
     onWarn?: LuaWarnHandler | undefined
 }
 
-// One-shot conversions, so a single stateless encoder is shared by every module. Decoding goes
-// through Emscripten's UTF8ToString, and streaming output keeps its own decoder in
-// createOutputWriter.
+// One-shot conversions, so a single stateless codec pair is shared by every module. Streaming
+// output keeps its own decoder in createOutputWriter, since a flush can cut a character in half.
 const textEncoder = new TextEncoder()
+const textDecoder = new TextDecoder()
 
 // Above this a dedicated allocation is used, so one huge string cannot permanently retain the
 // scratch buffer.
@@ -129,9 +129,12 @@ const enum StringArgument {
 // passed to one of these would overflow it.
 const STACK_STRING_LIMIT = 1024
 
-// Above this, TextEncoder beats copying byte by byte in JS (measured; TEXTDECODER=1 covers the
-// other direction upstream).
+// Above this, TextEncoder beats copying byte by byte in JS (measured).
 const INLINE_ENCODE_LIMIT = 40
+// Above this, TextDecoder beats gathering the bytes in JS (measured). Its cost is nearly flat --
+// mostly the subarray view and the call -- while the inline path grows per byte; the two cross
+// here. Most reads are well under it: table keys, global names, short values.
+const INLINE_DECODE_LIMIT = 32
 
 // The wasm value types Emscripten's function signature letters map to. `p` is a pointer, which is
 // an i32 in a build without MEMORY64.
@@ -479,7 +482,7 @@ export default class LuaModule {
     public lua_compare: (L: LuaAddress, idx1: number, idx2: number, op: number) => number
     public lua_pushnil: (L: LuaAddress) => void
     public lua_pushnumber: (L: LuaAddress, n: number) => void
-    public lua_pushinteger: (L: LuaAddress, n: bigint) => void
+    public lua_pushinteger: (L: LuaAddress, n: number | bigint) => void
     public lua_pushlstring: (L: LuaAddress, s: number, len: number) => void
     public lua_pushcclosure: (L: LuaAddress, fn: number, n: number) => void
     public lua_pushboolean: (L: LuaAddress, b: number) => void
@@ -488,9 +491,9 @@ export default class LuaModule {
     public lua_getglobal: (L: LuaAddress, name: string | null) => LuaType
     public lua_gettable: (L: LuaAddress, idx: number) => LuaType
     public lua_getfield: (L: LuaAddress, idx: number, k: string | null) => LuaType
-    public lua_geti: (L: LuaAddress, idx: number, n: bigint) => LuaType
+    public lua_geti: (L: LuaAddress, idx: number, n: number | bigint) => LuaType
     public lua_rawget: (L: LuaAddress, idx: number) => LuaType
-    public lua_rawgeti: (L: LuaAddress, idx: number, n: bigint) => LuaType
+    public lua_rawgeti: (L: LuaAddress, idx: number, n: number | bigint) => LuaType
     public lua_rawgetp: (L: LuaAddress, idx: number, p: number | null) => LuaType
     public lua_createtable: (L: LuaAddress, narr: number, nrec: number) => void
     public lua_newuserdatauv: (L: LuaAddress, sz: number, nuvalue: number) => LuaAddress
@@ -499,9 +502,9 @@ export default class LuaModule {
     public lua_setglobal: (L: LuaAddress, name: string | null) => void
     public lua_settable: (L: LuaAddress, idx: number) => void
     public lua_setfield: (L: LuaAddress, idx: number, k: string | null) => void
-    public lua_seti: (L: LuaAddress, idx: number, n: bigint) => void
+    public lua_seti: (L: LuaAddress, idx: number, n: number | bigint) => void
     public lua_rawset: (L: LuaAddress, idx: number) => void
-    public lua_rawseti: (L: LuaAddress, idx: number, n: bigint) => void
+    public lua_rawseti: (L: LuaAddress, idx: number, n: number | bigint) => void
     public lua_rawsetp: (L: LuaAddress, idx: number, p: number | null) => void
     public lua_setmetatable: (L: LuaAddress, objindex: number) => number
     public lua_setiuservalue: (L: LuaAddress, idx: number, n: number) => number
@@ -588,6 +591,8 @@ export default class LuaModule {
      */
     public readonly interruptToken: number
     private stringBuffer = 0
+    /** Built on first use by {@link referenceGcFunction}, then kept for the module's lifetime. */
+    private referenceGcPointer: number | undefined
 
     public constructor(
         module: LuaEmscriptenModule,
@@ -678,7 +683,7 @@ export default class LuaModule {
         this.lua_compare = this.cwrap('lua_compare', 'number', ['number', 'number', 'number', 'number'])
         this.lua_pushnil = this.cwrap('lua_pushnil', null, ['number'])
         this.lua_pushnumber = this.cwrap('lua_pushnumber', null, ['number', 'number'])
-        this.lua_pushinteger = this.cwrap('lua_pushinteger', null, ['number', 'number'])
+        this.lua_pushinteger = this.withIntegerArgument('lua_pushinteger', null, ['number', 'number'])
         this.lua_pushcclosure = this.cwrap('lua_pushcclosure', null, ['number', 'number', 'number'])
         this.lua_pushboolean = this.cwrap('lua_pushboolean', null, ['number', 'number'])
         this.lua_pushlightuserdata = this.cwrap('lua_pushlightuserdata', null, ['number', 'number'])
@@ -686,9 +691,9 @@ export default class LuaModule {
         this.lua_getglobal = this.cwrap('lua_getglobal', 'number', ['number', 'string'])
         this.lua_gettable = this.cwrap('lua_gettable', 'number', ['number', 'number'])
         this.lua_getfield = this.cwrap('lua_getfield', 'number', ['number', 'number', 'string'])
-        this.lua_geti = this.cwrap('lua_geti', 'number', ['number', 'number', 'number'])
+        this.lua_geti = this.withIntegerArgument('lua_geti', 'number', ['number', 'number', 'number'])
         this.lua_rawget = this.cwrap('lua_rawget', 'number', ['number', 'number'])
-        this.lua_rawgeti = this.cwrap('lua_rawgeti', 'number', ['number', 'number', 'number'])
+        this.lua_rawgeti = this.withIntegerArgument('lua_rawgeti', 'number', ['number', 'number', 'number'])
         this.lua_rawgetp = this.cwrap('lua_rawgetp', 'number', ['number', 'number', 'number'])
         this.lua_createtable = this.cwrap('lua_createtable', null, ['number', 'number', 'number'])
         this.lua_newuserdatauv = this.cwrap('lua_newuserdatauv', 'number', ['number', 'number', 'number'])
@@ -697,9 +702,9 @@ export default class LuaModule {
         this.lua_setglobal = this.cwrap('lua_setglobal', null, ['number', 'string'])
         this.lua_settable = this.cwrap('lua_settable', null, ['number', 'number'])
         this.lua_setfield = this.cwrap('lua_setfield', null, ['number', 'number', 'string'])
-        this.lua_seti = this.cwrap('lua_seti', null, ['number', 'number', 'number'])
+        this.lua_seti = this.withIntegerArgument('lua_seti', null, ['number', 'number', 'number'])
         this.lua_rawset = this.cwrap('lua_rawset', null, ['number', 'number'])
-        this.lua_rawseti = this.cwrap('lua_rawseti', null, ['number', 'number', 'number'])
+        this.lua_rawseti = this.withIntegerArgument('lua_rawseti', null, ['number', 'number', 'number'])
         this.lua_rawsetp = this.cwrap('lua_rawsetp', null, ['number', 'number', 'number'])
         this.lua_setmetatable = this.cwrap('lua_setmetatable', 'number', ['number', 'number'])
         this.lua_setiuservalue = this.cwrap('lua_setiuservalue', 'number', ['number', 'number', 'number'])
@@ -851,14 +856,33 @@ export default class LuaModule {
         }
     }
 
+    /**
+     * The counterpart to {@link writeString}. A short ASCII string is gathered and built in one
+     * `fromCharCode`: Emscripten's own decoder concatenates a character at a time below its
+     * TextDecoder threshold, which cost more than the decode itself for the names and keys that
+     * make up most reads here. A NUL is an ordinary byte, since the length is already known.
+     */
     public readString(pointer: number, length: number): string {
         if (!length) {
             return ''
         }
-        // The third argument keeps it from stopping at a NUL, since a Lua string can contain them
-        // and the length is already known. Built with TEXTDECODER=1 so this skips TextDecoder for
-        // the short names and keys that most of these are -- see utils/build-wasm.sh.
-        return this.emscripten.UTF8ToString(pointer, length, true)
+        const heap = this.heap
+        if (length <= INLINE_DECODE_LIMIT) {
+            const codes = new Array<number>(length)
+            let index = 0
+            while (index < length) {
+                const code = heap[pointer + index]
+                if (code > 0x7f) {
+                    break
+                }
+                codes[index++] = code
+            }
+            if (index === length) {
+                return String.fromCharCode.apply(null, codes)
+            }
+            // Anything non-ASCII is decoded from the start, the same as the long strings below.
+        }
+        return textDecoder.decode(heap.subarray(pointer, pointer + length))
     }
 
     /**
@@ -949,6 +973,29 @@ export default class LuaModule {
         this.emscripten.removeFunction(pointer)
     }
 
+    /**
+     * The `__gc` handler for a userdata holding a reference index, which is what every reference
+     * holding type extension puts on its metatable and the same code for each of them. One per
+     * module rather than one per extension per state: each takes a trampoline of its own from
+     * {@link addFunction}, and those were a fifth of what creating a state cost. Owned by the
+     * module, so it is never removed.
+     */
+    public referenceGcFunction(): number {
+        this.referenceGcPointer ??= this.addFunction((L: LuaAddress): number => {
+            // Only a userdata pushed by LuaTypeExtension holds a reference index, and those are
+            // exactly one pointer wide. The check stands in for the metatable name one a handler
+            // built per extension can make: it rules out the io library's stream handles, the one
+            // other userdata Lua code can reach and put one of these metatables on through
+            // debug.setmetatable, which would otherwise be read as an index and unreferenced.
+            const userdata = this.lua_touserdata(L, 1)
+            if (userdata && this.lua_rawlen(L, 1) === BigInt(PointerSize)) {
+                this.unref(this.readPointer(userdata))
+            }
+            return LuaReturn.Ok
+        }, 'ii')
+        return this.referenceGcPointer
+    }
+
     private toLString(raw: (L: LuaAddress, idx: number, len: number) => number, L: LuaAddress, idx: number, len: number | null): string {
         const lengthPointer = len ?? this.sizeScratch
         const pointer = raw(L, idx, lengthPointer)
@@ -1024,6 +1071,33 @@ export default class LuaModule {
         return this.referenceMap.get(index)
     }
 
+    /**
+     * Pushes a fresh userdata holding a reference to `target`: the box every reference carrying
+     * type extension puts a JS value in. The layout, a single pointer sized slot holding the
+     * reference index, is known here, in {@link getReferenceBox} and in the `__gc` handler
+     * {@link referenceGcFunction} builds, and nowhere else.
+     *
+     * The reference is the caller's to release until the box has a metatable carrying that `__gc`,
+     * which is what hands ownership to Lua.
+     * @returns the reference index, which also serves as the box's identity in a push cache.
+     */
+    public pushReferenceBox(L: LuaAddress, target: unknown): number {
+        const index = this.ref(target)
+        const userDataPointer = this.lua_newuserdatauv(L, PointerSize, 0)
+        this.writePointer(userDataPointer, index)
+        return index
+    }
+
+    /**
+     * The JS value boxed in the userdata at `index`, or undefined when nothing is boxed there. With
+     * a `metatableName` only a userdata carrying that metatable counts; without one the caller has
+     * already established what it is looking at, so the check and the name it marshals are skipped.
+     */
+    public getReferenceBox(L: LuaAddress, index: number, metatableName?: string): unknown {
+        const userDataPointer = metatableName === undefined ? this.lua_touserdata(L, index) : this.luaL_testudata(L, index, metatableName)
+        return userDataPointer ? this.referenceMap.get(this.readPointer(userDataPointer)) : undefined
+    }
+
     /** The index {@link ref} already holds for `data`, without taking a count, or undefined. */
     public getRefIndex(data: unknown): number | undefined {
         return this.referenceTracker.get(data)?.index
@@ -1068,6 +1142,36 @@ export default class LuaModule {
     private releaseStringBuffer(pointer: number): void {
         if (pointer !== this.stringBuffer) {
             this.emscripten._free(pointer)
+        }
+    }
+
+    /**
+     * A binding whose last argument is a `lua_Integer`, taking either a BigInt or a number. The
+     * BigInt goes to the C API as it is; a number, which has to be a safe integer, goes to the
+     * double taking twin of the same name in src/native/wasmoon.c, saving the BigInt conversion on
+     * every call. The integer is the last argument of each of these.
+     */
+    private withIntegerArgument(
+        name: string,
+        returnType: Emscripten.JSType | null,
+        argTypes: Emscripten.JSType[],
+    ): (...args: any[]) => any {
+        const bigintBinding = this.cwrap(name, returnType, argTypes)
+        const numberBinding = this.cwrap(name.replace('lua_', 'wasmoon_'), returnType, argTypes)
+        const integerLast = argTypes.length === 2
+        if (!integerLast && argTypes.length !== 3) {
+            throw new Error(`withIntegerArgument only covers arities 2 and 3, not ${argTypes.length}`)
+        }
+
+        return (a: any, b: any, c?: any): any => {
+            const n = integerLast ? b : c
+            if (typeof n === 'bigint') {
+                return bigintBinding(a, b, c)
+            }
+            if (!Number.isSafeInteger(n)) {
+                throw new RangeError(`${n} is not a safe integer; pass a BigInt for the full lua_Integer range`)
+            }
+            return numberBinding(a, b, c)
         }
     }
 

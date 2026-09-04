@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { LuaMultiReturn, LuaRawResult, LuaReturn, LuaTypeExtension, decorate } from '../dist/index.js'
+import { LuaMultiReturn, LuaRawResult, LuaReturn, LuaType, LuaTypeExtension, decorate } from '../dist/index.js'
 import { getLua, getState } from './utils.js'
 
 describe('MultiReturn', () => {
@@ -144,20 +144,7 @@ describe('Custom type extensions', () => {
     class PointExtension extends LuaTypeExtension {
         constructor(state) {
             super(state, 'js_point')
-            this.gcPointer = this.createGcFunction()
-
-            if (state.module.luaL_newmetatable(state.address, this.name)) {
-                const metatableIndex = state.module.lua_gettop(state.address)
-                state.module.lua_pushcclosure(state.address, this.gcPointer, 0)
-                state.module.lua_setfield(state.address, metatableIndex, '__gc')
-                state.pushValue((point) => `Point(${point.x})`)
-                state.module.lua_setfield(state.address, metatableIndex, '__tostring')
-            }
-            state.module.lua_pop(state.address, 1)
-        }
-
-        close() {
-            this.state.module.emscripten.removeFunction(this.gcPointer)
+            this.defineMetatable({ __tostring: (point) => `Point(${point.x})` })
         }
 
         pushValue(thread, decoration) {
@@ -174,6 +161,19 @@ describe('Custom type extensions', () => {
         expect(await state.doString('return type(pt)')).to.be.equal('userdata')
         expect(await state.doString('return tostring(pt)')).to.be.equal('Point(9)')
         expect(state.get('pt')).to.be.equal(point)
+    })
+
+    it('should get a protected metatable and release the reference once collected', async () => {
+        using state = await getState()
+        state.registerTypeExtension(6, new PointExtension(state))
+        const point = new Point(1)
+        state.set('pt', point)
+
+        expect(await state.doString('return getmetatable(pt)')).to.be.equal('protected metatable')
+        expect(state.module.getRefIndex(point)).to.not.be.undefined
+
+        await state.doString('pt = nil collectgarbage() collectgarbage()')
+        expect(state.module.getRefIndex(point)).to.be.undefined
     })
 
     it('should leave values it refuses to the built in handling', async () => {
@@ -312,6 +312,31 @@ describe('Lua integer arguments', () => {
         state.module.lua_setglobal(state.address, 'letters')
 
         expect(await state.doString('return table.concat(letters, ",")')).to.be.equal('a,b,c')
+    })
+
+    it('should take a raw table index as a number', async () => {
+        using state = await getState()
+        state.module.lua_createtable(state.address, 3, 0)
+
+        for (const [index, text] of ['a', 'b', 'c'].entries()) {
+            state.pushValue(text)
+            state.module.lua_rawseti(state.address, -2, index + 1)
+        }
+        state.module.lua_setglobal(state.address, 'letters')
+
+        expect(await state.doString('return table.concat(letters, ",")')).to.be.equal('a,b,c')
+        expect(state.module.lua_getglobal(state.address, 'letters')).to.be.equal(LuaType.Table)
+        expect(state.module.lua_rawgeti(state.address, -1, 2)).to.be.equal(LuaType.String)
+        expect(state.getValue(-1)).to.be.equal('b')
+    })
+
+    it('should refuse a number that is not a safe integer where a lua_Integer is expected', async () => {
+        using state = await getState()
+
+        expect(() => state.module.lua_pushinteger(state.address, 1.5)).to.throw(RangeError)
+        expect(() => state.module.lua_pushinteger(state.address, 2 ** 53)).to.throw(RangeError)
+        expect(() => state.module.lua_pushinteger(state.address, Number.NaN)).to.throw(RangeError)
+        expect(state.getTop()).to.be.equal(0)
     })
 
     it('should reach an index a double cannot hold exactly through a bigint', async () => {

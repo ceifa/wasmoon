@@ -10,9 +10,7 @@ if [ "$1" == "dev" ];
 then
     extension=(-O0 -g3 -s ASSERTIONS=1 -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2)
 else
-    # TEXTDECODER=1 keeps Emscripten's short string decode path, which -Oz would otherwise drop
-    # in favour of always calling TextDecoder. LuaModule.readString relies on it.
-    extension=(-Oz -fno-inline-functions -DLUA_USE_JUMPTABLE=0 -s TEXTDECODER=1 -s BINARYEN_EXTRA_PASSES=gufa-optimizing,converge)
+    extension=(-Oz -fno-inline-functions -DLUA_USE_JUMPTABLE=0 -s BINARYEN_EXTRA_PASSES=gufa-optimizing,converge)
 fi
 
 # Everything that is not about the filesystem, shared by both glues below so they can share one
