@@ -1,4 +1,4 @@
-import { Decoration } from '../decoration'
+import { Decoration, type DecorationOptions } from '../decoration'
 import type LuaState from '../state'
 import MultiReturn from '../multireturn'
 import RawResult from '../raw-result'
@@ -8,6 +8,13 @@ import { LUA_REGISTRYINDEX, LuaReturn, type LuaAddress, LuaType, PointerSize } f
 import { isEmscriptenUnwind } from '../utils'
 
 export type FunctionType = (...args: any[]) => Promise<any> | any
+
+const NO_OPTIONS: DecorationOptions = {}
+
+/** Whether the wrapper would behave any differently for these options than for none. */
+function affectsCall(options: DecorationOptions): boolean {
+    return options.self !== undefined || options.receiveThread === true || options.receiveArgsQuantity === true
+}
 
 class FunctionTypeExtension extends TypeExtension<FunctionType> {
     private readonly functionRegistry = new FinalizationRegistry((func: number) => {
@@ -61,18 +68,25 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
 
             // The upvalue is always the userdata pushValue closed this wrapper over, so the
             // metatable check luaL_checkudata does (and the name it marshals) is saved on every
-            // call. Only a ref that does not resolve to a function decoration -- the upvalue
-            // replaced through the debug library -- falls back to it, for the error the C API
-            // would have raised.
+            // call. Only a ref that resolves to neither a function nor a function decoration -- the
+            // upvalue replaced through the debug library -- falls back to it, for the error the C
+            // API would have raised.
             const upvalueIndex = state.module.lua_upvalueindex(1)
             const refUserdata = state.module.lua_touserdata(calledL, upvalueIndex)
             const reference = refUserdata ? state.module.getRef(state.module.readPointer(refUserdata)) : undefined
-            if (!(reference instanceof Decoration) || typeof reference.target !== 'function') {
+            let target: FunctionType
+            let decorationOptions: DecorationOptions
+            if (typeof reference === 'function') {
+                target = reference as FunctionType
+                decorationOptions = NO_OPTIONS
+            } else if (reference instanceof Decoration && typeof reference.target === 'function') {
+                target = reference.target
+                decorationOptions = reference.options
+            } else {
                 // Raises the error the C API would have; the throw below is unreachable.
                 state.module.luaL_checkudata(calledL, upvalueIndex, this.name)
                 throw new Error('a js_function upvalue does not hold a function reference')
             }
-            const { target, options: decorationOptions } = reference
 
             const argsQuantity = calledThread.getTop()
             const args = []
@@ -167,28 +181,62 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
             return false
         }
 
+        const module = thread.module
+
         // It's surprisingly inefficient to map JS functions to C functions so this creates a reference to the
         // function which stays solely in JS. The cfunction called from Lua is created at the top of the class
         // and it accesses the JS data through an upvalue.
+        //
+        // The wrapper only needs the decoration when it carries an option it acts on. Otherwise the
+        // bare function is referenced instead, so that every push of the same function -- decorated
+        // or not, since Thread.pushValue synthesises a fresh decoration for a plain one -- shares
+        // one reference and, through the cache below, one Lua closure. A decoration with options
+        // is referenced as it is: the same instance pushed twice still yields one closure, while
+        // the same function under different options stays distinct, as its behaviour is.
+        const referent: unknown = affectsCall(decoration.options) ? decoration : decoration.target
 
-        const pointer = thread.module.ref(decoration)
-        // 4 = size of pointer in wasm.
-        const userDataPointer = thread.module.lua_newuserdatauv(thread.address, PointerSize, 0)
-        thread.module.writePointer(userDataPointer, pointer)
+        // The cache table stays at the bottom for the whole push, so the probe and the store
+        // below share the one registry fetch.
+        module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, this.pushedValueCacheReference)
 
-        if (LuaType.Nil === thread.module.luaL_getmetatable(thread.address, this.name)) {
-            // Pop the pushed userdata.
+        const existingIndex = module.getRefIndex(referent)
+        if (existingIndex !== undefined) {
+            if (module.lua_rawgeti(thread.address, -1, BigInt(existingIndex)) === LuaType.Function) {
+                // Drop the cache table, keeping the closure.
+                module.lua_remove(thread.address, -2)
+                return true
+            }
+            // Pop the miss; the cache table stays for the store.
             thread.pop(1)
-            thread.module.unref(pointer)
+        }
+
+        const pointer = module.ref(referent)
+        // 4 = size of pointer in wasm.
+        const userDataPointer = module.lua_newuserdatauv(thread.address, PointerSize, 0)
+        module.writePointer(userDataPointer, pointer)
+
+        if (LuaType.Nil === module.luaL_getmetatable(thread.address, this.name)) {
+            // Pop the pushed nil, the userdata and the cache table. The reference has to be
+            // released by hand: without a metatable the userdata has no __gc, so nothing else ever
+            // would.
+            thread.pop(3)
+            module.unref(pointer)
             throw new Error(`metatable not found: ${this.name}`)
         }
 
         // Set as the metatable for the function.
         // -1 is the metatable, -2 is the userdata
-        thread.module.lua_setmetatable(thread.address, -2)
+        module.lua_setmetatable(thread.address, -2)
 
         // Pass 1 to associate the closure with the userdata, pops the userdata.
-        thread.module.lua_pushcclosure(thread.address, this.functionWrapper, 1)
+        module.lua_pushcclosure(thread.address, this.functionWrapper, 1)
+
+        // Remember the closure for the next push of the same function, then drop the cache table
+        // from under it. Weak, so this never outlives the closure: once Lua collects it the
+        // userdata upvalue goes too, and its __gc releases the reference.
+        module.lua_pushvalue(thread.address, -1)
+        module.lua_rawseti(thread.address, -3, BigInt(pointer))
+        module.lua_remove(thread.address, -2)
 
         return true
     }

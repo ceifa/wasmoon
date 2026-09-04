@@ -82,6 +82,44 @@ describe('Decoration options', () => {
         expect(await state.doString('return grab("a", "b")')).to.be.equal('number:a,b')
     })
 
+    it('should push the same function as the same Lua value', async () => {
+        using state = await getState()
+        const fn = () => 1
+        state.set('a', fn)
+        state.set('b', fn)
+        state.set('c', decorate(fn, {}))
+
+        expect(await state.doString('return a == b and b == c')).to.be.equal(true)
+    })
+
+    it('should push the same decoration as the same Lua value, and different options as different ones', async () => {
+        using state = await getState()
+        const fn = (...args) => args.length
+        const bound = decorate(fn, { self: {} })
+        state.set('plain', fn)
+        state.set('bound1', bound)
+        state.set('bound2', bound)
+        state.set('counting', decorate(fn, { receiveArgsQuantity: true }))
+
+        expect(await state.doString('return bound1 == bound2')).to.be.equal(true)
+        expect(await state.doString('return plain ~= bound1 and plain ~= counting and bound1 ~= counting')).to.be.equal(true)
+        expect(await state.doString('return plain(1, 2), bound1(1, 2), counting(1, 2)')).to.be.equal(2)
+    })
+
+    it('should hand out the same Lua value for the same proxied method', async () => {
+        using state = await getState()
+        state.set('obj', {
+            n: 0,
+            bump() {
+                this.n++
+            },
+        })
+
+        expect(await state.doString('return obj.bump == obj.bump')).to.be.equal(true)
+        await state.doString('for _ = 1, 3 do obj:bump() end')
+        expect(state.get('obj').n).to.be.equal(3)
+    })
+
     it('receiveArgsQuantity should pass the count instead of the arguments', async () => {
         using state = await getState()
         state.set(

@@ -18,6 +18,7 @@ const isClassLike = (target: unknown): boolean => {
 
 class ProxyTypeExtension extends TypeExtension<any> {
     private readonly gcPointer: number
+    private readonly boundMethods = new WeakMap<object, WeakMap<(...args: any[]) => any, Decoration<(...args: any[]) => any>>>()
 
     public constructor(state: LuaState) {
         super(state, 'js_proxy')
@@ -51,7 +52,7 @@ class ProxyTypeExtension extends TypeExtension<any> {
 
                 const value = self[key as string | number]
                 if (typeof value === 'function') {
-                    return decorate(value as (...args: any[]) => any, { self })
+                    return this.bindMethod(self, value as (...args: any[]) => any)
                 }
 
                 return value
@@ -115,6 +116,20 @@ class ProxyTypeExtension extends TypeExtension<any> {
 
         // Pop the metatable from the stack.
         state.module.lua_pop(state.address, 1)
+    }
+
+    private bindMethod(self: object, method: (...args: any[]) => any): Decoration<(...args: any[]) => any> {
+        let methods = this.boundMethods.get(self)
+        if (!methods) {
+            methods = new WeakMap()
+            this.boundMethods.set(self, methods)
+        }
+        let bound = methods.get(method)
+        if (!bound) {
+            bound = decorate(method, { self })
+            methods.set(method, bound)
+        }
+        return bound
     }
 
     public isType(_thread: Thread, _index: number, type: LuaType, name?: string): boolean {

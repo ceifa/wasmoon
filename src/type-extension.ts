@@ -9,14 +9,15 @@ export default abstract class LuaTypeExtension<T> {
     /** Owns this extension's metatable and function pointers, so its lifetime bounds theirs. */
     protected state: LuaState
     /**
-     * A weak valued table in the registry mapping a reference index to the userdata pushed for it,
-     * so pushing the same value again returns that userdata instead of allocating another one --
-     * which also gives it a stable identity in Lua. Weak, so the cache never keeps a userdata
-     * alive: an entry goes as soon as Lua drops the userdata, before its `__gc` releases the
-     * reference index it is keyed by. Per extension, because the same value pushed through two
-     * extensions must not share a userdata carrying the wrong metatable.
+     * A weak valued table in the registry mapping a reference index to the Lua value pushed for it
+     * (the userdata here, the closure over it in the function extension), so pushing the same value
+     * again returns that one instead of allocating another -- which also gives it a stable identity
+     * in Lua. Weak, so the cache never keeps a Lua value alive: an entry goes as soon as Lua drops
+     * the value, before the userdata's `__gc` releases the reference index it is keyed by. Per
+     * extension, because the same value pushed through two extensions must not share a userdata
+     * carrying the wrong metatable.
      */
-    private readonly userdataCacheReference: bigint
+    protected readonly pushedValueCacheReference: bigint
 
     public constructor(state: LuaState, name: string) {
         this.state = state
@@ -28,7 +29,7 @@ export default abstract class LuaTypeExtension<T> {
         module.lua_pushstring(state.address, 'v')
         module.lua_setfield(state.address, -2, '__mode')
         module.lua_setmetatable(state.address, -2)
-        this.userdataCacheReference = BigInt(module.luaL_ref(state.address, LUA_REGISTRYINDEX))
+        this.pushedValueCacheReference = BigInt(module.luaL_ref(state.address, LUA_REGISTRYINDEX))
     }
 
     public isType(_thread: Thread, _index: number, type: LuaType, name?: string): boolean {
@@ -80,7 +81,7 @@ export default abstract class LuaTypeExtension<T> {
 
         // The cache table stays at the bottom for the whole push, so the probe and the store
         // below share the one registry fetch.
-        module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, this.userdataCacheReference)
+        module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, this.pushedValueCacheReference)
 
         const existingIndex = module.getRefIndex(target)
         if (existingIndex !== undefined) {
