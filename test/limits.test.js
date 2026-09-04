@@ -119,4 +119,35 @@ describe('Run limits', () => {
             expect(error.message).to.contain('raised after the interrupt was caught')
         })
     })
+
+    it('an interrupt inside a coroutine unwinds the coroutine too', async function () {
+        this.timeout(20_000)
+        using state = await getState()
+
+        const outcome = state.doStringSync(
+            `local co = coroutine.create(function () ${busyLoop} end)
+             local ok = coroutine.resume(co)
+             return tostring(ok) .. " " .. coroutine.status(co)`,
+            { maxInstructions: 5_000 },
+        )
+
+        expect(outcome).to.be.equal('false dead')
+    })
+
+    it('an interrupt token the script kept does not turn a later run into a limit error', async function () {
+        this.timeout(20_000)
+        using state = await getState({ objects: 'copy', errors: false })
+
+        state.doStringSync(`local ok, token = pcall(function () ${busyLoop} end) saved = token`, { maxInstructions: 5_000 })
+
+        let error
+        try {
+            state.doStringSync('error(saved)')
+        } catch (err) {
+            error = err
+        }
+
+        expect(error).to.be.an('error')
+        expect(error).to.not.be.an.instanceOf(LuaInterruptError)
+    })
 })

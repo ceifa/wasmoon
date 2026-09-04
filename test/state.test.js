@@ -316,6 +316,15 @@ describe('State', () => {
         expect(returns.at(-1)).to.be.a('function')
     })
 
+    it('call a global function that raises should throw instead of panicking', async () => {
+        using state = await getState()
+        state.doStringSync('function boom() error("kaboom") end')
+
+        expect(() => state.call('boom')).to.throw('kaboom')
+        expect(state.isClosed()).to.be.equal(false)
+        expect(state.doStringSync('return 1 + 1')).to.be.equal(2)
+    })
+
     it('get a lua thread should succeed', async () => {
         using state = await getState()
 
@@ -646,7 +655,7 @@ describe('State', () => {
 
     it('calling a class with no methods still constructs it', async () => {
         using state = await getState()
-        class Empty {}
+        class Empty { }
         state.set('Empty', Empty)
 
         expect(await state.doString('return Empty()')).to.be.an.instanceOf(Empty)
@@ -1221,6 +1230,14 @@ describe('State', () => {
 
         expect(await state.doString('return type(value)')).to.be.equal('userdata')
         expect(state.get('value')).to.be.null
+    })
+
+    it('reading a field off the null sentinel should be nil', async () => {
+        using state = await getState()
+        state.set('value', null)
+
+        expect(await state.doString('return type(value.anything)')).to.be.equal('nil')
+        expect(await state.doString('return value.anything == nil')).to.be.true
     })
 
     it('a pushed null should equal the injected null global', async () => {

@@ -41,10 +41,6 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
         this.callbackContext = state.newAnchoredThread().thread
         this.pooledCallThread = this.callbackContext.newAnchoredThread().thread
 
-        if (!this.functionRegistry) {
-            state.warn('FunctionTypeExtension: FinalizationRegistry not found. Memory leaks likely.')
-        }
-
         this.gcPointer = this.createGcFunction()
 
         // Creates metatable if it doesn't exist, always pushes it onto the stack.
@@ -257,7 +253,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
             }
         }
 
-        this.functionRegistry?.register(jsFunc, func)
+        this.functionRegistry.register(jsFunc, func)
 
         return jsFunc
     }

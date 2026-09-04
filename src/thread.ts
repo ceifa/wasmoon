@@ -129,6 +129,7 @@ export default class Thread {
         // Also covers the resumes `run` makes after an await, where the state can have been closed
         // by anything else that got to run in the meantime.
         this.assertNotClosed()
+        this.rootThread.pendingInterrupt = undefined
         // The shared slot is safe for the same reason the one behind it is: C writes the count as it
         // returns and it is read straight after, with nothing interleaved. A nested resume has
         // finished with the slot by the time this one's lua_resume writes to it.
@@ -209,6 +210,7 @@ export default class Thread {
 
     public runSync(argCount = 0, options?: LuaRunOptions): MultiReturn {
         this.assertNotClosed()
+        this.rootThread.pendingInterrupt = undefined
         const restore = this.applyRunOptions(options)
         try {
             const base = this.getTop() - argCount - 1 // The 1 is for the function to run
@@ -225,6 +227,7 @@ export default class Thread {
 
     public call(name: string, ...args: any[]): MultiReturn {
         this.assertNotClosed()
+        this.rootThread.pendingInterrupt = undefined
         const type = this.module.lua_getglobal(this.address, name)
         if (type !== LuaType.Function) {
             throw new TypeError(`cannot call '${name}': expected a function, got ${LuaType[type]}`)
@@ -235,7 +238,7 @@ export default class Thread {
         }
 
         const base = this.getTop() - args.length - 1 // The 1 is for the function to run
-        this.module.lua_callk(this.address, args.length, LUA_MULTRET, 0, null)
+        this.assertOk(this.module.lua_pcallk(this.address, args.length, LUA_MULTRET, 0, 0, null))
         return this.getStackValues(base)
     }
 
@@ -264,8 +267,8 @@ export default class Thread {
         const target = decoration ? decoration.target : rawValue
 
         if (target instanceof Thread) {
-            const isMain = this.module.lua_pushthread(target.address) === 1
-            if (!isMain) {
+            this.module.lua_pushthread(target.address)
+            if (target.address !== this.address) {
                 this.module.lua_xmove(target.address, this.address, 1)
             }
             return
@@ -661,14 +664,14 @@ export default class Thread {
             maxInstructions !== undefined ? Math.max(1, Math.min(INSTRUCTION_HOOK_COUNT, maxInstructions)) : INSTRUCTION_HOOK_COUNT
 
         if (!this.hookFunctionPointer) {
-            this.hookFunctionPointer = this.module.addFunction((): void => {
+            this.hookFunctionPointer = this.module.addFunction((hookL: LuaAddress): void => {
                 // Reads this.limits rather than closing over them, so a hook allocated for an
                 // earlier configuration still honours the current one.
                 const error = this.checkHookLimits()
                 if (error) {
                     this.rootThread.pendingInterrupt = error
-                    this.module.lua_pushlightuserdata(this.address, this.module.interruptToken)
-                    this.module.lua_error(this.address)
+                    this.module.lua_pushlightuserdata(hookL, this.module.interruptToken)
+                    this.module.lua_error(hookL)
                 }
             }, 'vii')
         }

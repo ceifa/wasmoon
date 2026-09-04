@@ -24,8 +24,7 @@ class NullTypeExtension extends TypeExtension<unknown> {
             state.module.lua_pushcclosure(state.address, this.gcPointer, 0)
             state.module.lua_setfield(state.address, metatableIndex, '__gc')
 
-            // Add an __index method that returns nothing.
-            state.pushValue(() => null)
+            state.pushValue(() => undefined)
             state.module.lua_setfield(state.address, metatableIndex, '__index')
 
             state.pushValue(() => 'null')

@@ -148,6 +148,32 @@ describe('Custom type extensions', () => {
 })
 
 describe('Thread lifecycle', () => {
+    it('pushValue of the main thread should land on the pushing stack', async () => {
+        using state = await getState()
+        const thread = state.newThread()
+        const stateTop = state.getTop()
+
+        thread.pushValue(state)
+
+        expect(thread.getTop()).to.be.equal(1)
+        expect(state.getTop()).to.be.equal(stateTop)
+        expect(thread.getValue(-1)).to.be.equal(state)
+
+        thread.pop()
+    })
+
+    it('pushValue of a thread onto itself should not move anything', async () => {
+        using state = await getState()
+        const thread = state.newThread()
+
+        thread.pushValue(thread)
+
+        expect(thread.getTop()).to.be.equal(1)
+        expect(thread.getValue(-1)).to.be.equal(thread)
+
+        thread.pop()
+    })
+
     it('resetThread should let a finished thread be loaded again', async () => {
         using state = await getState()
         const thread = state.newThread()

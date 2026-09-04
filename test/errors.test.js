@@ -75,6 +75,29 @@ describe('errors option', () => {
         expect(await state.doString(catchIt('err.message'))).to.be.equal('kaboom')
     })
 
+    it('should expose name and stack when on', async () => {
+        using state = await getState({ errors: true })
+        setThrow(state)
+
+        expect(await state.doString(catchIt('err.name'))).to.be.equal('Error')
+        expect(await state.doString(catchIt('type(err.stack)'))).to.be.equal('string')
+    })
+
+    it('should read an unknown field as nil when on', async () => {
+        using state = await getState({ errors: true })
+        setThrow(state)
+
+        expect(await state.doString(catchIt('type(err.nope)'))).to.be.equal('nil')
+        expect(await state.doString(catchIt('err.nope == nil'))).to.be.equal(true)
+    })
+
+    it('should be read-only when on', async () => {
+        using state = await getState({ errors: true })
+        setThrow(state)
+
+        await expect(state.doString(catchIt('err.message = "rewritten"'))).to.eventually.be.rejected
+    })
+
     it('should be overridable to off when objects is copy', async () => {
         using state = await getState({ objects: 'copy', errors: false })
         setThrow(state)

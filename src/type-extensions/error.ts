@@ -22,12 +22,17 @@ class ErrorTypeExtension extends TypeExtension<Error> {
             state.module.lua_pushcclosure(state.address, this.gcPointer, 0)
             state.module.lua_setfield(state.address, metatableIndex, '__gc')
 
-            // Add an __index method that returns the message field
             state.pushValue((jsRefError: Error, key: unknown) => {
-                if (key === 'message') {
-                    return jsRefError.message
+                switch (key) {
+                    case 'message':
+                        return jsRefError.message
+                    case 'name':
+                        return jsRefError.name
+                    case 'stack':
+                        return jsRefError.stack
+                    default:
+                        return undefined
                 }
-                return null
             })
             state.module.lua_setfield(state.address, metatableIndex, '__index')
 
