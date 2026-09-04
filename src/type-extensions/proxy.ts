@@ -85,12 +85,16 @@ class ProxyTypeExtension extends TypeExtension<any> {
             state.module.lua_setfield(state.address, metatableIndex, '__len')
 
             state.pushValue((self: any) => {
-                const keys = Object.getOwnPropertyNames(self)
+                const isArray = Array.isArray(self)
+                const keys = isArray ? self : Object.keys(self)
                 let i = 0
                 // Stateful rather than stateless. First call is with nil.
                 return MultiReturn.of(
                     () => {
-                        const ret = MultiReturn.of(keys[i], self[keys[i]])
+                        if (i >= keys.length) {
+                            return undefined
+                        }
+                        const ret = isArray ? MultiReturn.of(i + 1, self[i]) : MultiReturn.of(keys[i], self[keys[i]])
                         i++
                         return ret
                     },

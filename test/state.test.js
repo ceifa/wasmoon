@@ -209,6 +209,35 @@ describe('State', () => {
         expect(keys).to.be.equal('own')
     })
 
+    it('pairs over a proxied array should yield 1-based numeric keys', async () => {
+        using state = await getState()
+        state.set('arr', ['a', 'b', 'c'])
+
+        const out = await state.doString(`
+            local out = {}
+            for key, value in pairs(arr) do out[#out + 1] = type(key) .. ':' .. tostring(key) .. '=' .. value end
+            return table.concat(out, ',')
+        `)
+
+        expect(out).to.be.equal('number:1=a,number:2=b,number:3=c')
+    })
+
+    it('pairs over a proxied object should yield only own enumerable keys', async () => {
+        using state = await getState()
+        const obj = Object.create({ inherited: 'yes' })
+        obj.own = 'mine'
+        Object.defineProperty(obj, 'hidden', { value: 1, enumerable: false })
+        state.set('obj', obj)
+
+        const out = await state.doString(`
+            local out = {}
+            for key, value in pairs(obj) do out[#out + 1] = key .. '=' .. value end
+            return table.concat(out, ',')
+        `)
+
+        expect(out).to.be.equal('own=mine')
+    })
+
     it('non enumerable properties should not be copied into the lua table', async () => {
         using state = await getState({ objects: 'copy' })
         const obj = { own: 'mine' }
@@ -655,7 +684,7 @@ describe('State', () => {
 
     it('calling a class with no methods still constructs it', async () => {
         using state = await getState()
-        class Empty { }
+        class Empty {}
         state.set('Empty', Empty)
 
         expect(await state.doString('return Empty()')).to.be.an.instanceOf(Empty)
