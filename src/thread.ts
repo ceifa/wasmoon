@@ -668,7 +668,7 @@ export default class Thread {
             this.hookFunctionPointer = this.module.addFunction((hookL: LuaAddress): void => {
                 // Reads this.limits rather than closing over them, so a hook allocated for an
                 // earlier configuration still honours the current one.
-                const error = this.checkHookLimits()
+                const error = this.checkHookLimits(hookL)
                 if (error) {
                     this.rootThread.pendingInterrupt = error
                     this.module.lua_pushlightuserdata(hookL, this.module.interruptToken)
@@ -680,12 +680,17 @@ export default class Thread {
         this.module.lua_sethook(this.address, this.hookFunctionPointer, LuaEventMasks.Count, this.hookCount)
     }
 
-    private checkHookLimits(): LuaInterruptError | undefined {
+    private checkHookLimits(hookL: LuaAddress): LuaInterruptError | undefined {
         const { maxInstructions } = this.limits
         if (maxInstructions !== undefined) {
             this.instructionsUsed += this.hookCount
-            if (this.instructionsUsed > maxInstructions) {
+            const remaining = maxInstructions - this.instructionsUsed
+            if (remaining <= 0) {
                 return new LuaInstructionLimitError(`thread exceeded its budget of ${maxInstructions} instructions`)
+            }
+            if (remaining < this.hookCount) {
+                this.hookCount = remaining
+                this.module.lua_sethook(hookL, this.hookFunctionPointer ?? null, LuaEventMasks.Count, remaining)
             }
         }
         return this.checkYieldLimits()

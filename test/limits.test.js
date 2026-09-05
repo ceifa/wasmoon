@@ -4,6 +4,8 @@ import { getState } from './utils.js'
 
 describe('Run limits', () => {
     const busyLoop = 'local x = 0 for i = 1, 1e9 do x = x + 1 end return x'
+    const countingLoop = 'i = 0 while true do i = i + 1 end'
+    const instructionsPerIteration = 4
 
     it('timeout interrupts a tight loop', async function () {
         this.timeout(20_000)
@@ -17,6 +19,20 @@ describe('Run limits', () => {
         using state = await getState()
 
         await expect(state.doString(busyLoop, { maxInstructions: 5_000 })).to.eventually.be.rejectedWith(LuaInstructionLimitError)
+    })
+
+    it('maxInstructions stops inside the budget rather than a hook period past it', async function () {
+        this.timeout(20_000)
+
+        for (const maxInstructions of [500, 1_000, 1_500, 5_000]) {
+            using state = await getState()
+
+            await expect(state.doString(countingLoop, { maxInstructions })).to.eventually.be.rejectedWith(LuaInstructionLimitError)
+
+            const executed = state.get('i') * instructionsPerIteration
+            expect(executed, `budget of ${maxInstructions}`).to.be.at.most(maxInstructions)
+            expect(executed, `budget of ${maxInstructions}`).to.be.above(maxInstructions - 2 * instructionsPerIteration)
+        }
     })
 
     it('an already aborted signal stops the run', async function () {
