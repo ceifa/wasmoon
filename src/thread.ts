@@ -22,8 +22,10 @@ import {
     LuaTimeoutError,
     LuaType,
     type LuaWarnHandler,
+    PointerSize,
 } from './types'
-import { isEmscriptenUnwind, isPromise, yieldToEventLoop } from './utils'
+import { isEmscriptenUnwind, isPromise } from './utils'
+import { awaitInterruptible, yieldToEventLoop } from './async'
 
 export interface OrderedExtension {
     // Bigger is more important
@@ -126,6 +128,18 @@ export default class Thread {
         this.assertOk(this.module.luaL_loadfilex(this.address, filename, options?.mode ?? 't'))
     }
 
+    /**
+     * Unwinds the currently running coroutine at `L` with a limit error, the same way the debug
+     * hook does: the token identifies it in {@link assertOk}, so a `pcall` in the script cannot
+     * swallow it. Used by the JSPI await hook to abandon a run parked past its deadline or on an
+     * aborted signal. Returns what `lua_error` returns, which never actually returns.
+     */
+    public interruptWith(L: LuaAddress, error: LuaInterruptError): number {
+        this.rootThread.pendingInterrupt = error
+        this.module.lua_pushlightuserdata(L, this.module.interruptToken)
+        return this.module.lua_error(L)
+    }
+
     public resume(argCount = 0): LuaResumeResult {
         // Also covers the resumes `run` makes after an await, where the state can have been closed
         // by anything else that got to run in the meantime.
@@ -165,10 +179,122 @@ export default class Thread {
         this.assertNotClosed()
         const restore = this.applyRunOptions(options)
         try {
-            let resumeResult: LuaResumeResult = this.resume(argCount)
+            if (this.module.useJspi) {
+                return await this.runJspi(argCount, options)
+            }
+            return await this.runYielding(argCount, options)
+        } finally {
+            restore()
+        }
+    }
+
+    /**
+     * The engine-agnostic run loop. An `:await()` parks by yielding the promise, which is awaited
+     * here and can be interrupted by the deadline or abort signal. Any other yield is a host yield:
+     * its values go to `options.onYield`, and its return decides what the resume hands back.
+     */
+    private async runYielding(argCount: number, options?: LuaRunOptions): Promise<MultiReturn> {
+        return this.continueYielding(this.resumeYielding(argCount), options)
+    }
+
+    /**
+     * A resume of the yielding loop: an `:await()` it reaches must park by yielding the coroutine
+     * rather than suspending the wasm stack, since this resume is not a promising one. Forced off
+     * for the resume so a JSPI run parked elsewhere, which leaves the flag on, does not mislead it.
+     */
+    public resumeYielding(argCount = 0): LuaResumeResult {
+        const previousCanSuspend = this.module.stackCanSuspend
+        this.module.stackCanSuspend = false
+        try {
+            return this.resume(argCount)
+        } finally {
+            this.module.stackCanSuspend = previousCanSuspend
+        }
+    }
+
+    /** The yielding run loop, continued from an already obtained resume result. */
+    public async continueYielding(first: LuaResumeResult, options?: LuaRunOptions): Promise<MultiReturn> {
+        let resumeResult: LuaResumeResult = first
+        while (resumeResult.result === LuaReturn.Yield) {
+            // The hook only fires while Lua runs, so a parked thread is checked here instead.
+            const limitError = this.checkYieldLimits()
+            if (limitError) {
+                if (resumeResult.resultCount > 0) {
+                    this.pop(resumeResult.resultCount)
+                }
+                throw limitError
+            }
+
+            // An unrepresentable yielded value is not necessarily an error: only an await needs to
+            // read it, and a host yield of one is handed to onYield as it lies on the stack.
+            let awaited: PromiseLike<unknown> | undefined
+            if (resumeResult.resultCount > 0) {
+                let lastValue: unknown
+                try {
+                    lastValue = this.getValue(-1)
+                } catch {
+                    lastValue = undefined
+                }
+                if (isPromise(lastValue)) {
+                    awaited = lastValue
+                }
+            }
+
+            let nextArgCount = 0
+            if (awaited) {
+                this.pop(resumeResult.resultCount)
+                const { deadline, signal } = this.getLimits()
+                await awaitInterruptible(awaited, signal, deadline)
+            } else if (options?.onYield) {
+                const values = this.getStackValues(this.getTop() - resumeResult.resultCount)
+                this.assertNotClosed()
+                const resumeWith = await options.onYield(values)
+                nextArgCount = this.pushResumeValues(resumeWith)
+            } else {
+                if (resumeResult.resultCount > 0) {
+                    this.pop(resumeResult.resultCount)
+                }
+                // Skip a tick so promises, timers and the like get a turn before Lua resumes.
+                await yieldToEventLoop()
+            }
+
+            // The wait itself can outlast the deadline, and resuming would hand Lua another full
+            // slice before the hook noticed.
+            const waitError = this.checkYieldLimits()
+            if (waitError) {
+                throw waitError
+            }
+
+            resumeResult = this.resumeYielding(nextArgCount)
+        }
+
+        this.assertOk(resumeResult.result)
+        return this.getStackValues()
+    }
+
+    /**
+     * Runs under JSPI, so an `:await()` suspends the wasm stack instead of yielding a promise. Only
+     * a host `coroutine.yield` returns control here, and it is handled the same as in the yielding
+     * engine; the awaits resolve inside the promising resume without the loop seeing them.
+     */
+    private async runJspi(argCount: number, options?: LuaRunOptions): Promise<MultiReturn> {
+        const module = this.module
+        const nresPointer = module.emscripten._malloc(PointerSize)
+        if (!nresPointer) {
+            throw new Error('failed to allocate the JSPI result count slot')
+        }
+        // A promising resume parked on an await cannot be interrupted from outside, and closing the
+        // state frees the stack it would resume into. This rejects the run instead; the await hook,
+        // seeing the state closed, stays suspended rather than resuming into freed memory.
+        const rootState = this.rootThread as unknown as { onClose(listener: () => void): () => void }
+        let onClosed: () => void = NO_RESTORE
+        const closed = new Promise<never>((_resolve, reject) => {
+            onClosed = rootState.onClose(() => reject(new Error('the Lua state is closed')))
+        })
+        closed.catch(NO_RESTORE)
+        try {
+            let resumeResult = await Promise.race([this.resumeJspi(argCount, nresPointer), closed])
             while (resumeResult.result === LuaReturn.Yield) {
-                // If it's completed there's no need to needlessly discard the output. The hook
-                // only fires while Lua runs, so a parked thread is checked here instead.
                 const limitError = this.checkYieldLimits()
                 if (limitError) {
                     if (resumeResult.resultCount > 0) {
@@ -176,48 +302,93 @@ export default class Thread {
                     }
                     throw limitError
                 }
-                if (resumeResult.resultCount > 0) {
-                    const lastValue = this.getValue(-1)
+
+                let nextArgCount = 0
+                if (options?.onYield) {
+                    const values = this.getStackValues(this.getTop() - resumeResult.resultCount)
+                    this.assertNotClosed()
+                    const resumeWith = await options.onYield(values)
+                    nextArgCount = this.pushResumeValues(resumeWith)
+                } else if (resumeResult.resultCount > 0) {
                     this.pop(resumeResult.resultCount)
-
-                    // If there's a result and it's a promise, then wait for it.
-                    if (isPromise(lastValue)) {
-                        await lastValue
-                    } else {
-                        // If it's a non-promise, then skip a tick to yield for promises, timers, etc.
-                        await yieldToEventLoop()
-                    }
-                } else {
-                    // If there's nothing to yield, then skip a tick to yield for promises, timers, etc.
-                    await yieldToEventLoop()
                 }
 
-                // The wait itself can outlast the deadline, and resuming would hand Lua another
-                // full slice before the hook noticed.
-                const waitError = this.checkYieldLimits()
-                if (waitError) {
-                    throw waitError
-                }
-
-                resumeResult = this.resume(0)
+                resumeResult = await Promise.race([this.resumeJspi(nextArgCount, nresPointer), closed])
             }
-
             this.assertOk(resumeResult.result)
+            // A parked run interrupted by its deadline or signal raises the interrupt into Lua, so a
+            // pcall in the script could swallow it and let the run finish. As with the debug hook,
+            // the interrupt still ends the run rather than being catchable from Lua.
+            const interrupt = this.rootThread.pendingInterrupt
+            if (interrupt) {
+                this.rootThread.pendingInterrupt = undefined
+                throw interrupt
+            }
             return this.getStackValues()
         } finally {
-            restore()
+            onClosed()
+            module.emscripten._free(nresPointer)
         }
+    }
+
+    /**
+     * One promising `lua_resume`. The promise it returns resolves only once the resume runs to a
+     * host yield, a return or an error -- an `:await()` in between suspends and resumes the wasm
+     * stack invisibly. The stack pointer is put back after the synchronous portion so a sync call
+     * made while this run is parked reuses the C stack rather than growing past it.
+     */
+    private async resumeJspi(argCount: number, nresPointer: number): Promise<LuaResumeResult> {
+        this.assertNotClosed()
+        this.rootThread.pendingInterrupt = undefined
+        const module = this.module
+        const previousCanSuspend = module.stackCanSuspend
+        const previousDeadline = module.activeRunDeadline
+        const previousSignal = module.activeRunSignal
+        module.stackCanSuspend = true
+        const { deadline, signal } = this.getLimits()
+        module.activeRunDeadline = deadline
+        module.activeRunSignal = signal
+        const entryStackPointer = module.stackSave()
+        module.writePointer(nresPointer, 0)
+        try {
+            const pending = module.promisingResume()(this.address, null, argCount, nresPointer)
+            module.stackRestore(entryStackPointer)
+            const result: LuaReturn = await pending
+            return { result, resultCount: module.readPointer(nresPointer) }
+        } finally {
+            module.stackCanSuspend = previousCanSuspend
+            module.activeRunDeadline = previousDeadline
+            module.activeRunSignal = previousSignal
+            module.stackRestore(entryStackPointer)
+        }
+    }
+
+    /** Pushes the values a host yield resumes with, and returns how many. */
+    private pushResumeValues(values: unknown): number {
+        if (values === undefined) {
+            return 0
+        }
+        if (values instanceof MultiReturn) {
+            for (const value of values) {
+                this.pushValue(value)
+            }
+            return values.length
+        }
+        this.pushValue(values)
+        return 1
     }
 
     public runSync(argCount = 0, options?: LuaRunOptions): MultiReturn {
         this.assertNotClosed()
         this.rootThread.pendingInterrupt = undefined
         const restore = this.applyRunOptions(options)
+        this.module.syncDepth++
         try {
             const base = this.getTop() - argCount - 1 // The 1 is for the function to run
             this.assertOk(this.module.lua_pcallk(this.address, argCount, LUA_MULTRET, 0, 0, null))
             return this.getStackValues(base)
         } finally {
+            this.module.syncDepth--
             restore()
         }
     }
@@ -239,7 +410,12 @@ export default class Thread {
         }
 
         const base = this.getTop() - args.length - 1 // The 1 is for the function to run
-        this.assertOk(this.module.lua_pcallk(this.address, args.length, LUA_MULTRET, 0, 0, null))
+        this.module.syncDepth++
+        try {
+            this.assertOk(this.module.lua_pcallk(this.address, args.length, LUA_MULTRET, 0, 0, null))
+        } finally {
+            this.module.syncDepth--
+        }
         return this.getStackValues(base)
     }
 

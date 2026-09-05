@@ -3,12 +3,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LuaRuntime } from '../dist/index.js'
 
+// Lets the whole suite run under either async engine: WASMOON_ASYNC=yield forces the fallback,
+// 'jspi' requires JSPI, and the default lets the platform choose.
+const asyncEngine = process.env.WASMOON_ASYNC
+
 export const getLua = (options) => {
-    return LuaRuntime.load(options)
+    return LuaRuntime.load(asyncEngine ? { async: asyncEngine, ...options } : options)
 }
 
 export const getState = async (config = {}) => {
-    const lua = await LuaRuntime.load()
+    const lua = await getLua()
     return lua.createState({
         inject: true,
         ...config,

@@ -11,7 +11,7 @@
         "consistent-function-scoping": "off",
         "promise/always-return": "off"
     },
-    "ignorePatterns": ["dist/**", "build/**", "rolldown.config.ts", "rolldown.config.*.js", "utils/**"],
+    "ignorePatterns": ["dist/**", "build/**", "docs/**", "rolldown.config.ts", "rolldown.config.*.js", "utils/**"],
     "env": {
         "builtin": true
     }

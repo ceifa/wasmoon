@@ -3,6 +3,7 @@
 // `/// <reference types="emscripten" />` at the top of the emitted declarations to cover everyone
 // else. tsc drops the directive when it is written here, hence the build step.
 import initWasmModule from '../build/glue.js'
+import { settleOrInterrupt } from './async'
 import { defaultWarnHandler, LUA_REGISTRYINDEX, type LuaAddress, LuaReturn, LuaType, type LuaWarnHandler, PointerSize } from './types'
 // A rolldown plugin will resolve this to the current version on package.json
 import version from 'package-version'
@@ -95,6 +96,13 @@ export interface LuaModuleOptions {
      * that state overrides it. Defaults to `console.warn`.
      */
     onWarn?: LuaWarnHandler | undefined
+    /**
+     * Which async engine to run under. `'auto'` (the default) uses JSPI where the platform has it,
+     * so an `:await()` can suspend the wasm stack anywhere, and falls back to the coroutine
+     * yielding engine otherwise. `'jspi'` requires JSPI and throws if it is missing; `'yield'`
+     * forces the fallback, which is useful for tests and for matching the fallback's semantics.
+     */
+    async?: 'auto' | 'jspi' | 'yield' | undefined
 }
 
 // One-shot conversions, so a single stateless codec pair is shared by every module. Streaming
@@ -340,12 +348,14 @@ export default class LuaModule {
             throw new Error(`fs: 'host' needs glue-host.js, which the bundle replaced with a stub because it targets the browser`)
         }
 
+        const asyncEngine = opts.async ?? 'auto'
         const load = async (wasmFile?: string): Promise<LuaModule> => {
             return new LuaModule(
                 await init({ ...(wasmFile === undefined ? {} : { locateFile: () => wasmFile }), preRun, printErr }),
                 opts.onWarn,
                 fs,
                 mounts,
+                asyncEngine,
             )
         }
 
@@ -396,6 +406,8 @@ export default class LuaModule {
     public readonly onWarn: LuaWarnHandler | undefined
     /** Which filesystem this module was loaded with, as {@link LuaModuleOptions.fs}. */
     public readonly fs: LuaFileSystem
+    /** The async engine requested at load, as {@link LuaModuleOptions.async}. */
+    public readonly asyncEngine: 'auto' | 'jspi' | 'yield'
 
     public luaL_checkversion_: (L: LuaAddress, ver: number, sz: number) => void
     public luaL_getmetafield: (L: LuaAddress, obj: number, e: string | null) => LuaType
@@ -536,6 +548,10 @@ export default class LuaModule {
     public lua_upvalueid: (L: LuaAddress, fidx: number, n: number) => LuaAddress
     public lua_upvaluejoin: (L: LuaAddress, fidx1: number, n1: number, fidx2: number, n2: number) => void
     public lua_sethook: (L: LuaAddress, func: number | null, mask: number, count: number) => void
+    /** Installs the await hook the {@link wasmoon_push_jsfunction} closures suspend through. */
+    public wasmoon_set_await_hook: (hook: number) => void
+    /** Pops the reference box on the stack and pushes a JS function closure over it and `callHook`. */
+    public wasmoon_push_jsfunction: (L: LuaAddress, callHook: number) => void
     public lua_gethook: (L: LuaAddress) => number
     public lua_gethookmask: (L: LuaAddress) => number
     public lua_gethookcount: (L: LuaAddress) => number
@@ -590,6 +606,57 @@ export default class LuaModule {
      * of the limit that was actually hit.
      */
     public readonly interruptToken: number
+    /**
+     * The wasm stack pointer while control is in JS with none of our wasm frames below, captured
+     * once. A JSPI suspension frees the C stack from the run's frontier up to here, and restores it
+     * before resuming. See {@link installAwaitHook}.
+     */
+    public readonly mainStackPointer: number
+    /**
+     * Set true only while a JSPI promising resume is the innermost driver on the stack, so an
+     * `:await()` knows a suspend would reach a promising boundary. A synchronous entry point
+     * (doStringSync, a JS→Lua callback) sets it false around its own resume, so an await there
+     * takes the yield path instead of trapping.
+     */
+    public stackCanSuspend = false
+    /**
+     * Depth of synchronous entry points on the JS stack. While above zero an `:await()` cannot
+     * suspend or yield to the event loop, because the outermost caller is blocking.
+     */
+    public syncDepth = 0
+    /**
+     * The promise a JSPI `:await()` stashed for the C trampoline's await hook to suspend on, along
+     * with how to marshal its settled value back onto the Lua stack. Read synchronously by the
+     * await hook right after the await closure returns, so a single slot is reentrancy safe.
+     */
+    public pendingSuspend:
+        | {
+              promise: PromiseLike<unknown>
+              signal: AbortSignal | undefined
+              deadline: number | undefined
+              isClosed: () => boolean
+              onResolve: (value: unknown) => number
+              onReject: (error: unknown) => number
+              onInterrupt: () => number
+          }
+        | undefined
+    private awaitHookPointer: number | undefined
+    /**
+     * The deadline and abort signal of the JSPI run currently resuming, so an `:await()` it reaches
+     * can be interrupted while parked. Set around each promising resume rather than read from the
+     * awaiting thread, whose JS wrapper is often a fresh object without the run's limits on it.
+     */
+    public activeRunDeadline: number | undefined
+    public activeRunSignal: AbortSignal | undefined
+    /**
+     * Whether runs on this module go through JSPI. On unless the platform lacks it or `async` asked
+     * for the yielding engine, in which case an `:await()` can only park at a coroutine boundary.
+     */
+    public readonly useJspi: boolean
+    /** `promising(lua_resume)`, built once. */
+    private promisingResumeFunction:
+        | ((L: LuaAddress, from: LuaAddress | null, narg: number, nres: number) => Promise<LuaReturn>)
+        | undefined
     private stringBuffer = 0
     /** Built on first use by {@link referenceGcFunction}, then kept for the module's lifetime. */
     private referenceGcPointer: number | undefined
@@ -599,11 +666,19 @@ export default class LuaModule {
         onWarn?: LuaWarnHandler,
         fs: LuaFileSystem = 'memory',
         mounts: readonly ResolvedMount[] = [],
+        asyncEngine: 'auto' | 'jspi' | 'yield' = 'auto',
     ) {
         this.emscripten = module
         this.onWarn = onWarn
         this.fs = fs
         this.mounts = [...mounts]
+        this.asyncEngine = asyncEngine
+
+        if (asyncEngine === 'jspi' && !this.jspiSupported) {
+            throw new Error(
+                "async: 'jspi' needs a platform with the JavaScript Promise Integration API and a glue built with SUPPORT_LONGJMP=wasm",
+            )
+        }
 
         this.luaL_checkversion_ = this.cwrap('luaL_checkversion_', null, ['number', 'number', 'number'])
         this.luaL_getmetafield = this.cwrap('luaL_getmetafield', 'number', ['number', 'number', 'string'])
@@ -736,6 +811,8 @@ export default class LuaModule {
         this.lua_upvalueid = this.cwrap('lua_upvalueid', 'number', ['number', 'number', 'number'])
         this.lua_upvaluejoin = this.cwrap('lua_upvaluejoin', null, ['number', 'number', 'number', 'number', 'number'])
         this.lua_sethook = this.cwrap('lua_sethook', null, ['number', 'number', 'number', 'number'])
+        this.wasmoon_set_await_hook = this.cwrap('wasmoon_set_await_hook', null, ['number'])
+        this.wasmoon_push_jsfunction = this.cwrap('wasmoon_push_jsfunction', null, ['number', 'number'])
         this.lua_gethook = this.cwrap('lua_gethook', 'number', ['number'])
         this.lua_gethookmask = this.cwrap('lua_gethookmask', 'number', ['number'])
         this.lua_gethookcount = this.cwrap('lua_gethookcount', 'number', ['number'])
@@ -774,6 +851,64 @@ export default class LuaModule {
         if (!this.sizeScratch || !this.resultCountScratch || !this.gcArgsScratch || !this.interruptToken) {
             throw new Error('failed to allocate the scratch buffers for C out parameters')
         }
+
+        // Captured while no Lua is running, so it is the top of the C stack in JS land.
+        this.mainStackPointer = this.stackSave()
+        this.useJspi = this.jspiSupported && this.asyncEngine !== 'yield'
+        if (this.useJspi) {
+            this.installAwaitHook()
+        }
+    }
+
+    /** {@link promising}-wrapped `lua_resume`, built on first use and kept. */
+    public promisingResume(): (L: LuaAddress, from: LuaAddress | null, narg: number, nres: number) => Promise<LuaReturn> {
+        this.promisingResumeFunction ??= this.promising(this.lua_resume as (...args: any[]) => LuaReturn)
+        return this.promisingResumeFunction
+    }
+
+    /**
+     * Installs the single C await hook every JS function closure suspends through under JSPI. It
+     * awaits the promise the {@link pendingSuspend} slot was left holding, having first freed this
+     * run's slice of the shared linear-memory C stack so other runs can use it while parked, then
+     * restores that slice and marshals the settled value back before returning into Lua.
+     */
+    private installAwaitHook(): void {
+        this.awaitHookPointer = this.emscripten.addFunction(
+            this.suspending(async (L: LuaAddress): Promise<number> => {
+                const suspend = this.pendingSuspend
+                this.pendingSuspend = undefined
+                if (suspend === undefined) {
+                    throw new Error('the JSPI await hook ran with no pending suspend')
+                }
+
+                const stackPointer = this.stackSave()
+                const savedStack = this.readHeapSlice(stackPointer, this.mainStackPointer)
+                this.stackRestore(this.mainStackPointer)
+
+                const outcome = await settleOrInterrupt(suspend.promise, suspend.signal, suspend.deadline)
+
+                // The state was closed while parked: lua_close has freed the stack this would
+                // resume into, so stay suspended forever rather than resume into freed memory. The
+                // run itself was already rejected by runJspi's close race.
+                if (suspend.isClosed()) {
+                    await new Promise<never>(() => undefined)
+                }
+
+                // Back on this run's stack: put its frames back before touching Lua, and mark the
+                // stack promising again for any further await this resume reaches.
+                this.writeHeapSlice(stackPointer, savedStack)
+                this.stackRestore(stackPointer)
+                this.stackCanSuspend = true
+
+                void L
+                if (outcome.interrupted) {
+                    return suspend.onInterrupt()
+                }
+                return outcome.resolved ? suspend.onResolve(outcome.value) : suspend.onReject(outcome.error)
+            }),
+            'ii',
+        )
+        this.wasmoon_set_await_hook(this.awaitHookPointer)
     }
 
     /**
@@ -941,6 +1076,44 @@ export default class LuaModule {
     /** The counterpart to {@link readPointer}. */
     public writePointer(pointer: number, value: number): void {
         this.emscripten.HEAPU32[pointer >>> 2] = value
+    }
+
+    /**
+     * Whether this runtime can run Lua under JSPI, so an `:await()` can suspend the wasm stack
+     * anywhere instead of only at a coroutine boundary. Needs the VM support and a glue built with
+     * `SUPPORT_LONGJMP=wasm`, without which a suspend trap fires on the `invoke_*` JS trampolines.
+     */
+    public readonly jspiSupported: boolean =
+        typeof (WebAssembly as { Suspending?: unknown }).Suspending === 'function' &&
+        typeof (WebAssembly as { promising?: unknown }).promising === 'function'
+
+    /** The current wasm stack pointer, saved so a suspended run's C frames can be restored. */
+    public stackSave(): number {
+        return this.emscripten.stackSave()
+    }
+
+    public stackRestore(pointer: number): void {
+        this.emscripten.stackRestore(pointer)
+    }
+
+    /** A copy of `[start, end)` of the wasm heap. Used to preserve a suspended run's C stack. */
+    public readHeapSlice(start: number, end: number): Uint8Array {
+        return this.heap.slice(start, end)
+    }
+
+    /** Writes `bytes` back into the wasm heap at `pointer`. */
+    public writeHeapSlice(pointer: number, bytes: Uint8Array): void {
+        this.heap.set(bytes, pointer)
+    }
+
+    /** Wraps a wasm export so calling it runs Lua on a JSPI stack that can suspend. */
+    public promising<T extends (...args: any[]) => any>(fn: T): (...args: Parameters<T>) => Promise<ReturnType<T>> {
+        return (WebAssembly as unknown as { promising: (fn: T) => (...args: Parameters<T>) => Promise<ReturnType<T>> }).promising(fn)
+    }
+
+    /** Wraps a JS callback so a Lua import can suspend the JSPI stack while it awaits. */
+    public suspending(fn: (...args: any[]) => any): any {
+        return new (WebAssembly as unknown as { Suspending: new (fn: (...args: any[]) => any) => unknown }).Suspending(fn)
     }
 
     /**

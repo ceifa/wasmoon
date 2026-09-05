@@ -1,3 +1,5 @@
+import type MultiReturn from './multireturn'
+
 /**
  * An address in the wasm heap: a `lua_State`, or the storage behind a Lua value. Emscripten
  * function pointers are table indices rather than addresses, so those stay plain numbers.
@@ -130,6 +132,13 @@ export interface LuaRunOptions {
      * promise before the abort is seen, rather than abandoning it mid-flight.
      */
     signal?: AbortSignal | undefined
+    /**
+     * Called with the values of a top level `coroutine.yield` that is not an `:await()`. Its return
+     * becomes the result of that yield when the run resumes; a returned promise is awaited first, a
+     * `LuaMultiReturn` becomes several values, and `undefined` resumes with none. Without a handler
+     * such a yield simply hands control back to the event loop and resumes with nothing, as before.
+     */
+    onYield?: ((values: MultiReturn) => unknown | Promise<unknown>) | undefined
 }
 
 export interface LuaLoadOptions {

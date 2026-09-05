@@ -228,7 +228,7 @@ build.
 
 ### Promises
 
-Promises can be await'd from Lua with some caveats detailed in the below section. To await a Promise call `:await()` on it which will yield the Lua execution until the promise completes.
+Promises can be `await`'d from Lua by calling `:await()` on them, which parks the Lua execution until the promise settles and then returns its value (or raises its rejection as a Lua error).
 
 ```js
 import { LuaRuntime } from 'wasmoon'
@@ -246,60 +246,58 @@ try {
 }
 ```
 
-### Async/Await
+### Async engine
 
-It's not possible to await in a callback from JS into Lua. This is a limitation of Lua but there are some workarounds. It can also be encountered when yielding at the top-level of a file. An example where you might encounter this is a snippet like this:
+Under the hood there are two engines, chosen automatically at load:
+
+- **JSPI** (the default where the platform supports it: Chrome/Edge 137+, Firefox 153+, Node 25+).
+  An `:await()` suspends the whole WebAssembly stack, so it works **anywhere** — inside a
+  `table.sort` comparator, a `string.gsub` callback, a `promise:next` handler, a coroutine nothing
+  drives from the host, or a Lua function called back from JS.
+- **Coroutine yielding** (the fallback, when JSPI is unavailable). An `:await()` parks by yielding
+  the running coroutine, so it works at the top level of a run and anywhere Lua can yield, but not
+  across a C-call boundary such as `table.sort` or `gsub`. Attempting that raises a clear error.
+
+Both engines share the same observable behaviour everywhere they can express it. Force one with the
+`async` option, which is useful for testing or to keep behaviour identical across platforms:
 
 ```js
-local res = sleep(1):next(function ()
-    sleep(10):await()
-    return 15
-end)
-print("res", res:await())
+const lua = await LuaRuntime.load({ async: 'yield' }) // 'auto' (default), 'jspi', or 'yield'
 ```
 
-Which will throw an error like this:
+A run parked on a promise can be interrupted by a `timeout` or an `AbortSignal`, without waiting for
+the promise to settle:
 
-```
-Error: Lua Error(ErrorRun/2): cannot resume dead coroutine
-    at Thread.assertOk (/home/tstableford/projects/wasmoon/dist/index.js:409:23)
-    at Thread.<anonymous> (/home/tstableford/projects/wasmoon/dist/index.js:142:22)
-    at Generator.throw (<anonymous>)
-    at rejected (/home/tstableford/projects/wasmoon/dist/index.js:26:69)
+```js
+await state.doString('sleep(60000):await()', { timeout: 1000 }) // rejects after ~1s
 ```
 
-Or like this:
+#### Awaiting in a JS→Lua callback
 
+A Lua function called from JS runs synchronously and returns its value directly. If it `:await()`s,
+the call becomes asynchronous and returns a `Promise` instead:
+
+```js
+state.set('handler', null)
+await state.doString('handler = function(x) return sleep(10):await() + x end')
+const handler = state.get('handler')
+console.log(await handler(5)) // a promise, because the callback awaited
 ```
-attempt to yield across a C-call boundary
-```
 
-You can workaround this by doing something like below:
+#### Handling a top-level `coroutine.yield`
 
-```lua
-function async(callback)
-    return function(...)
-        local co = coroutine.create(callback)
-        local safe, result = coroutine.resume(co, ...)
+A top level `coroutine.yield` that is not an `:await()` is a *host yield*. Pass `onYield` to receive
+its values and decide what the resume hands back; its return may be a promise, a `LuaMultiReturn` of
+several values, or a single value:
 
-        return Promise.create(function(resolve, reject)
-            local function step()
-                if coroutine.status(co) == "dead" then
-                    local send = safe and resolve or reject
-                    return send(result)
-                end
-
-                safe, result = coroutine.resume(co)
-
-                if safe and result == Promise.resolve(result) then
-                    result:finally(step)
-                else
-                    step()
-                end
-            end
-
-            result:finally(step)
-        end)
-    end
-end
+```js
+const thread = state.newThread()
+thread.loadString('local reply = coroutine.yield("ping") return reply')
+const [result] = await thread.run(0, {
+    onYield: (values) => {
+        console.log(values[0]) // "ping"
+        return 'pong'
+    },
+})
+console.log(result) // "pong"
 ```

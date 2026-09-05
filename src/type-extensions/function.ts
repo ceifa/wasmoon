@@ -4,8 +4,9 @@ import MultiReturn from '../multireturn'
 import RawResult from '../raw-result'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LUA_REGISTRYINDEX, LuaReturn, type LuaAddress, LuaType } from '../types'
+import { LUA_REGISTRYINDEX, LuaReturn, type LuaAddress, type LuaResumeResult, LuaType } from '../types'
 import { isEmscriptenUnwind } from '../utils'
+import { SUSPEND } from '../async'
 
 export type FunctionType = (...args: any[]) => Promise<any> | any
 
@@ -33,6 +34,9 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
      */
     private readonly pooledCallThread: Thread
     private pooledCallThreadInUse = false
+    /** Registry reference anchoring each in-flight non-pooled call thread, so async calls that
+     *  overlap can be released in any order rather than only as a stack. */
+    private readonly callThreadReferences = new Map<Thread, number>()
     /** Milliseconds a Lua function called from JS may run before being interrupted. */
     private readonly functionTimeout: number | undefined
 
@@ -96,7 +100,11 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
             try {
                 const result = target.apply(decorationOptions?.self, args)
 
-                if (result === undefined) {
+                if (result === SUSPEND) {
+                    // The JS function stashed a promise and asked to suspend: -1 tells the C
+                    // trampoline to reach the await hook, which is the only value it treats specially.
+                    return -1
+                } else if (result === undefined) {
                     return 0
                 } else if (result instanceof RawResult) {
                     return result.count
@@ -129,7 +137,11 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
 
     private acquireCallThread(): Thread {
         if (this.pooledCallThreadInUse) {
-            return this.callbackContext.newThread()
+            // Anchored rather than left on the callback context's stack: an async call keeps its
+            // thread past the return, so overlapping ones must release independently, not as a stack.
+            const { thread, reference } = this.callbackContext.newAnchoredThread()
+            this.callThreadReferences.set(thread, reference)
+            return thread
         }
 
         this.pooledCallThreadInUse = true
@@ -139,8 +151,11 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
     private releaseCallThread(callThread: Thread, failed: boolean): void {
         if (callThread !== this.pooledCallThread) {
             callThread.close()
-            // Pop thread used for function call.
-            this.callbackContext.pop()
+            const reference = this.callThreadReferences.get(callThread)
+            if (reference !== undefined) {
+                this.callThreadReferences.delete(callThread)
+                this.state.module.luaL_unref(this.callbackContext.address, LUA_REGISTRYINDEX, reference)
+            }
             return
         }
 
@@ -179,7 +194,10 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
         // the same function under different options stays distinct, as its behaviour is.
         const referent: unknown = affectsCall(decoration.options) ? decoration : decoration.target
 
-        this.pushReference(thread, referent, this.functionWrapper)
+        // Pushed through the C trampoline rather than a bare closure, so an `:await()` inside the
+        // function can suspend the wasm stack under JSPI. The trampoline holds the reference box as
+        // its first upvalue and the wrapper as its second.
+        this.pushReference(thread, referent, (L) => this.state.module.wasmoon_push_jsfunction(L, this.functionWrapper))
         return true
     }
 
@@ -204,6 +222,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
             // A call can leave its thread in an inconsistent state, so each one gets a thread that
             // is either fresh or has been reset since the last call.
             const callThread = this.acquireCallThread()
+            let handedOff = false
             let failed = false
             try {
                 const internalType = callThread.module.lua_rawgeti(callThread.address, LUA_REGISTRYINDEX, func)
@@ -223,25 +242,43 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
                     callThread.setDeadline(Date.now() + this.functionTimeout)
                 }
 
-                const status = callThread.module.lua_pcallk(callThread.address, args.length, 1, 0, 0, null)
-                if (status === LuaReturn.Yield) {
-                    throw new Error('cannot yield in callbacks from javascript')
+                // Run on the coroutine rather than through lua_pcallk, so an `:await()` reached
+                // inside can park by yielding. If it does, the call has become asynchronous and a
+                // promise is returned; the common case runs to completion in this one resume.
+                const first = callThread.resumeYielding(args.length)
+                if (first.result === LuaReturn.Yield) {
+                    handedOff = true
+                    return this.finishAsyncCall(callThread, first)
                 }
-                callThread.assertOk(status)
-
-                // Asking for one result leaves exactly one, nil included, so the top is where it is.
-                return callThread.getValue(1)
+                callThread.assertOk(first.result)
+                return callThread.getTop() >= 1 ? callThread.getValue(1) : null
             } catch (err) {
                 failed = true
                 throw err
             } finally {
-                this.releaseCallThread(callThread, failed)
+                if (!handedOff) {
+                    this.releaseCallThread(callThread, failed)
+                }
             }
         }
 
         this.functionRegistry.register(jsFunc, func)
 
         return jsFunc
+    }
+
+    /** Drives a callback that parked on an await to completion, resolving to its first result. */
+    private async finishAsyncCall(callThread: Thread, first: LuaResumeResult): Promise<unknown> {
+        let failed = false
+        try {
+            const values = await callThread.continueYielding(first)
+            return values.length >= 1 ? values[0] : null
+        } catch (err) {
+            failed = true
+            throw err
+        } finally {
+            this.releaseCallThread(callThread, failed)
+        }
     }
 }
 

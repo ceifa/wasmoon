@@ -4,8 +4,9 @@ import MultiReturn from '../multireturn'
 import RawResult from '../raw-result'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
-import type { LuaAddress } from '../types'
+import { type LuaAddress, LuaAbortError, LuaTimeoutError } from '../types'
 import { isPromise } from '../utils'
+import { SUSPEND } from '../async'
 
 /** The half of an in flight `:await()` the continuation needs once the promise has settled. */
 interface PendingAwait {
@@ -90,11 +91,23 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                 await: decorate(
                     (functionThread: Thread, rawSelf: unknown) => {
                         const self = asPromise(rawSelf)
+                        const module = state.module
 
-                        // Asking Lua covers every non-resumable context, not just the main
-                        // thread: anything entered through lua_pcall cannot yield either.
-                        if (!state.module.lua_isyieldable(functionThread.address)) {
-                            throw new Error('cannot await in a thread that cannot yield, use doString instead of doStringSync')
+                        // Under JSPI an await can suspend the wasm stack from anywhere, including a
+                        // C-call boundary a yield could not cross, so long as the run reached here
+                        // through a promising resume rather than a synchronous entry point.
+                        if (module.useJspi && module.stackCanSuspend && module.syncDepth === 0) {
+                            return this.suspend(functionThread, self)
+                        }
+
+                        // Otherwise it can only park by yielding the coroutine, which a thread
+                        // entered through lua_pcall (doStringSync, a JS→Lua callback) cannot do.
+                        if (!module.lua_isyieldable(functionThread.address)) {
+                            throw new Error(
+                                module.useJspi
+                                    ? 'cannot await here: a synchronous call is on the stack, use doString instead of doStringSync'
+                                    : 'cannot await across a C-call boundary without JSPI; run this through doString',
+                            )
                         }
 
                         const pending: PendingAwait = { result: undefined }
@@ -112,7 +125,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                         // 1 result, because the yield hands the promise reference back so the
                         // resume that follows can wait on it.
                         functionThread.pushValue(awaitPromise)
-                        return new RawResult(state.module.lua_yieldk(functionThread.address, 1, 0, this.continuancePointer))
+                        return new RawResult(module.lua_yieldk(functionThread.address, 1, 0, this.continuancePointer))
                     },
                     { receiveThread: true },
                 ),
@@ -150,6 +163,51 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
             return false
         }
         return super.pushValue(thread, decoration)
+    }
+
+    /**
+     * The JSPI await. It hands the promise and how to marshal its result to the module's await
+     * hook, then returns the sentinel that makes the C trampoline reach that hook and suspend the
+     * wasm stack. The stack unwinds to the promising resume driving the run and resumes there once
+     * the promise settles, so nothing here yields the Lua coroutine.
+     */
+    private suspend(thread: Thread, promise: Promise<unknown>): typeof SUSPEND {
+        const marshal = (value: unknown): number => {
+            if (value instanceof RawResult) {
+                return value.count
+            }
+            if (value instanceof MultiReturn) {
+                for (const item of value) {
+                    thread.pushValue(item)
+                }
+                return value.length
+            }
+            thread.pushValue(value)
+            return 1
+        }
+
+        // Captured now so a deadline or abort observed while parked interrupts the run rather than
+        // waiting for the promise. Read from the resuming run, not this thread, whose JS wrapper is
+        // often a fresh object without the run's limits on it.
+        const deadline = this.state.module.activeRunDeadline
+        const signal = this.state.module.activeRunSignal
+        this.state.module.pendingSuspend = {
+            promise,
+            signal,
+            deadline,
+            isClosed: () => thread.isClosed(),
+            onResolve: marshal,
+            onReject: (error: unknown): number => {
+                thread.pushValue(error || new Error('promise rejected with no error'))
+                return this.state.module.lua_error(thread.address)
+            },
+            onInterrupt: (): number => {
+                const error =
+                    signal?.aborted === true ? new LuaAbortError('thread aborted') : new LuaTimeoutError('thread timeout exceeded')
+                return thread.interruptWith(thread.address, error)
+            },
+        }
+        return SUSPEND
     }
 }
 
