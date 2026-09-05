@@ -1,78 +1,50 @@
-import { Decoration } from '../decoration'
-import Global from '../global'
-import Thread from '../thread'
+import type { Decoration } from '../decoration'
+import type LuaState from '../state'
+import type Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LuaReturn, LuaState } from '../types'
+import { LUA_REGISTRYINDEX } from '../types'
 
 class NullTypeExtension extends TypeExtension<unknown> {
-    private gcPointer: number
+    private nullReference: number
 
-    public constructor(thread: Global) {
-        super(thread, 'js_null')
+    public constructor(state: LuaState) {
+        super(state, 'js_null')
 
-        this.gcPointer = thread.lua.module.addFunction((functionStateAddress: LuaState) => {
-            // Throws a lua error which does a jump if it does not match.
-            const userDataPointer = thread.lua.luaL_checkudata(functionStateAddress, 1, this.name)
-            const referencePointer = thread.lua.module.getValue(userDataPointer, '*')
-            thread.lua.unref(referencePointer)
+        this.defineMetatable({
+            __index: () => undefined,
+            __tostring: () => 'null',
+            __eq: (self: unknown, other: unknown) => self === other,
+        })
 
-            return LuaReturn.Ok
-        }, 'ii')
+        // A box like any other, around an object nothing else ever holds, is what makes the sentinel
+        // unique: it carries the metatable above, so it reads back as null.
+        this.pushReference(state, {})
 
-        if (thread.lua.luaL_newmetatable(thread.address, this.name)) {
-            const metatableIndex = thread.lua.lua_gettop(thread.address)
+        // Lua code is free to reassign the `null` global, so marshalling anchors the sentinel in
+        // the registry instead of looking it up by name.
+        state.module.lua_pushvalue(state.address, -1)
+        this.nullReference = state.module.luaL_ref(state.address, LUA_REGISTRYINDEX)
 
-            // Mark it as uneditable
-            thread.lua.lua_pushstring(thread.address, 'protected metatable')
-            thread.lua.lua_setfield(thread.address, metatableIndex, '__metatable')
-
-            // Add the gc function
-            thread.lua.lua_pushcclosure(thread.address, this.gcPointer, 0)
-            thread.lua.lua_setfield(thread.address, metatableIndex, '__gc')
-
-            // Add an __index method that returns nothing.
-            thread.pushValue(() => null)
-            thread.lua.lua_setfield(thread.address, metatableIndex, '__index')
-
-            thread.pushValue(() => 'null')
-            thread.lua.lua_setfield(thread.address, metatableIndex, '__tostring')
-
-            thread.pushValue((self: unknown, other: unknown) => self === other)
-            thread.lua.lua_setfield(thread.address, metatableIndex, '__eq')
-        }
-        // Pop the metatable from the stack.
-        thread.lua.lua_pop(thread.address, 1)
-
-        // Create a new table, this is unique and will be the "null" value by attaching the
-        // metatable created above. The first argument is the target, the second options.
-        super.pushValue(thread, new Decoration<unknown>({}, {}))
-        // Put it into the global field named null.
-        thread.lua.lua_setglobal(thread.address, 'null')
+        state.module.lua_setglobal(state.address, 'null')
     }
 
     public getValue(thread: Thread, index: number): null {
-        const refUserData = thread.lua.luaL_testudata(thread.address, index, this.name)
+        const refUserData = thread.module.luaL_testudata(thread.address, index, this.name)
         if (!refUserData) {
             throw new Error(`data does not have the expected metatable: ${this.name}`)
         }
         return null
     }
 
-    // any because LuaDecoration is not exported from the Lua lib.
-    public pushValue(thread: Thread, decoration: any): boolean {
-        if (decoration?.target !== null) {
+    public pushValue(thread: Thread, decoration: Decoration<unknown>): boolean {
+        if (decoration.target !== null) {
             return false
         }
-        // Rather than pushing a new value, get the global "null" onto the stack.
-        thread.lua.lua_getglobal(thread.address, 'null')
+        thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, this.nullReference)
         return true
-    }
-
-    public close(): void {
-        this.thread.lua.module.removeFunction(this.gcPointer)
     }
 }
 
-export default function createTypeExtension(thread: Global): TypeExtension<null> {
-    return new NullTypeExtension(thread)
+export default function createTypeExtension(state: LuaState): TypeExtension<unknown> {
+    return new NullTypeExtension(state)
 }

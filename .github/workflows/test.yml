@@ -10,20 +10,25 @@ jobs:
 
         strategy:
             matrix:
-                node-version: [18, 20, 22]
+                node-version: [24]
 
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v7
               with:
                   submodules: recursive
-            - uses: mymindstorm/setup-emsdk@v12
+            - uses: emscripten-core/setup-emsdk@v16
+              with:
+                  version: 6.0.4
+                  actions-cache-folder: emsdk-cache
             - name: Use Node.js ${{ matrix.node-version }}
-              uses: actions/setup-node@v4
+              uses: actions/setup-node@v7
               with:
                   node-version: ${{ matrix.node-version }}
+                  cache: npm
             - run: npm ci
             - run: npm run lint:nofix
             - run: npm run build:wasm
             - run: npm run build
+            - run: npx playwright install --with-deps chromium
             - run: npm test
             - run: npm run luatests

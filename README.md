@@ -12,35 +12,81 @@ This package aims to provide a way to:
 
 ## API Usage
 
-To initialize, create a new Lua state, register the standard library, set a global variable, execute a code and get a global variable:
+Load the wasm module once, create a state on it, then set a global, run some Lua and read a global back:
 
 ```js
-const { LuaFactory } = require('wasmoon')
+import { LuaRuntime } from 'wasmoon'
 
-// Initialize a new lua environment factory
-// You can pass the wasm location as the first argument, useful if you are using wasmoon on a web environment and want to host the file by yourself
-const factory = new LuaFactory()
-// Create a standalone lua environment from the factory
-const lua = await factory.createEngine()
+// Loads the Lua wasm module. Every state created from it shares the filesystem and stdio.
+const lua = await LuaRuntime.load()
+// A standalone Lua state, with the standard library open
+const state = lua.createState()
 
 try {
     // Set a JS function to be a global lua function
-    lua.global.set('sum', (x, y) => x + y)
+    state.set('sum', (x, y) => x + y)
     // Run a lua string
-    await lua.doString(`
+    await state.doString(`
     print(sum(10, 10))
     function multiply(x, y)
         return x * y
     end
     `)
     // Get a global lua function as a JS function
-    const multiply = lua.global.get('multiply')
+    const multiply = state.get('multiply')
     console.log(multiply(10, 10))
 } finally {
-    // Close the lua environment, so it can be freed
-    lua.global.close()
+    // Close the state, so it can be freed
+    state.close()
 }
 ```
+
+Loading the module is the expensive part, so keep one `LuaRuntime` around and create a state per
+sandbox. `lua.close()` closes every state created from it, and both types support `using`:
+
+```js
+await using lua = await LuaRuntime.load()
+```
+
+## Filesystem
+
+Every state on a runtime shares one filesystem. By default it is in memory: the same in Node, the
+browser and a worker, and it holds nothing but what you put in it.
+
+```js
+const lua = await LuaRuntime.load()
+lua.writeFile('/scripts/greet.lua', 'return "hello"')
+
+const state = lua.createState()
+await state.doString('return require("scripts.greet")')
+```
+
+`writeFile`, `readFile`, `readTextFile`, `exists`, `cwd` and `chdir` cover the everyday cases;
+`lua.filesystem` is Emscripten's own API for everything else.
+
+### Reaching the host
+
+Two ways, and neither is the default:
+
+```js
+// One host directory, at a path you choose. Node only. Nothing else on the host is reachable.
+const lua = await LuaRuntime.load({ mounts: { '/scripts': './lua' } })
+await lua.createState().doString('return dofile("/scripts/init.lua")')
+
+// Or the real filesystem, with the process working directory, absolute paths and symlinks.
+// Node only, and not a sandbox: Lua can read and write whatever the process can.
+const cli = await LuaRuntime.load({ fs: 'host' })
+```
+
+`mounts` maps the path Lua sees to a host directory that has to exist; mount points cannot nest, and
+`lua.mount(virtualPath, hostPath)` / `lua.unmount(virtualPath)` do the same after loading. With
+`fs: 'host'` there is nothing to mount, because every host path already resolves — and `lua.chdir`
+moves the Node process itself, since a process has only one working directory.
+
+> [!WARNING]
+> A filesystem is not a sandbox on its own. Lua's `os.execute` runs a real command through the shell
+> in Node whichever filesystem you pick, and `os.exit` sets the host process exit code. Leave `os`
+> out of the state (`createState({ libs: [...] })`) if untrusted code must not do either.
 
 ## CLI Usage
 
@@ -74,80 +120,82 @@ $: ./sum.lua 10 30
 
 ## When to use wasmoon and fengari
 
-Wasmoon compiles the [official Lua code](https://github.com/lua/lua) to webassembly and creates an abstraction layer to interop between Lua and JS, instead of [fengari](https://github.com/fengari-lua/fengari), that is an entire Lua VM rewritten in JS.
+Wasmoon compiles the [official Lua code](https://github.com/lua/lua) to WebAssembly and creates an abstraction layer to interop between Lua and JS, instead of [fengari](https://github.com/fengari-lua/fengari), which is an entire Lua VM rewritten in JS.
 
 ### Performance
 
-Because of wasm, wasmoon will run Lua code much faster than fengari, but if you are going to interop a lot between JS and Lua, this may be not be true anymore, you probably should test on you specific use case to take the prove.
+Because of WebAssembly, wasmoon runs Lua code significantly faster than fengari. The table below shows results from a [heap sort benchmark](https://github.com/ceifa/wasmoon/blob/main/bench/heapsort.lua) sorting a list of 2,000 numbers (100 iterations, 5 warmup):
 
-This is the results running a [heap sort code](https://github.com/ceifa/wasmoon/blob/main/bench/heapsort.lua) in a list of 2k numbers 10x(less is better):
+|             | avg       | median    | min       | max       | stddev   | relative |
+| ----------- | --------- | --------- | --------- | --------- | -------- | -------- |
+| **Wasmoon** | 13.41 ms  | 13.07 ms  | 12.20 ms  | 16.23 ms  | 1.12 ms  | 1.00x    |
+| **Fengari** | 137.36 ms | 138.51 ms | 119.70 ms | 165.54 ms | 11.16 ms | 10.24x   |
 
-| wasmoon  | fengari   |
-| -------- | --------- |
-| 15.267ms | 389.923ms |
+Wasmoon is **~10x faster** than fengari for pure Lua execution. If your use case involves heavy interop between JS and Lua, the difference may be smaller, benchmark your specific scenario.
 
 ### Size
 
-Fengari is smaller than wasmoon, which can improve the user experience if in web environments:
+Fengari is smaller than wasmoon, which can improve the user experience if in web environments.
+Both minified, and wasmoon counted as its JS plus `glue.wasm`:
 
-|             | wasmoon | fengari |
-| ----------- | ------- | ------- |
-| **plain**   | 393kB   | 214kB   |
-| **gzipped** | 130kB   | 69kB    |
+|             | wasmoon          | fengari |
+| ----------- | ---------------- | ------- |
+| **plain**   | 294kB (97 + 197) | 228kB   |
+| **gzipped** | 124kB (29 + 95)  | 74kB    |
 
-## Fixing common errors on web environment
+Almost all of wasmoon's weight is the wasm, which is a separate file: it is fetched in parallel
+with your JS rather than parsed as part of it, and it caches on its own across releases of your app.
 
-Bundle/require errors can happen because wasmoon tries to safely import some node modules even in a browser environment, the bundler is not prepared to that since it tries to statically resolve everything on build time.
-Polyfilling these modules is not the right solution because they are not actually being used, you just have to ignore them:
+## Web environment
 
-### Webpack
+Bundlers need no configuration. wasmoon ships as ESM and marks the two node builtins it touches so
+that a bundler targeting the browser skips them instead of failing to resolve them, and every
+supported bundler produces a working browser build out of the box.
 
-Add the `resolve.fallback` snippet to your config:
+### Where `glue.wasm` comes from
 
-```js
-module.exports = {
-    entry: './src/index.js', // Here is your entry file
-    resolve: {
-        fallback: {
-            path: false,
-            fs: false,
-            child_process: false,
-            crypto: false,
-            url: false,
-            module: false,
-        },
-    },
-}
-```
+The wasm is resolved next to the bundle, with `new URL('glue.wasm', import.meta.url)`. What that
+means depends on your bundler:
 
-### Rollup
+| bundler | what happens                                                       |
+| ------- | ------------------------------------------------------------------ |
+| Vite    | inlines the wasm into the bundle, nothing else to do               |
+| webpack | emits the wasm as an asset next to your output, nothing else to do |
+| esbuild | does not handle the asset, see below                               |
+| Rollup  | does not handle the asset, see below                               |
 
-With the package [rollup-plugin-ignore](https://www.npmjs.com/package/rollup-plugin-ignore), add this snippet to your config:
+esbuild and Rollup leave nothing beside the bundle to fetch, so wasmoon falls back to unpkg with a
+warning. That works, but it is a request to a third party pinned to wasmoon's version, so prefer
+copying the wasm next to your output as part of the build, after which nothing else is needed:
 
 ```js
-export default {
-    input: 'src/index.js', // Here is your entry file,
-    plugins: [ignore(['path', 'fs', 'child_process', 'crypto', 'url', 'module'])],
-}
+import { copyFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+
+await copyFile(fileURLToPath(import.meta.resolve('wasmoon/glue.wasm')), 'dist/glue.wasm')
 ```
 
-### Angular
+Or host it wherever you like and say where it is:
 
-Add the section browser on `package.json`:
-
-```json
-{
-    "main": "src/index.js",
-    "browser": {
-        "child_process": false,
-        "fs": false,
-        "path": false,
-        "crypto": false,
-        "url": false,
-        "module": false
-    }
-}
+```js
+const lua = await LuaRuntime.load({ wasmFile: '/assets/glue.wasm' })
 ```
+
+With Vite and webpack you want neither, since they already handle the asset. Asking for it again
+(`wasmoon/glue.wasm?url` and friends) makes them ship the wasm twice.
+
+### A page opened from `file://`
+
+A page loaded over `file://` cannot fetch anything next to it, so the wasm has to come from
+somewhere else and wasmoon falls back to unpkg. To keep such a page self contained, inline the wasm
+and hand it over as a data URL:
+
+```js
+const lua = await LuaRuntime.load({ wasmFile: 'data:application/wasm;base64,...' })
+```
+
+Note that Chromium also refuses to load ES modules over `file://`, so the page has to carry your
+bundle inline rather than in a `<script src>`.
 
 ## How to build
 
@@ -158,52 +206,43 @@ git submodule update --init # download lua submodule
 npm i # install dependencies
 ```
 
-### Windows / Linux / MacOS (Docker way)
-
-You need to install [docker](https://www.docker.com/) and ensure it is on your `PATH`.
-
-After cloned the repo, to build you just have to run these:
-
-```sh
-npm run build:wasm:docker:dev # build lua
-npm run build # build the js code/bridge
-npm test # ensure everything it's working fine
-```
-
-### Ubuntu / Debian / MacOS
-
-You need to install [emscripten](https://emscripten.org/) and ensure it is on your `PATH`.
-
-After cloned the repo, to build you just have to run these:
+Then build the wasm, the JS bridge, and check the result:
 
 ```sh
 npm run build:wasm:dev # build lua
 npm run build # build the js code/bridge
+npx playwright install chromium # the browser tests drive a real browser
 npm test # ensure everything it's working fine
 ```
+
+Building the wasm needs either [emscripten](https://emscripten.org/) or
+[docker](https://www.docker.com/) on your `PATH`. `emcc` is used when it is available, and docker
+otherwise (always on Windows), so there is nothing to pick between. Drop the `:dev` for an optimized
+build.
 
 ## Edge Cases
 
 ### Null
 
-`null` is injected as userdata type if `injectObjects` is set to `true`. This works as expected except that it will evaluate to `true` in Lua.
+`null` is injected as userdata type if `inject` is set to `true`. This works as expected except that it will evaluate to `true` in Lua.
 
 ### Promises
 
 Promises can be await'd from Lua with some caveats detailed in the below section. To await a Promise call `:await()` on it which will yield the Lua execution until the promise completes.
 
 ```js
-const { LuaFactory } = require('wasmoon')
-const factory = new LuaFactory()
-const lua = await factory.createEngine()
+import { LuaRuntime } from 'wasmoon'
+
+const lua = await LuaRuntime.load()
+const state = lua.createState()
 
 try {
-    lua.global.set('sleep', (length) => new Promise((resolve) => setTimeout(resolve, length)))
-    await lua.doString(`
+    state.set('sleep', (length) => new Promise((resolve) => setTimeout(resolve, length)))
+    await state.doString(`
         sleep(1000):await()
     `)
 } finally {
-    lua.global.close()
+    state.close()
 }
 ```
 

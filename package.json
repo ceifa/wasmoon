@@ -3,23 +3,47 @@
     "version": "1.16.0",
     "description": "A real lua VM with JS bindings made with webassembly",
     "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
     "type": "module",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        },
+        "./glue.wasm": "./dist/glue.wasm",
+        "./dist/*": "./dist/*",
+        "./package.json": "./package.json"
+    },
+    "browser": {
+        "node:module": false,
+        "./dist/glue-host.js": false
+    },
+    "sideEffects": false,
     "scripts": {
-        "build:wasm:dev": "./build.sh dev",
-        "build:wasm": "./build.sh",
-        "build:wasm:docker:dev": "docker run --rm -v $(pwd):/wasmoon emscripten/emsdk /wasmoon/build.sh dev",
-        "build:wasm:docker": "docker run --rm -v $(pwd):/wasmoon emscripten/emsdk /wasmoon/build.sh",
+        "build:wasm:dev": "node utils/build-wasm dev",
+        "build:wasm": "node utils/build-wasm",
         "start": "rolldown -w -c",
-        "test": "mocha --parallel --require ./test/boot.js test/*.test.js",
+        "bench": "npm run build && node bench/index.js",
+        "pretest": "npm run build",
+        "test": "mocha --parallel --exit --require ./test/boot.js test/*.test.js",
         "luatests": "node --experimental-import-meta-resolve test/luatests.js",
-        "build": "rolldown -c && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist",
+        "build": "rm -rf dist && rolldown -c && tsc -d --emitDeclarationOnly --rootDir src --declarationDir dist && node utils/reference-types.js",
         "clean": "rm -rf dist build",
-        "lint": "prettier --write . && eslint . --fix --cache",
-        "lint:nofix": "eslint ."
+        "lint": "oxfmt --write . && oxlint --fix .",
+        "lint:nofix": "oxfmt --check . && oxlint ."
     },
     "files": [
         "bin/*",
-        "dist/*"
+        "dist/*",
+        "!dist/*.map"
+    ],
+    "engines": {
+        "node": ">=24"
+    },
+    "browserslist": [
+        "chrome >= 134",
+        "firefox >= 138",
+        "safari >= 26"
     ],
     "bin": {
         "wasmoon": "bin/wasmoon"
@@ -41,25 +65,19 @@
         "webassembly"
     ],
     "devDependencies": {
-        "@eslint/js": "9.17.0",
-        "@types/node": "22.10.2",
-        "@typescript-eslint/parser": "8.18.2",
-        "chai": "5.1.2",
-        "chai-as-promised": "8.0.1",
-        "eslint": "9.17.0",
-        "eslint-config-prettier": "9.1.0",
-        "eslint-plugin-prettier": "5.2.1",
-        "eslint-plugin-simple-import-sort": "12.1.1",
-        "fengari": "0.1.4",
-        "mocha": "11.0.1",
-        "prettier": "3.4.2",
-        "rolldown": "1.0.0-beta.1-commit.7c52c94",
-        "rollup-plugin-copy": "3.5.0",
+        "@types/node": "*",
+        "chai": "6.2.2",
+        "chai-as-promised": "8.0.2",
+        "fengari": "0.1.5",
+        "mocha": "12.0.0",
+        "oxfmt": "0.66.0",
+        "oxlint": "1.81.0",
+        "playwright": "1.62.1",
+        "rolldown": "1.2.6",
         "tslib": "2.8.1",
-        "typescript": "5.7.2",
-        "typescript-eslint": "8.18.2"
+        "typescript": "7.0.2"
     },
     "dependencies": {
-        "@types/emscripten": "1.39.10"
+        "@types/emscripten": "1.41.6"
     }
 }

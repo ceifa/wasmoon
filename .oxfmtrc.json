@@ -5,5 +5,7 @@
     "quoteProps": "consistent",
     "semi": false,
     "printWidth": 140,
-    "tabWidth": 4
+    "tabWidth": 4,
+    "sortPackageJson": false,
+    "ignorePatterns": ["rolldown.config.*.js"]
 }
