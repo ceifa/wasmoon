@@ -55,6 +55,19 @@ function createCallLuaFromJsBenchmark(lua) {
     })
 }
 
+function createPushNullBenchmark(lua) {
+    return withState(lua, { inject: true }, (state) => {
+        for (let i = 0; i < CALL_COUNT; i++) {
+            state.pushValue(null)
+            state.pop()
+        }
+        state.pushValue(null)
+        assert.equal(state.getValue(-1), null)
+        state.pop()
+        assert.equal(state.getTop(), 0)
+    })
+}
+
 function createCallJsFromLuaBenchmark(lua) {
     return withState(lua, {}, (state) => {
         state.set('add', (a, b) => a + b)
@@ -124,6 +137,7 @@ export async function runInteropBench(options = {}) {
             { name: 'Call JS from Lua', run: createCallJsFromLuaBenchmark(lua) },
             { name: 'Read table into JS', run: createReadTableBenchmark(lua) },
             { name: 'Push table into Lua', run: createPushTableBenchmark(lua) },
+            { name: 'Push null into Lua', run: createPushNullBenchmark(lua) },
             { name: 'Proxy field access from Lua', run: createProxyAccessBenchmark(lua) },
             { name: 'doStringSync', run: createDoStringBenchmark(lua) },
         ],

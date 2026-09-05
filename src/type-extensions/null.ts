@@ -40,7 +40,7 @@ class NullTypeExtension extends TypeExtension<unknown> {
         if (decoration.target !== null) {
             return false
         }
-        thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(this.nullReference))
+        thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, this.nullReference)
         return true
     }
 }
