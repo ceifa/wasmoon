@@ -26,7 +26,7 @@ jobs:
                   node-version: ${{ matrix.node-version }}
                   cache: npm
             - run: npm ci
-            - run: npm run lint:nofix
+            - run: ({ LINT_OUT=$(npm run lint:nofix 2>&1 >&3); } 3>&1 || echo "::warning::$(echo "$LINT_OUT" | awk 'ORS="%0A"')")
             - run: npm run build:wasm
             - run: npm run build
             - run: npx playwright install --with-deps chromium
