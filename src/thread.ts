@@ -6,7 +6,6 @@ import {
     defaultWarnHandler,
     LUA_MULTRET,
     LUA_REGISTRYINDEX,
-    LuaAbortError,
     type LuaAddress,
     LuaError,
     LuaEventMasks,
@@ -19,13 +18,13 @@ import {
     LuaReturn,
     type LuaRunOptions,
     type LuaThreadLimits,
-    LuaTimeoutError,
     LuaType,
     type LuaWarnHandler,
     PointerSize,
 } from './types'
 import { isEmscriptenUnwind, isPromise } from './utils'
-import { awaitInterruptible, yieldToEventLoop } from './async'
+import { awaitInterruptible, limitError, yieldToEventLoop } from './async'
+import RawResult from './raw-result'
 
 export interface OrderedExtension {
     // Bigger is more important
@@ -134,10 +133,10 @@ export default class Thread {
      * swallow it. Used by the JSPI await hook to abandon a run parked past its deadline or on an
      * aborted signal. Returns what `lua_error` returns, which never actually returns.
      */
-    public interruptWith(L: LuaAddress, error: LuaInterruptError): number {
+    public interruptWith(error: LuaInterruptError): number {
         this.rootThread.pendingInterrupt = error
-        this.module.lua_pushlightuserdata(L, this.module.interruptToken)
-        return this.module.lua_error(L)
+        this.module.lua_pushlightuserdata(this.address, this.module.interruptToken)
+        return this.module.lua_error(this.address)
     }
 
     public resume(argCount = 0): LuaResumeResult {
@@ -198,32 +197,63 @@ export default class Thread {
     }
 
     /**
-     * A resume of the yielding loop: an `:await()` it reaches must park by yielding the coroutine
-     * rather than suspending the wasm stack, since this resume is not a promising one. Forced off
-     * for the resume so a JSPI run parked elsewhere, which leaves the flag on, does not mislead it.
+     * Runs `fn` with suspension forced off, so an `:await()` it reaches parks by yielding the
+     * coroutine rather than suspending the wasm stack. Every non-promising driver goes through here
+     * -- the yielding resume, and the synchronous `lua_pcallk` entry points -- so `stackCanSuspend`
+     * means exactly "the innermost driver is a promising resume", which is what the await guard reads.
      */
-    public resumeYielding(argCount = 0): LuaResumeResult {
+    private withSuspensionDisabled<T>(fn: () => T): T {
         const previousCanSuspend = this.module.stackCanSuspend
         this.module.stackCanSuspend = false
         try {
-            return this.resume(argCount)
+            return fn()
         } finally {
             this.module.stackCanSuspend = previousCanSuspend
         }
+    }
+
+    /** A resume of the yielding loop, forced onto the yield path rather than a wasm suspension. */
+    public resumeYielding(argCount = 0): LuaResumeResult {
+        return this.withSuspensionDisabled(() => this.resume(argCount))
+    }
+
+    /**
+     * Throws the pending limit error if this parked thread has exceeded its deadline or been
+     * aborted, dropping the yielded values first. The hook only fires while Lua runs, so a parked
+     * thread is checked here instead.
+     */
+    private throwIfLimitReached(resumeResult: LuaResumeResult): void {
+        const error = this.checkYieldLimits()
+        if (error) {
+            if (resumeResult.resultCount > 0) {
+                this.pop(resumeResult.resultCount)
+            }
+            throw error
+        }
+    }
+
+    /**
+     * Handles a host yield -- a top level `coroutine.yield` that is not an await -- by handing its
+     * values to `onYield` and returning how many values the resume passes back, or dropping them
+     * when there is no handler.
+     */
+    private async handleHostYield(resumeResult: LuaResumeResult, options?: LuaRunOptions): Promise<number> {
+        if (options?.onYield) {
+            const values = this.getStackValues(this.getTop() - resumeResult.resultCount)
+            this.assertNotClosed()
+            return this.pushReturnValues(await options.onYield(values))
+        }
+        if (resumeResult.resultCount > 0) {
+            this.pop(resumeResult.resultCount)
+        }
+        return 0
     }
 
     /** The yielding run loop, continued from an already obtained resume result. */
     public async continueYielding(first: LuaResumeResult, options?: LuaRunOptions): Promise<MultiReturn> {
         let resumeResult: LuaResumeResult = first
         while (resumeResult.result === LuaReturn.Yield) {
-            // The hook only fires while Lua runs, so a parked thread is checked here instead.
-            const limitError = this.checkYieldLimits()
-            if (limitError) {
-                if (resumeResult.resultCount > 0) {
-                    this.pop(resumeResult.resultCount)
-                }
-                throw limitError
-            }
+            this.throwIfLimitReached(resumeResult)
 
             // An unrepresentable yielded value is not necessarily an error: only an await needs to
             // read it, and a host yield of one is handed to onYield as it lies on the stack.
@@ -245,17 +275,12 @@ export default class Thread {
                 this.pop(resumeResult.resultCount)
                 const { deadline, signal } = this.getLimits()
                 await awaitInterruptible(awaited, signal, deadline)
-            } else if (options?.onYield) {
-                const values = this.getStackValues(this.getTop() - resumeResult.resultCount)
-                this.assertNotClosed()
-                const resumeWith = await options.onYield(values)
-                nextArgCount = this.pushResumeValues(resumeWith)
             } else {
-                if (resumeResult.resultCount > 0) {
-                    this.pop(resumeResult.resultCount)
+                nextArgCount = await this.handleHostYield(resumeResult, options)
+                if (!options?.onYield) {
+                    // Skip a tick so promises, timers and the like get a turn before Lua resumes.
+                    await yieldToEventLoop()
                 }
-                // Skip a tick so promises, timers and the like get a turn before Lua resumes.
-                await yieldToEventLoop()
             }
 
             // The wait itself can outlast the deadline, and resuming would hand Lua another full
@@ -295,24 +320,8 @@ export default class Thread {
         try {
             let resumeResult = await Promise.race([this.resumeJspi(argCount, nresPointer), closed])
             while (resumeResult.result === LuaReturn.Yield) {
-                const limitError = this.checkYieldLimits()
-                if (limitError) {
-                    if (resumeResult.resultCount > 0) {
-                        this.pop(resumeResult.resultCount)
-                    }
-                    throw limitError
-                }
-
-                let nextArgCount = 0
-                if (options?.onYield) {
-                    const values = this.getStackValues(this.getTop() - resumeResult.resultCount)
-                    this.assertNotClosed()
-                    const resumeWith = await options.onYield(values)
-                    nextArgCount = this.pushResumeValues(resumeWith)
-                } else if (resumeResult.resultCount > 0) {
-                    this.pop(resumeResult.resultCount)
-                }
-
+                this.throwIfLimitReached(resumeResult)
+                const nextArgCount = await this.handleHostYield(resumeResult, options)
                 resumeResult = await Promise.race([this.resumeJspi(nextArgCount, nresPointer), closed])
             }
             this.assertOk(resumeResult.result)
@@ -363,18 +372,25 @@ export default class Thread {
         }
     }
 
-    /** Pushes the values a host yield resumes with, and returns how many. */
-    private pushResumeValues(values: unknown): number {
-        if (values === undefined) {
+    /**
+     * Pushes a JS value onto the stack as Lua results and returns how many: nothing for `undefined`,
+     * `count` for a {@link RawResult}, one per element for a {@link MultiReturn}, else the single
+     * value. Shared by the run loops and the JS function wrapper.
+     */
+    public pushReturnValues(value: unknown): number {
+        if (value === undefined) {
             return 0
         }
-        if (values instanceof MultiReturn) {
-            for (const value of values) {
-                this.pushValue(value)
-            }
-            return values.length
+        if (value instanceof RawResult) {
+            return value.count
         }
-        this.pushValue(values)
+        if (value instanceof MultiReturn) {
+            for (const item of value) {
+                this.pushValue(item)
+            }
+            return value.length
+        }
+        this.pushValue(value)
         return 1
     }
 
@@ -382,13 +398,13 @@ export default class Thread {
         this.assertNotClosed()
         this.rootThread.pendingInterrupt = undefined
         const restore = this.applyRunOptions(options)
-        this.module.syncDepth++
         try {
             const base = this.getTop() - argCount - 1 // The 1 is for the function to run
-            this.assertOk(this.module.lua_pcallk(this.address, argCount, LUA_MULTRET, 0, 0, null))
+            // A synchronous call: an `:await()` reached through it must yield rather than suspend,
+            // and then fail because a pcalled thread cannot yield.
+            this.withSuspensionDisabled(() => this.assertOk(this.module.lua_pcallk(this.address, argCount, LUA_MULTRET, 0, 0, null)))
             return this.getStackValues(base)
         } finally {
-            this.module.syncDepth--
             restore()
         }
     }
@@ -410,12 +426,7 @@ export default class Thread {
         }
 
         const base = this.getTop() - args.length - 1 // The 1 is for the function to run
-        this.module.syncDepth++
-        try {
-            this.assertOk(this.module.lua_pcallk(this.address, args.length, LUA_MULTRET, 0, 0, null))
-        } finally {
-            this.module.syncDepth--
-        }
+        this.withSuspensionDisabled(() => this.assertOk(this.module.lua_pcallk(this.address, args.length, LUA_MULTRET, 0, 0, null)))
         return this.getStackValues(base)
     }
 
@@ -873,14 +884,7 @@ export default class Thread {
     }
 
     private checkYieldLimits(): LuaInterruptError | undefined {
-        const { deadline, signal } = this.limits
-        if (signal?.aborted) {
-            return new LuaAbortError('thread aborted')
-        }
-        if (deadline !== undefined && Date.now() > deadline) {
-            return new LuaTimeoutError('thread timeout exceeded')
-        }
-        return undefined
+        return limitError(this.limits.signal, this.limits.deadline)
     }
 
     /**

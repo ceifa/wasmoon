@@ -5,6 +5,8 @@
  * MessageChannel where it exists, because a browser clamps a nested setTimeout to 4ms while a
  * message post is not clamped; setImmediate under Node; setTimeout as the last resort.
  */
+import { LuaAbortError, type LuaInterruptError, LuaTimeoutError } from './types'
+
 type Macrotask = (task: () => void) => void
 
 const macrotask: Macrotask = (() => {
@@ -32,6 +34,21 @@ export const yieldToEventLoop = (): Promise<void> => {
 }
 
 /**
+ * The interrupt a deadline or aborted signal calls for, or undefined when neither has fired. The
+ * single source of both the abort-vs-timeout classification and its message, shared by the debug
+ * hook's limit check and the JSPI await hook.
+ */
+export function limitError(signal: AbortSignal | undefined, deadline: number | undefined): LuaInterruptError | undefined {
+    if (signal?.aborted) {
+        return new LuaAbortError('thread aborted')
+    }
+    if (deadline !== undefined && Date.now() > deadline) {
+        return new LuaTimeoutError('thread timeout exceeded')
+    }
+    return undefined
+}
+
+/**
  * Awaits `promise` but resolves early if `signal` aborts or `deadline` passes, so a run parked on a
  * long promise can still be interrupted rather than waiting for it to settle. The abandoned promise
  * is left to settle on its own and its result ignored.
@@ -41,43 +58,7 @@ export function awaitInterruptible(
     signal: AbortSignal | undefined,
     deadline: number | undefined,
 ): Promise<void> {
-    if (signal === undefined && deadline === undefined) {
-        return Promise.resolve(promise).then(NOOP, NOOP)
-    }
-
-    return new Promise<void>((resolve) => {
-        let settled = false
-        const finish = (): void => {
-            if (settled) {
-                return
-            }
-            settled = true
-            if (timer !== undefined) {
-                clearTimeout(timer)
-            }
-            if (onAbort !== undefined) {
-                signal?.removeEventListener('abort', onAbort)
-            }
-            resolve()
-        }
-
-        let timer: ReturnType<typeof setTimeout> | undefined
-        if (deadline !== undefined) {
-            timer = setTimeout(finish, Math.max(0, deadline - Date.now()))
-        }
-
-        let onAbort: (() => void) | undefined
-        if (signal !== undefined) {
-            if (signal.aborted) {
-                finish()
-                return
-            }
-            onAbort = finish
-            signal.addEventListener('abort', onAbort, { once: true })
-        }
-
-        Promise.resolve(promise).then(finish, finish)
-    })
+    return settleOrInterrupt(promise, signal, deadline).then(NOOP)
 }
 
 const NOOP = (): void => undefined

@@ -1,7 +1,5 @@
 import { Decoration, type DecorationOptions } from '../decoration'
 import type LuaState from '../state'
-import MultiReturn from '../multireturn'
-import RawResult from '../raw-result'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
 import { LUA_REGISTRYINDEX, LuaReturn, type LuaAddress, type LuaResumeResult, LuaType } from '../types'
@@ -104,19 +102,8 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
                     // The JS function stashed a promise and asked to suspend: -1 tells the C
                     // trampoline to reach the await hook, which is the only value it treats specially.
                     return -1
-                } else if (result === undefined) {
-                    return 0
-                } else if (result instanceof RawResult) {
-                    return result.count
-                } else if (result instanceof MultiReturn) {
-                    for (const item of result) {
-                        calledThread.pushValue(item)
-                    }
-                    return result.length
-                } else {
-                    calledThread.pushValue(result)
-                    return 1
                 }
+                return calledThread.pushReturnValues(result)
             } catch (err) {
                 if (isEmscriptenUnwind(err)) {
                     throw err

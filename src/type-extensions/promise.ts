@@ -64,21 +64,9 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
             const continuanceThread = state.stateToThread(continuanceState)
 
             if (status === 'rejected') {
-                continuanceThread.pushValue(value || new Error('promise rejected with no error'))
-                return state.module.lua_error(continuanceState)
+                return this.marshalRejected(continuanceThread, value)
             }
-
-            if (value instanceof RawResult) {
-                return value.count
-            } else if (value instanceof MultiReturn) {
-                for (const arg of value) {
-                    continuanceThread.pushValue(arg)
-                }
-                return value.length
-            } else {
-                continuanceThread.pushValue(value)
-                return 1
-            }
+            return this.marshalResolved(continuanceThread, value)
         }, 'iiii')
 
         this.defineMetatable({
@@ -95,8 +83,9 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
 
                         // Under JSPI an await can suspend the wasm stack from anywhere, including a
                         // C-call boundary a yield could not cross, so long as the run reached here
-                        // through a promising resume rather than a synchronous entry point.
-                        if (module.useJspi && module.stackCanSuspend && module.syncDepth === 0) {
+                        // through a promising resume rather than a synchronous entry point (which
+                        // `stackCanSuspend` is exactly true for).
+                        if (module.useJspi && module.stackCanSuspend) {
                             return this.suspend(functionThread, self)
                         }
 
@@ -172,20 +161,6 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
      * the promise settles, so nothing here yields the Lua coroutine.
      */
     private suspend(thread: Thread, promise: Promise<unknown>): typeof SUSPEND {
-        const marshal = (value: unknown): number => {
-            if (value instanceof RawResult) {
-                return value.count
-            }
-            if (value instanceof MultiReturn) {
-                for (const item of value) {
-                    thread.pushValue(item)
-                }
-                return value.length
-            }
-            thread.pushValue(value)
-            return 1
-        }
-
         // Captured now so a deadline or abort observed while parked interrupts the run rather than
         // waiting for the promise. Read from the resuming run, not this thread, whose JS wrapper is
         // often a fresh object without the run's limits on it.
@@ -196,18 +171,37 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
             signal,
             deadline,
             isClosed: () => thread.isClosed(),
-            onResolve: marshal,
-            onReject: (error: unknown): number => {
-                thread.pushValue(error || new Error('promise rejected with no error'))
-                return this.state.module.lua_error(thread.address)
-            },
-            onInterrupt: (): number => {
-                const error =
-                    signal?.aborted === true ? new LuaAbortError('thread aborted') : new LuaTimeoutError('thread timeout exceeded')
-                return thread.interruptWith(thread.address, error)
-            },
+            onResolve: (value: unknown) => this.marshalResolved(thread, value),
+            onReject: (error: unknown) => this.marshalRejected(thread, error),
+            // Reached only once interrupted, so the deadline has passed unless the signal aborted --
+            // the recheck in checkYieldLimits does not apply here.
+            onInterrupt: () =>
+                thread.interruptWith(
+                    signal?.aborted ? new LuaAbortError('thread aborted') : new LuaTimeoutError('thread timeout exceeded'),
+                ),
         }
         return SUSPEND
+    }
+
+    /** Pushes a settled promise value as Lua results and returns how many; `undefined` becomes nil. */
+    private marshalResolved(thread: Thread, value: unknown): number {
+        if (value instanceof RawResult) {
+            return value.count
+        }
+        if (value instanceof MultiReturn) {
+            for (const item of value) {
+                thread.pushValue(item)
+            }
+            return value.length
+        }
+        thread.pushValue(value)
+        return 1
+    }
+
+    /** Raises a rejected promise as a Lua error on `thread`. */
+    private marshalRejected(thread: Thread, error: unknown): number {
+        thread.pushValue(error || new Error('promise rejected with no error'))
+        return this.state.module.lua_error(thread.address)
     }
 }
 

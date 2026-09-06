@@ -286,7 +286,7 @@ console.log(await handler(5)) // a promise, because the callback awaited
 
 #### Handling a top-level `coroutine.yield`
 
-A top level `coroutine.yield` that is not an `:await()` is a *host yield*. Pass `onYield` to receive
+A top level `coroutine.yield` that is not an `:await()` is a _host yield_. Pass `onYield` to receive
 its values and decide what the resume hands back; its return may be a promise, a `LuaMultiReturn` of
 several values, or a single value:
 

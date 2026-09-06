@@ -620,11 +620,6 @@ export default class LuaModule {
      */
     public stackCanSuspend = false
     /**
-     * Depth of synchronous entry points on the JS stack. While above zero an `:await()` cannot
-     * suspend or yield to the event loop, because the outermost caller is blocking.
-     */
-    public syncDepth = 0
-    /**
      * The promise a JSPI `:await()` stashed for the C trampoline's await hook to suspend on, along
      * with how to marshal its settled value back onto the Lua stack. Read synchronously by the
      * await hook right after the await closure returns, so a single slot is reentrancy safe.
@@ -874,7 +869,9 @@ export default class LuaModule {
      */
     private installAwaitHook(): void {
         this.awaitHookPointer = this.emscripten.addFunction(
-            this.suspending(async (L: LuaAddress): Promise<number> => {
+            // The C signature passes the running coroutine, but it is always the one the await
+            // parked on, which the pendingSuspend marshallers already hold; nothing here needs it.
+            this.suspending(async (): Promise<number> => {
                 const suspend = this.pendingSuspend
                 this.pendingSuspend = undefined
                 if (suspend === undefined) {
@@ -882,7 +879,7 @@ export default class LuaModule {
                 }
 
                 const stackPointer = this.stackSave()
-                const savedStack = this.readHeapSlice(stackPointer, this.mainStackPointer)
+                const savedStack = this.heap.slice(stackPointer, this.mainStackPointer)
                 this.stackRestore(this.mainStackPointer)
 
                 const outcome = await settleOrInterrupt(suspend.promise, suspend.signal, suspend.deadline)
@@ -896,11 +893,10 @@ export default class LuaModule {
 
                 // Back on this run's stack: put its frames back before touching Lua, and mark the
                 // stack promising again for any further await this resume reaches.
-                this.writeHeapSlice(stackPointer, savedStack)
+                this.heap.set(savedStack, stackPointer)
                 this.stackRestore(stackPointer)
                 this.stackCanSuspend = true
 
-                void L
                 if (outcome.interrupted) {
                     return suspend.onInterrupt()
                 }
@@ -1094,16 +1090,6 @@ export default class LuaModule {
 
     public stackRestore(pointer: number): void {
         this.emscripten.stackRestore(pointer)
-    }
-
-    /** A copy of `[start, end)` of the wasm heap. Used to preserve a suspended run's C stack. */
-    public readHeapSlice(start: number, end: number): Uint8Array {
-        return this.heap.slice(start, end)
-    }
-
-    /** Writes `bytes` back into the wasm heap at `pointer`. */
-    public writeHeapSlice(pointer: number, bytes: Uint8Array): void {
-        this.heap.set(bytes, pointer)
     }
 
     /** Wraps a wasm export so calling it runs Lua on a JSPI stack that can suspend. */
