@@ -11,6 +11,11 @@ jobs:
         strategy:
             matrix:
                 node-version: [24]
+                async-engine: [yield, jspi]
+
+        env:
+            WASMOON_ASYNC: ${{ matrix.async-engine }}
+            NODE_OPTIONS: ${{ matrix.async-engine == 'jspi' && '--experimental-wasm-jspi' || '' }}
 
         steps:
             - uses: actions/checkout@v7

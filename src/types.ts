@@ -125,18 +125,17 @@ export interface LuaRunOptions {
     /**
      * Interrupts the run when the signal aborts.
      *
-     * The abort is observed at the debug hook and around every yield, which has two consequences.
-     * It cannot fire while the event loop is blocked, so a signal aborted from a timer will not
-     * interrupt a tight synchronous Lua loop; use `timeout` or `maxInstructions` for those, since
-     * the hook evaluates them on its own. And a run parked on a promise finishes awaiting that
-     * promise before the abort is seen, rather than abandoning it mid-flight.
+     * Interrupts parked awaits and onYield handlers without waiting for their promises to settle.
+     * A signal cannot fire while the event loop is blocked, so a timer cannot abort a tight Lua
+     * loop without async steps; use `timeout` or `maxInstructions` for those. Repeated awaits and
+     * host yields periodically give timers a turn.
      */
     signal?: AbortSignal | undefined
     /**
      * Called with the values of a top level `coroutine.yield` that is not an `:await()`. Its return
      * becomes the result of that yield when the run resumes; a returned promise is awaited first, a
      * `LuaMultiReturn` becomes several values, and `undefined` resumes with none. Without a handler
-     * such a yield simply hands control back to the event loop and resumes with nothing, as before.
+     * such a yield resumes with nothing. Both engines periodically yield to the event loop.
      */
     onYield?: ((values: MultiReturn) => unknown | Promise<unknown>) | undefined
 }

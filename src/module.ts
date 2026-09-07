@@ -3,8 +3,18 @@
 // `/// <reference types="emscripten" />` at the top of the emitted declarations to cover everyone
 // else. tsc drops the directive when it is written here, hence the build step.
 import initWasmModule from '../build/glue.js'
-import { settleOrInterrupt } from './async'
-import { defaultWarnHandler, LUA_REGISTRYINDEX, type LuaAddress, LuaReturn, LuaType, type LuaWarnHandler, PointerSize } from './types'
+import { limitError, settleOrInterrupt, yieldToEventLoop } from './async'
+import type Thread from './thread'
+import {
+    defaultWarnHandler,
+    LUA_REGISTRYINDEX,
+    type LuaAddress,
+    type LuaInterruptError,
+    LuaReturn,
+    LuaType,
+    type LuaWarnHandler,
+    PointerSize,
+} from './types'
 // A rolldown plugin will resolve this to the current version on package.json
 import version from 'package-version'
 
@@ -97,10 +107,9 @@ export interface LuaModuleOptions {
      */
     onWarn?: LuaWarnHandler | undefined
     /**
-     * Which async engine to run under. `'auto'` (the default) uses JSPI where the platform has it,
-     * so an `:await()` can suspend the wasm stack anywhere, and falls back to the coroutine
-     * yielding engine otherwise. `'jspi'` requires JSPI and throws if it is missing; `'yield'`
-     * forces the fallback, which is useful for tests and for matching the fallback's semantics.
+     * Which async engine to run under. `'auto'` (the default) uses JSPI where supported, with
+     * coroutine yielding as its fallback. `'jspi'` requires JSPI and throws if it is unavailable.
+     * `'yield'` uses coroutine yielding on every platform.
      */
     async?: 'auto' | 'jspi' | 'yield' | undefined
 }
@@ -626,23 +635,30 @@ export default class LuaModule {
      */
     public pendingSuspend:
         | {
+              run: Thread
               promise: PromiseLike<unknown>
               signal: AbortSignal | undefined
               deadline: number | undefined
               isClosed: () => boolean
               onResolve: (value: unknown) => number
               onReject: (error: unknown) => number
-              onInterrupt: () => number
+              onInterrupt: (error: LuaInterruptError) => number
           }
         | undefined
     private awaitHookPointer: number | undefined
-    /**
-     * The deadline and abort signal of the JSPI run currently resuming, so an `:await()` it reaches
-     * can be interrupted while parked. Set around each promising resume rather than read from the
-     * awaiting thread, whose JS wrapper is often a fresh object without the run's limits on it.
-     */
-    public activeRunDeadline: number | undefined
-    public activeRunSignal: AbortSignal | undefined
+    /** The innermost Lua driver. Installed only while entering or continuing Lua. */
+    public activeRun: Thread | undefined
+    private asyncSteps = 0
+
+    /** Amortized fairness across all runs; the common step allocates nothing. */
+    public scheduleAsync(): Promise<void> | undefined {
+        if (++this.asyncSteps < 256) {
+            return undefined
+        }
+        this.asyncSteps = 0
+        return yieldToEventLoop()
+    }
+
     /**
      * Whether runs on this module go through JSPI. On unless the platform lacks it or `async` asked
      * for the yielding engine, in which case an `:await()` can only park at a coroutine boundary.
@@ -882,11 +898,19 @@ export default class LuaModule {
                 const savedStack = this.heap.slice(stackPointer, this.mainStackPointer)
                 this.stackRestore(this.mainStackPointer)
 
-                const outcome = await settleOrInterrupt(suspend.promise, suspend.signal, suspend.deadline)
+                this.activeRun = undefined
+                this.stackCanSuspend = false
+                const pause = this.scheduleAsync()
+                // Attach a rejection handler before yielding to the event loop.
+                const settling = settleOrInterrupt(suspend.promise, suspend.signal, suspend.deadline)
+                if (pause) {
+                    await pause
+                }
+                const outcome = await settling
 
                 // The state was closed while parked: lua_close has freed the stack this would
                 // resume into, so stay suspended forever rather than resume into freed memory. The
-                // run itself was already rejected by runJspi's close race.
+                // run itself was already rejected by its close listener.
                 if (suspend.isClosed()) {
                     await new Promise<never>(() => undefined)
                 }
@@ -896,9 +920,15 @@ export default class LuaModule {
                 this.heap.set(savedStack, stackPointer)
                 this.stackRestore(stackPointer)
                 this.stackCanSuspend = true
+                this.activeRun = suspend.run
 
                 if (outcome.interrupted) {
-                    return suspend.onInterrupt()
+                    return suspend.onInterrupt(outcome.error)
+                }
+                // A fairness pause can outlast the deadline even when the promise settled first.
+                const interrupt = limitError(suspend.signal, suspend.deadline)
+                if (interrupt) {
+                    return suspend.onInterrupt(interrupt)
                 }
                 return outcome.resolved ? suspend.onResolve(outcome.value) : suspend.onReject(outcome.error)
             }),

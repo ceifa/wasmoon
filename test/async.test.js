@@ -1,9 +1,10 @@
+import { execFileSync } from 'node:child_process'
 import { use } from 'chai'
 import chaiAsPromised from 'chai-as-promised'
 
 use(chaiAsPromised)
 import { expect } from 'chai'
-import { LuaTimeoutError, LuaAbortError, LuaMultiReturn } from '../dist/index.js'
+import { LuaRuntime, LuaTimeoutError, LuaAbortError, LuaMultiReturn } from '../dist/index.js'
 import { getState } from './utils.js'
 
 describe('Async engine', () => {
@@ -126,5 +127,242 @@ describe('Async engine', () => {
         const running = state.doString('sleep(20):await() return 1')
         state.close()
         await expect(running).to.eventually.be.rejectedWith('the Lua state is closed')
+    })
+})
+
+// Run with WASMOON_ASYNC=yield and WASMOON_ASYNC=jspi; the same contract must hold under both.
+describe('Async run isolation', () => {
+    it('preserves automatic engine selection', async () => {
+        await using runtime = await LuaRuntime.load()
+        expect(runtime.module.useJspi).to.equal(runtime.module.jspiSupported)
+    })
+
+    it('keeps Node alive until queued continuations finish, then exits', () => {
+        const entry = new URL('../dist/index.js', import.meta.url).href
+        const stdout = execFileSync(
+            process.execPath,
+            [
+                '--input-type=module',
+                '-e',
+                `
+            import { LuaRuntime } from ${JSON.stringify(entry)}
+            const runtime = await LuaRuntime.load({ async: 'yield' })
+            const state = runtime.createState()
+            console.log(await state.doString('for i=1,1000 do coroutine.yield() end return 42'))
+            state.close()
+        `,
+            ],
+            { encoding: 'utf8', timeout: 5000 },
+        )
+        expect(stdout.trim()).to.equal('42')
+    })
+
+    it('a yielded promise is a host value, not an internal await', async () => {
+        using state = await getState()
+        const promise = new Promise(() => {})
+        state.set('value', promise)
+        let seen
+        expect(
+            await state.doString('return coroutine.yield(1, value)', {
+                onYield: (values) => {
+                    seen = values
+                    return 42
+                },
+            }),
+        ).to.equal(42)
+        expect([...seen]).to.eql([1, promise])
+    })
+
+    it('keeps host yield results off the stack between resumes', async () => {
+        using state = await getState()
+        expect(
+            await state.doString(
+                `
+            for i = 1, 1000 do
+                local a, b = coroutine.yield(i, i + 1)
+                assert(a == i * 2 and b == i * 3)
+            end
+            return 42
+        `,
+                { onYield: ([i]) => LuaMultiReturn.of(i * 2, i * 3) },
+            ),
+        ).to.equal(42)
+    })
+
+    for (const expression of ['ready:await()', 'coroutine.yield()']) {
+        it(`lets timers run during repeated ${expression}`, async () => {
+            using state = await getState()
+            state.set('ready', Promise.resolve())
+            let fired = false
+            state.set('fired', () => fired)
+            const timer = setTimeout(() => {
+                fired = true
+            }, 0)
+            try {
+                expect(
+                    await state.doString(`
+                    for i = 1, 10000 do
+                        ${expression}
+                        if fired() then return true end
+                    end
+                    return false
+                `),
+                ).to.equal(true)
+            } finally {
+                clearTimeout(timer)
+            }
+        })
+    }
+
+    it('keeps a deadline through a second await while another run is parked', async () => {
+        using state = await getState()
+        let releaseFirst, releaseOther
+        state.set(
+            'first',
+            new Promise((resolve) => {
+                releaseFirst = resolve
+            }),
+        )
+        state.set(
+            'other',
+            new Promise((resolve) => {
+                releaseOther = resolve
+            }),
+        )
+        state.set('never', new Promise(() => {}))
+        const timed = state.doString('first:await() never:await()', { timeout: 30 })
+        const checked = expect(timed).to.eventually.be.rejectedWith(LuaTimeoutError)
+        const other = state.doString('other:await() return 42')
+        releaseFirst()
+        await checked
+        releaseOther()
+        expect(await other).to.equal(42)
+    })
+
+    it('keeps abort signals isolated across states sharing a module', async () => {
+        using state = await getState()
+        using other = new state.constructor(state.module)
+        let releaseFirst, reachedSecond
+        state.set(
+            'first',
+            new Promise((resolve) => {
+                releaseFirst = resolve
+            }),
+        )
+        state.set('never', new Promise(() => {}))
+        const second = new Promise((resolve) => {
+            reachedSecond = resolve
+        })
+        state.set('second', reachedSecond)
+        const controller = new AbortController()
+        const checked = expect(
+            state.doString('first:await() second() never:await()', {
+                signal: controller.signal,
+            }),
+        ).to.eventually.be.rejectedWith(LuaAbortError)
+        const otherRun = other.doString('coroutine.yield() return 7')
+        releaseFirst()
+        await second
+        controller.abort()
+        await checked
+        expect(await otherRun).to.equal(7)
+    })
+
+    it('does not lose a caught interrupt when Lua starts another run', async () => {
+        using state = await getState()
+        if (!state.module.useJspi) return
+        state.set('never', new Promise(() => {}))
+        let nested
+        state.set('start', () => {
+            nested = state.doString('return 7')
+        })
+        await expect(
+            state.doString(
+                `
+            pcall(function() never:await() end)
+            start()
+            return 42
+        `,
+                { timeout: 10 },
+            ),
+        ).to.eventually.be.rejectedWith(LuaTimeoutError)
+        expect(await nested).to.equal(7)
+    })
+
+    it('interrupts a parked onYield handler', async () => {
+        using state = await getState()
+        await expect(
+            state.doString('coroutine.yield() return 42', {
+                timeout: 10,
+                onYield: () => new Promise(() => {}),
+            }),
+        ).to.eventually.be.rejectedWith(LuaTimeoutError)
+    })
+
+    it('does not overflow a long deadline while parked', async () => {
+        using state = await getState()
+        state.set('delayed', new Promise((resolve) => setTimeout(() => resolve(42), 10)))
+        expect(await state.doString('return delayed:await()', { timeout: 0x80000000 })).to.equal(42)
+    })
+
+    it('can abort a loop of immediately settled awaits', async () => {
+        using state = await getState()
+        state.set('ready', Promise.resolve())
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 0)
+        try {
+            await expect(
+                state.doString('while true do ready:await() end', {
+                    signal: controller.signal,
+                    timeout: 1000,
+                }),
+            ).to.eventually.be.rejectedWith(LuaAbortError)
+        } finally {
+            clearTimeout(timer)
+        }
+    })
+
+    it('rejects all parked runs and callbacks when the state closes', async () => {
+        using state = await getState()
+        state.set('never', new Promise(() => {}))
+        state.doStringSync('function callback() never:await() end')
+        const runs = [
+            state.doString('never:await()'),
+            state.doString('never:await()'),
+            state.get('callback')(),
+            state.get('callback')(),
+            state.doString('coroutine.yield()', { onYield: () => new Promise(() => {}) }),
+        ]
+        const checked = runs.map((run) => expect(run).to.eventually.be.rejectedWith('the Lua state is closed'))
+        state.close()
+        await Promise.all(checked)
+    })
+
+    it('rejects a second run on an already running thread', async () => {
+        using state = await getState()
+        state.set('never', new Promise(() => {}))
+        const thread = state.newThread()
+        thread.loadString('never:await()')
+        const first = thread.run()
+        const checked = expect(first).to.eventually.be.rejectedWith('the Lua state is closed')
+        await expect(thread.run()).to.eventually.be.rejectedWith('already running')
+        thread.close()
+        await checked
+    })
+
+    it('can interleave many runs with different suspension depths and settlement orders', async () => {
+        using state = await getState()
+        state.set('pause', () => Promise.resolve())
+        const runs = Array.from({ length: 32 }, (_, i) =>
+            state.doString(`
+            local function recurse(n)
+                if n > 0 then return n + recurse(n - 1) end
+                for j = 1, 50 do pause():await() end
+                return ${i}
+            end
+            return recurse(${i})
+        `),
+        )
+        expect(await Promise.all(runs)).to.eql(Array.from({ length: 32 }, (_, i) => i + (i * (i + 1)) / 2))
     })
 })

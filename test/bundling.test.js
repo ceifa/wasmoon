@@ -47,7 +47,7 @@ describe('Bundling', () => {
     })
 
     const getMinifiedState = async (config = {}) => {
-        const lua = await minified.LuaRuntime.load({ wasmFile: WASM_FILE })
+        const lua = await minified.LuaRuntime.load({ wasmFile: WASM_FILE, async: process.env.WASMOON_ASYNC })
         return lua.createState({ inject: true, ...config })
     }
 

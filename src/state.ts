@@ -292,10 +292,10 @@ export default class LuaState extends Thread {
             wrapper.extension.close()
         }
 
-        for (const listener of this.closeListeners) {
-            listener()
+        // Listeners may unsubscribe themselves while rejecting a parked run.
+        while (this.closeListeners.length > 0) {
+            this.closeListeners.pop()!()
         }
-        this.closeListeners.length = 0
     }
 
     /** Folds the state wide budget in, so run() does the save and restore in one place. */

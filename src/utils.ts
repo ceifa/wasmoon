@@ -24,14 +24,3 @@ export const isEmscriptenUnwind = (value: unknown): boolean => {
     }
     return (value as Record<string, unknown> | null | undefined)?.[UNWIND_BRAND] === true
 }
-
-// Browsers have no setImmediate. The 4ms clamp on nested timers is acceptable here.
-const scheduleMacrotask = typeof setImmediate === 'function' ? setImmediate : (task: () => void) => setTimeout(task, 0)
-
-/**
- * A macrotask, so pending promise callbacks *and* timers get a chance to run before Lua is
- * resumed. A microtask would starve timer driven code such as setTimeout based sleeps.
- */
-export const yieldToEventLoop = (): Promise<void> => {
-    return new Promise((resolve) => scheduleMacrotask(() => resolve()))
-}

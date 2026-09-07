@@ -136,6 +136,12 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
     }
 
     private releaseCallThread(callThread: Thread, failed: boolean): void {
+        callThread.clearPendingAwait()
+        if (this.state.isClosed()) {
+            this.callThreadReferences.delete(callThread)
+            this.pooledCallThreadInUse = false
+            return
+        }
         if (callThread !== this.pooledCallThread) {
             callThread.close()
             const reference = this.callThreadReferences.get(callThread)

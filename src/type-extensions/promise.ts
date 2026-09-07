@@ -4,14 +4,9 @@ import MultiReturn from '../multireturn'
 import RawResult from '../raw-result'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { type LuaAddress, LuaAbortError, LuaTimeoutError } from '../types'
+import type { LuaAddress } from '../types'
 import { isPromise } from '../utils'
-import { SUSPEND } from '../async'
-
-/** The half of an in flight `:await()` the continuation needs once the promise has settled. */
-interface PendingAwait {
-    result: { status: 'fulfilled' | 'rejected'; value: any } | undefined
-}
+import { SUSPEND, type PendingAwait } from '../async'
 
 /**
  * A bare thenable reaches here too, and only `then` is guaranteed on one. Adopting it into a real
@@ -27,11 +22,6 @@ const asPromise = (self: unknown): Promise<any> => {
 
 class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     /**
-     * Keyed by the address of the thread parked in the await. A thread suspended in `lua_yieldk`
-     * cannot reach another `:await()`, so at most one is ever in flight per thread.
-     */
-    private readonly pendingAwaits = new Map<LuaAddress, PendingAwait>()
-    /**
      * One continuation for every await on this state. Building one per await meant compiling and
      * instantiating a wasm trampoline each time, and leaked the table slot whenever the coroutine
      * was abandoned before the continuation ran -- a run cut short by a deadline, say.
@@ -42,7 +32,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
         super(state, 'js_promise')
 
         this.continuancePointer = state.module.addFunction((continuanceState: LuaAddress): number => {
-            const pending = this.pendingAwaits.get(continuanceState)
+            const pending = state.getPendingAwait(continuanceState)
             if (!pending) {
                 // Nothing sensible is left to resume with, and returning would hand Lua a stack it
                 // does not expect.
@@ -60,7 +50,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
             }
 
             const { status, value } = pending.result
-            this.pendingAwaits.delete(continuanceState)
+            state.clearPendingAwait(continuanceState)
             const continuanceThread = state.stateToThread(continuanceState)
 
             if (status === 'rejected') {
@@ -99,22 +89,29 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                             )
                         }
 
-                        const pending: PendingAwait = { result: undefined }
-                        this.pendingAwaits.set(functionThread.address, pending)
+                        const pending: PendingAwait = {
+                            result: undefined,
+                            promise: self.then(
+                                (value) => {
+                                    pending.result = { status: 'fulfilled', value }
+                                    return value
+                                },
+                                (value) => {
+                                    pending.result = { status: 'rejected', value }
+                                },
+                            ),
+                        }
+                        state.setPendingAwait(functionThread.address, pending)
 
-                        const awaitPromise = self
-                            .then((res) => {
-                                pending.result = { status: 'fulfilled', value: res }
-                                return res
-                            })
-                            .catch((err) => {
-                                pending.result = { status: 'rejected', value: err }
-                            })
-
-                        // 1 result, because the yield hands the promise reference back so the
-                        // resume that follows can wait on it.
-                        functionThread.pushValue(awaitPromise)
-                        return new RawResult(module.lua_yieldk(functionThread.address, 1, 0, this.continuancePointer))
+                        // Host-driven awaits are registered out of band: no promise userdata or
+                        // Lua stack value is needed. A manually resumed coroutine still receives
+                        // its promise, preserving the low-level coroutine.resume contract.
+                        let resultCount = 0
+                        if (!functionThread.isRunning) {
+                            functionThread.pushValue(pending.promise)
+                            resultCount = 1
+                        }
+                        return new RawResult(module.lua_yieldk(functionThread.address, resultCount, 0, this.continuancePointer))
                     },
                     { receiveThread: true },
                 ),
@@ -141,10 +138,6 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     public override close(): void {
         super.close()
         this.state.module.removeFunction(this.continuancePointer)
-        // A coroutine abandoned mid await never reaches its continuation, so its record is still
-        // here holding whatever the promise settled with. Nothing tells us when Lua's own GC took
-        // that coroutine, so these are bounded by the state's lifetime rather than the await's.
-        this.pendingAwaits.clear()
     }
 
     public pushValue(thread: Thread, decoration: Decoration<unknown>): boolean {
@@ -164,21 +157,17 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
         // Captured now so a deadline or abort observed while parked interrupts the run rather than
         // waiting for the promise. Read from the resuming run, not this thread, whose JS wrapper is
         // often a fresh object without the run's limits on it.
-        const deadline = this.state.module.activeRunDeadline
-        const signal = this.state.module.activeRunSignal
+        const run = this.state.module.activeRun!
+        const { deadline, signal } = run.runLimits
         this.state.module.pendingSuspend = {
+            run,
             promise,
             signal,
             deadline,
-            isClosed: () => thread.isClosed(),
+            isClosed: () => run.isClosed(),
             onResolve: (value: unknown) => this.marshalResolved(thread, value),
             onReject: (error: unknown) => this.marshalRejected(thread, error),
-            // Reached only once interrupted, so the deadline has passed unless the signal aborted --
-            // the recheck in checkYieldLimits does not apply here.
-            onInterrupt: () =>
-                thread.interruptWith(
-                    signal?.aborted ? new LuaAbortError('thread aborted') : new LuaTimeoutError('thread timeout exceeded'),
-                ),
+            onInterrupt: (error) => thread.interruptWith(error),
         }
         return SUSPEND
     }

@@ -248,25 +248,28 @@ try {
 
 ### Async engine
 
-Under the hood there are two engines, chosen automatically at load:
+There are two engines:
 
-- **JSPI** (the default where the platform supports it: Chrome/Edge 137+, Firefox 153+, Node 25+).
-  An `:await()` suspends the whole WebAssembly stack, so it works **anywhere** — inside a
-  `table.sort` comparator, a `string.gsub` callback, a `promise:next` handler, a coroutine nothing
-  drives from the host, or a Lua function called back from JS.
-- **Coroutine yielding** (the fallback, when JSPI is unavailable). An `:await()` parks by yielding
-  the running coroutine, so it works at the top level of a run and anywhere Lua can yield, but not
-  across a C-call boundary such as `table.sort` or `gsub`. Attempting that raises a clear error.
-
-Both engines share the same observable behaviour everywhere they can express it. Force one with the
-`async` option, which is useful for testing or to keep behaviour identical across platforms:
+- **Coroutine yielding** is the fallback when JSPI is unavailable. An `:await()` parks by yielding
+  the running coroutine, so it works at the top level of a run and anywhere Lua can yield.
+- **JSPI** is selected automatically where available. It suspends the WebAssembly stack, allowing awaits across C-call
+  boundaries such as `table.sort` comparators and `string.gsub` callbacks, and inside
+  Lua-resumed coroutines. It requires a platform with JSPI support.
 
 ```js
-const lua = await LuaRuntime.load({ async: 'yield' }) // 'auto' (default), 'jspi', or 'yield'
+const lua = await LuaRuntime.load() // JSPI when available, yielding otherwise
+const accelerated = await LuaRuntime.load({ async: 'jspi' }) // requires JSPI
+const portable = await LuaRuntime.load({ async: 'yield' }) // coroutine yielding on every platform
 ```
 
+Both engines use the same run isolation, cancellation, and host-yield contract. Each run owns
+its limits and interrupt state, even when several runs or states share a runtime. Repeated awaits
+and host yields give the event loop a turn every 256 async steps, so timers can run without paying
+for a macrotask on every await.
+
 A run parked on a promise can be interrupted by a `timeout` or an `AbortSignal`, without waiting for
-the promise to settle:
+the promise to settle. This also applies while an `onYield` handler is pending; closing the state
+rejects its parked runs and callbacks:
 
 ```js
 await state.doString('sleep(60000):await()', { timeout: 1000 }) // rejects after ~1s
@@ -275,7 +278,8 @@ await state.doString('sleep(60000):await()', { timeout: 1000 }) // rejects after
 #### Awaiting in a JS→Lua callback
 
 A Lua function called from JS runs synchronously and returns its value directly. If it `:await()`s,
-the call becomes asynchronous and returns a `Promise` instead:
+the call becomes asynchronous and returns a `Promise` instead. These callbacks use coroutine
+yielding even when JSPI is enabled, so they cannot await across C-call boundaries:
 
 ```js
 state.set('handler', null)
@@ -301,3 +305,7 @@ const [result] = await thread.run(0, {
 })
 console.log(result) // "pong"
 ```
+
+A promise passed to `coroutine.yield` is a host value, not an internal await. The handler receives
+it unchanged. Without a handler, yielded values are discarded and the coroutine resumes without
+arguments.
