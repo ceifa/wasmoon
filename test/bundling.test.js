@@ -47,7 +47,7 @@ describe('Bundling', () => {
     })
 
     const getMinifiedState = async (config = {}) => {
-        const lua = await minified.LuaRuntime.load({ wasmFile: WASM_FILE })
+        const lua = await minified.LuaRuntime.load({ wasmFile: WASM_FILE, async: process.env.WASMOON_ASYNC })
         return lua.createState({ inject: true, ...config })
     }
 
@@ -76,7 +76,7 @@ describe('Bundling', () => {
         state.set('yield', () => new Promise((resolve) => emitter.once('resolve', resolve)))
         const resPromise = state.doString(`
             local res = yield():next(function ()
-                coroutine.yield()
+                ("x"):gsub(".", function() coroutine.yield() end)
                 return 15
             end)
             print("res", res:await())

@@ -7,5 +7,5 @@
     "printWidth": 140,
     "tabWidth": 4,
     "sortPackageJson": false,
-    "ignorePatterns": ["rolldown.config.*.js"]
+    "ignorePatterns": ["rolldown.config.*.js", "docs/**"]
 }

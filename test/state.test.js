@@ -1177,16 +1177,16 @@ describe('State', () => {
         expect(await state.doString('return value')).to.be.equal(1e300)
     })
 
-    it('yielding in a JS callback into Lua does not break lua state', async () => {
-        // When yielding within a callback the error 'attempt to yield across a C-call boundary'.
-        // This test just checks that throwing that error still allows the lua global to be
-        // re-used and doesn't cause JS to abort or some nonsense.
+    it('yielding across a C-call boundary in a JS callback into Lua does not break lua state', async () => {
+        // A callback may await, but a coroutine.yield across a C-call boundary (here gsub's) still
+        // raises 'attempt to yield across a C-call boundary'. This checks that surfacing that error
+        // still leaves the lua global re-usable and doesn't cause JS to abort or some nonsense.
         using state = await getState()
         const testEmitter = new EventEmitter()
         state.set('yield', () => new Promise((resolve) => testEmitter.once('resolve', resolve)))
         const resPromise = state.doString(`
         local res = yield():next(function ()
-            coroutine.yield()
+            ("x"):gsub(".", function() coroutine.yield() end)
             return 15
         end)
         print("res", res:await())

@@ -13,21 +13,14 @@ export const isPromise = (target: unknown): target is PromiseLike<unknown> => {
 export const UNWIND_BRAND = '__emscriptenUnwind'
 
 /**
- * Emscripten unwinds a Lua longjmp by throwing from its internal EmscriptenEH hierarchy. The wasm
- * caller gates on `instanceof EmscriptenEH` to resume unwinding, so these have to be rethrown
- * rather than raised as Lua errors. The class is module local, hence the brand.
+ * A Lua longjmp out of a C function that a JS callback is on the stack of, which has to be rethrown
+ * rather than turned into a Lua error. With `SUPPORT_LONGJMP=wasm` it is a `WebAssembly.Exception`
+ * the wasm caller resumes unwinding from; the branded `EmscriptenEH` covers the other unwinds
+ * Emscripten still throws from JS (its class is module local, hence the brand).
  */
 export const isEmscriptenUnwind = (value: unknown): boolean => {
+    if (typeof WebAssembly.Exception === 'function' && value instanceof WebAssembly.Exception) {
+        return true
+    }
     return (value as Record<string, unknown> | null | undefined)?.[UNWIND_BRAND] === true
-}
-
-// Browsers have no setImmediate. The 4ms clamp on nested timers is acceptable here.
-const scheduleMacrotask = typeof setImmediate === 'function' ? setImmediate : (task: () => void) => setTimeout(task, 0)
-
-/**
- * A macrotask, so pending promise callbacks *and* timers get a chance to run before Lua is
- * resumed. A microtask would starve timer driven code such as setTimeout based sleeps.
- */
-export const yieldToEventLoop = (): Promise<void> => {
-    return new Promise((resolve) => scheduleMacrotask(() => resolve()))
 }

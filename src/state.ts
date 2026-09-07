@@ -259,9 +259,15 @@ export default class LuaState extends Thread {
         }
     }
 
-    /** Notified once when this state closes, so an owner can drop its reference. */
-    public onClose(listener: () => void): void {
+    /** Notified once when this state closes, so an owner can drop its reference. Returns a function that removes the listener. */
+    public onClose(listener: () => void): () => void {
         this.closeListeners.push(listener)
+        return () => {
+            const index = this.closeListeners.indexOf(listener)
+            if (index >= 0) {
+                this.closeListeners.splice(index, 1)
+            }
+        }
     }
 
     /** Closes the state and frees everything it owns. Safe to call more than once. */
@@ -286,10 +292,10 @@ export default class LuaState extends Thread {
             wrapper.extension.close()
         }
 
-        for (const listener of this.closeListeners) {
-            listener()
+        // Listeners may unsubscribe themselves while rejecting a parked run.
+        while (this.closeListeners.length > 0) {
+            this.closeListeners.pop()!()
         }
-        this.closeListeners.length = 0
     }
 
     /** Folds the state wide budget in, so run() does the save and restore in one place. */

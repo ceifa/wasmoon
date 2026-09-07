@@ -1,7 +1,7 @@
 import type { Decoration } from './decoration'
 import type LuaState from './state'
 import type Thread from './thread'
-import { LUA_REGISTRYINDEX, type LuaGetCache, type LuaPushCache, LuaType } from './types'
+import { type LuaAddress, LUA_REGISTRYINDEX, type LuaGetCache, type LuaPushCache, LuaType } from './types'
 
 export default abstract class LuaTypeExtension<T> {
     // Type name, for metatables and lookups.
@@ -107,10 +107,10 @@ export default abstract class LuaTypeExtension<T> {
      * in Lua. With `closure`, a C function pointer, what is pushed and cached is instead a closure
      * over the box, which it sees as its first upvalue.
      */
-    protected pushReference(thread: Thread, referent: unknown, closure?: number): void {
+    protected pushReference(thread: Thread, referent: unknown, wrapClosure?: (L: LuaAddress) => void): void {
         const module = thread.module
         const L = thread.address
-        const cachedType = closure === undefined ? LuaType.Userdata : LuaType.Function
+        const cachedType = wrapClosure === undefined ? LuaType.Userdata : LuaType.Function
 
         // The cache table stays at the bottom for the whole push, so the probe and the store
         // below share the one registry fetch.
@@ -140,9 +140,9 @@ export default abstract class LuaTypeExtension<T> {
         // -1 is the metatable, -2 is the box.
         module.lua_setmetatable(L, -2)
 
-        if (closure !== undefined) {
-            // Pops the box and pushes the closure holding it as an upvalue.
-            module.lua_pushcclosure(L, closure, 1)
+        if (wrapClosure !== undefined) {
+            // Pops the box and pushes a closure holding it as an upvalue.
+            wrapClosure(L)
         }
 
         // Remember the value for the next push of the same referent, then drop the cache table

@@ -134,6 +134,36 @@ describe('Browser environment', () => {
         }
     }
 
+    for (const engine of ['yield', 'jspi']) {
+        it(`isolates async runs and lets timers run under ${engine}`, async function () {
+            this.timeout(30_000)
+            const result = await runInBrowser(`
+                const runtime = await LuaRuntime.load({ wasmFile, async: '${engine}' })
+                const state = runtime.createState()
+                try {
+                    let fired = false
+                    state.set('ready', Promise.resolve())
+                    state.set('fired', () => fired)
+                    setTimeout(() => { fired = true }, 0)
+                    const fair = await state.doString('for i=1,10000 do ready:await() if fired() then return true end end return false')
+                    let releaseFirst, releaseOther
+                    state.set('first', new Promise((resolve) => { releaseFirst = resolve }))
+                    state.set('other', new Promise((resolve) => { releaseOther = resolve }))
+                    state.set('never', new Promise(() => {}))
+                    const timed = state.doString('first:await() never:await()', { timeout: 30 }).catch((error) => error.name)
+                    const other = state.doString('other:await() return 42')
+                    releaseFirst()
+                    const error = await timed
+                    releaseOther()
+                    return { fair, error, other: await other }
+                } finally {
+                    state.close()
+                }
+            `)
+            expect(result).to.eql({ fair: true, error: 'LuaTimeoutError', other: 42 })
+        })
+    }
+
     it('load Lua engine in browser should succeed', async function () {
         this.timeout(30_000)
         const result = await runInBrowser(`

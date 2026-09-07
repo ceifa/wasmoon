@@ -1,9 +1,11 @@
 #!/bin/bash -e
-cd $(dirname $0)
-mkdir -p ../build/host
+cd /wasmoon/utils
+true
 
-LUA_SRC="$(ls ../lua/*.c | grep -v "luac.c" | grep -v "lua.c" | tr "\n" " ") ../src/native/wasmoon.c"
+LUA_SRC=$(ls ../lua/*.c | grep -v "luac.c" | grep -v "lua.c" | tr "\n" " ")
 
+# Do not add --closure here: it renames properties, which would strip the brand the JS build puts on
+# the glue's longjmp unwind classes (see rolldown.config.ts) and turn every unwind into a Lua error.
 if [ "$1" == "dev" ];
 then
     extension=(-O0 -g3 -s ASSERTIONS=1 -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2)
@@ -16,7 +18,6 @@ fi
 COMMON=(
     -s WASM=1
     -s SUPPORT_LONGJMP=wasm
-    -I../lua
     "${extension[@]}"
     -s EXPORTED_RUNTIME_METHODS="[
         'addFunction', \
@@ -207,14 +208,7 @@ COMMON=(
         '_luaopen_debug', \
         '_luaopen_package', \
         '_luaL_openselectedlibs', \
-        '_lua_gc', \
-        '_wasmoon_pushinteger', \
-        '_wasmoon_geti', \
-        '_wasmoon_rawgeti', \
-        '_wasmoon_seti', \
-        '_wasmoon_rawseti', \
-        '_wasmoon_set_await_hook', \
-        '_wasmoon_push_jsfunction' \
+        '_lua_gc' \
     ]"
 )
 
@@ -224,27 +218,5 @@ COMMON=(
 emcc "${COMMON[@]}" \
     -lnodefs.js \
     -s ENVIRONMENT="web,worker,node" \
-    -o ../build/glue.js \
+    -o /out/glue.js \
     ${LUA_SRC}
-
-# The glue for `filesystem: 'host'`, which Emscripten only supports under Node. NODERAWFS forwards
-# every file operation straight to node:fs, so paths, the working directory, symlinks and
-# permissions are the host's rather than a mirror of them. NODE_HOST_ENV stays off so the
-# environment is still whatever LuaModuleOptions `env` says, as it is in the default glue.
-emcc "${COMMON[@]}" \
-    -s NODERAWFS=1 \
-    -s NODE_HOST_ENV=0 \
-    -s ENVIRONMENT="node" \
-    -o ../build/host/glue.js \
-    ${LUA_SRC}
-
-# Both glues are the same wasm with a different filesystem bolted on in JS, which is what lets the
-# package ship one binary and pick a glue at load time. Checked rather than assumed, because a
-# divergence would otherwise surface as a corrupt module for host users only.
-if ! cmp -s ../build/glue.wasm ../build/host/glue.wasm; then
-    echo "build-wasm: the host glue produced a different glue.wasm, so the two cannot share one binary" >&2
-    exit 1
-fi
-# Dropped so only one copy is published; the host glue resolves 'glue.wasm' next to itself, and the
-# bundle puts both of them in dist/ beside the shared binary.
-rm ../build/host/glue.wasm

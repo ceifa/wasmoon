@@ -294,7 +294,7 @@ describe('Promises', () => {
 
         expect(() => {
             state.doStringSync(`sleep(5):await()`)
-        }).to.throw('cannot await in a thread that cannot yield')
+        }).to.throw('cannot await')
     })
 
     it('an await abandoned mid flight should not leak a function table slot', async function () {

@@ -228,7 +228,7 @@ build.
 
 ### Promises
 
-Promises can be await'd from Lua with some caveats detailed in the below section. To await a Promise call `:await()` on it which will yield the Lua execution until the promise completes.
+Promises can be `await`'d from Lua by calling `:await()` on them, which parks the Lua execution until the promise settles and then returns its value (or raises its rejection as a Lua error).
 
 ```js
 import { LuaRuntime } from 'wasmoon'
@@ -246,60 +246,66 @@ try {
 }
 ```
 
-### Async/Await
+### Async engine
 
-It's not possible to await in a callback from JS into Lua. This is a limitation of Lua but there are some workarounds. It can also be encountered when yielding at the top-level of a file. An example where you might encounter this is a snippet like this:
+There are two engines:
+
+- **Coroutine yielding** is the fallback when JSPI is unavailable. An `:await()` parks by yielding
+  the running coroutine, so it works at the top level of a run and anywhere Lua can yield.
+- **JSPI** is selected automatically where available. It suspends the WebAssembly stack, allowing awaits across C-call
+  boundaries such as `table.sort` comparators and `string.gsub` callbacks, and inside
+  Lua-resumed coroutines. It requires a platform with JSPI support.
 
 ```js
-local res = sleep(1):next(function ()
-    sleep(10):await()
-    return 15
-end)
-print("res", res:await())
+const lua = await LuaRuntime.load() // JSPI when available, yielding otherwise
+const accelerated = await LuaRuntime.load({ async: 'jspi' }) // requires JSPI
+const portable = await LuaRuntime.load({ async: 'yield' }) // coroutine yielding on every platform
 ```
 
-Which will throw an error like this:
+Both engines use the same run isolation, cancellation, and host-yield contract. Each run owns
+its limits and interrupt state, even when several runs or states share a runtime. Repeated awaits
+and host yields give the event loop a turn every 256 async steps, so timers can run without paying
+for a macrotask on every await.
 
-```
-Error: Lua Error(ErrorRun/2): cannot resume dead coroutine
-    at Thread.assertOk (/home/tstableford/projects/wasmoon/dist/index.js:409:23)
-    at Thread.<anonymous> (/home/tstableford/projects/wasmoon/dist/index.js:142:22)
-    at Generator.throw (<anonymous>)
-    at rejected (/home/tstableford/projects/wasmoon/dist/index.js:26:69)
-```
+A run parked on a promise can be interrupted by a `timeout` or an `AbortSignal`, without waiting for
+the promise to settle. This also applies while an `onYield` handler is pending; closing the state
+rejects its parked runs and callbacks:
 
-Or like this:
-
-```
-attempt to yield across a C-call boundary
+```js
+await state.doString('sleep(60000):await()', { timeout: 1000 }) // rejects after ~1s
 ```
 
-You can workaround this by doing something like below:
+#### Awaiting in a JS→Lua callback
 
-```lua
-function async(callback)
-    return function(...)
-        local co = coroutine.create(callback)
-        local safe, result = coroutine.resume(co, ...)
+A Lua function called from JS runs synchronously and returns its value directly. If it `:await()`s,
+the call becomes asynchronous and returns a `Promise` instead. These callbacks use coroutine
+yielding even when JSPI is enabled, so they cannot await across C-call boundaries:
 
-        return Promise.create(function(resolve, reject)
-            local function step()
-                if coroutine.status(co) == "dead" then
-                    local send = safe and resolve or reject
-                    return send(result)
-                end
-
-                safe, result = coroutine.resume(co)
-
-                if safe and result == Promise.resolve(result) then
-                    result:finally(step)
-                else
-                    step()
-                end
-            end
-
-            result:finally(step)
-        end)
-    end
-end
+```js
+state.set('handler', null)
+await state.doString('handler = function(x) return sleep(10):await() + x end')
+const handler = state.get('handler')
+console.log(await handler(5)) // a promise, because the callback awaited
 ```
+
+#### Handling a top-level `coroutine.yield`
+
+A top level `coroutine.yield` that is not an `:await()` is a _host yield_. Pass `onYield` to receive
+its values and decide what the resume hands back; its return may be a promise, a `LuaMultiReturn` of
+several values, or a single value:
+
+```js
+const thread = state.newThread()
+thread.loadString('local reply = coroutine.yield("ping") return reply')
+const [result] = await thread.run(0, {
+    onYield: (values) => {
+        console.log(values[0]) // "ping"
+        return 'pong'
+    },
+})
+console.log(result) // "pong"
+```
+
+A promise passed to `coroutine.yield` is a host value, not an internal await. The handler receives
+it unchanged. Without a handler, yielded values are discarded and the coroutine resumes without
+arguments.
