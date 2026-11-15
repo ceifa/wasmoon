@@ -72,11 +72,20 @@ export interface LuaMemoryOptions {
 }
 
 export interface LuaLimitOptions {
-    /** Milliseconds a Lua function called from JS may run before being interrupted. */
+    /**
+     * Milliseconds a Lua function called from JS may run before being interrupted, whether it is
+     * called directly or as a run of its own through `state.async` or Lua's `async`.
+     */
     functionTimeout?: number | undefined
-    /** Instructions a single run may execute before being interrupted. */
+    /**
+     * Instructions a single run may execute before being interrupted. A run is a `doString` or
+     * `doFile`, or a function started through `state.async`, Lua's `async` or a promise reaction.
+     */
     maxInstructions?: number | undefined
 }
+
+/** A global that `CreateStateOptions.inject` can define. */
+export type LuaInjectName = 'Error' | 'Promise' | 'null' | 'async'
 
 /**
  * The tunables of `collectgarbage('param', ...)`. `pause`, `stepmul` and `stepsize` drive the
@@ -108,8 +117,24 @@ export interface CreateStateOptions {
      * because the proxy already covers errors when it is enabled.
      */
     errors?: boolean | undefined
-    /** Injects `Error`, `Promise`, `null` and `async` into the Lua globals. */
-    inject?: boolean | undefined
+    /**
+     * Which helpers to define as Lua globals. `true` defines all of them, or name them
+     * individually:
+     *
+     * - `Promise`: `Promise.create`, `Promise.all` and `Promise.resolve`.
+     * - `async`: `async(fn)` returns a function that runs `fn` as a run of its own and gives back
+     *   a promise of its first result, so that it can `:await()` whoever calls it.
+     * - `Error`: `Error.create`, where the error bridge is registered (see `errors`).
+     * - `null`: a sentinel that a JS `null` is marshalled as instead of `nil`. It is truthy in Lua.
+     */
+    inject?: LuaInjectName[] | boolean | undefined
+    /**
+     * Called with the error of a function started through Lua's `async` when nothing was waiting
+     * on the promise it returned: a callback a JS API called and forgot about, say. Without a
+     * handler such a failure is an unhandled promise rejection, which is the host's to deal with
+     * and by default ends a Node process.
+     */
+    onAsyncError?: ((error: unknown) => void) | undefined
     memory?: LuaMemoryOptions | undefined
     limits?: LuaLimitOptions | undefined
     gc?: LuaGcOptions | undefined

@@ -10,8 +10,8 @@ Design proposal, 2026-09-05. Everything marked *measured* below was run against 
 >   the `async` load option were removed once JSPI reached every target, so an `:await()` on a
 >   platform without JSPI is an error and everything else still runs there.
 > - A Lua function called from JS is always synchronous. The sync-or-promise callable of §5.5 was
->   replaced by `state.callAsync(fn, args, options)`, which a promise's `next`, `catch` and
->   `finally` use for their Lua reactions.
+>   replaced by an explicit asynchronous counterpart, `state.async(fn)` in JS and `async(fn)` in
+>   Lua, which a promise's `next`, `catch` and `finally` use for their Lua reactions.
 > - `Promise.async`, `decorate(fn, { call })`, `runtime.engine` and the ephemeron registry of §5.6
 >   were not built.
 

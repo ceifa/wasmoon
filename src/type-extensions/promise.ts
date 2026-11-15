@@ -21,7 +21,8 @@ const asPromise = (self: unknown): Promise<any> => {
 type Reaction = ((...args: any[]) => unknown) | null | undefined
 
 /** Why an `:await()` reached outside a suspendable run fails, for a platform with JSPI and one without. */
-const SYNCHRONOUS_AWAIT = 'cannot await inside a synchronous call: run the script with doString, or the function with callAsync'
+const SYNCHRONOUS_AWAIT =
+    'cannot await inside a synchronous call: run the script with doString, or make the function asynchronous with async(fn) in Lua or state.async(fn) in JS'
 const UNSUPPORTED_AWAIT =
     'cannot await: this platform has no WebAssembly JSPI support (it needs Chrome 137, Firefox 153, Safari 27 or Node.js 25, or newer)'
 
@@ -31,8 +32,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
 
         // A Lua function handed to a promise runs as a run of its own, so that it can await like the
         // async function it stands in for. Anything else is passed through as it is.
-        const reaction = (callback: Reaction): Reaction =>
-            state.isLuaFunction(callback) ? (...args: unknown[]) => state.callAsync(callback, args) : callback
+        const reaction = (callback: Reaction): Reaction => (state.isLuaFunction(callback) ? state.async(callback) : callback)
 
         this.defineMetatable({
             // A plain object, which the table extension (registered before this one) copies into a

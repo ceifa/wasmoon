@@ -38,6 +38,7 @@ export {
     LUA_LIB_BITS,
     PointerSize,
     type LuaAddress,
+    type LuaInjectName,
     type LuaLibName,
     type LuaLoadMode,
     type LuaWarnHandler,

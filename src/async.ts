@@ -26,6 +26,48 @@ const macrotask: Macrotask = (() => {
     return (task: () => void) => void setTimeout(task, 0)
 })()
 
+/**
+ * Whether the platform has JSPI (the WebAssembly JavaScript Promise Integration API), which is what
+ * lets an `:await()` suspend the wasm stack.
+ */
+export const canSuspend = (): boolean => typeof WebAssembly.Suspending === 'function' && typeof WebAssembly.promising === 'function'
+
+/** A promise that knows whether anything has asked for its outcome. */
+class ObservedPromise extends Promise<unknown> {
+    // What `then` derives is an ordinary promise, with nobody to report to.
+    public static override get [Symbol.species](): PromiseConstructor {
+        return Promise
+    }
+
+    public observed = false
+
+    public override then<A, B>(
+        onFulfilled?: ((value: unknown) => A | PromiseLike<A>) | null,
+        onRejected?: ((reason: unknown) => B | PromiseLike<B>) | null,
+    ): Promise<A | B> {
+        this.observed = true
+        return super.then(onFulfilled, onRejected)
+    }
+}
+
+/**
+ * Follows `run`, and hands its failure to `report` when nothing turned out to be waiting for it.
+ * With that the failure is never an unhandled rejection, which is the host's to decide about and
+ * in Node ends the process.
+ */
+export function reportIfUnobserved(run: Promise<unknown>, report: (error: unknown) => void): Promise<unknown> {
+    const promise = new ObservedPromise((resolve, reject) => void run.then(resolve, reject))
+    // Through the prototype: the promise's own `then` would count this as somebody waiting.
+    void Promise.prototype.then.call(promise, undefined, async (error: unknown) => {
+        // Whoever was handed the promise gets until the event loop turns to start waiting on it.
+        await yieldToEventLoop()
+        if (!promise.observed) {
+            report(error)
+        }
+    })
+    return promise
+}
+
 export const yieldToEventLoop = (): Promise<void> => {
     return new Promise((resolve) => macrotask(resolve))
 }

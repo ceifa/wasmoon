@@ -3,7 +3,7 @@
 // `/// <reference types="emscripten" />` at the top of the emitted declarations to cover everyone
 // else. tsc drops the directive when it is written here, hence the build step.
 import initWasmModule from '../build/glue.js'
-import { limitError, type PendingSuspend, settleOrInterrupt, type SettleOutcome, yieldToEventLoop } from './async'
+import { canSuspend, limitError, type PendingSuspend, settleOrInterrupt, type SettleOutcome, yieldToEventLoop } from './async'
 import type Thread from './thread'
 import { defaultWarnHandler, LUA_REGISTRYINDEX, type LuaAddress, LuaReturn, LuaType, type LuaWarnHandler, PointerSize } from './types'
 // A rolldown plugin will resolve this to the current version on package.json
@@ -1120,7 +1120,7 @@ export default class LuaModule {
      * what lets an `:await()` suspend the wasm stack. Without it everything else works and an
      * `:await()` is an error.
      */
-    public readonly jspiSupported: boolean = typeof WebAssembly.Suspending === 'function' && typeof WebAssembly.promising === 'function'
+    public readonly jspiSupported: boolean = canSuspend()
 
     /** The current wasm stack pointer, saved so a suspended run's C frames can be restored. */
     public stackSave(): number {

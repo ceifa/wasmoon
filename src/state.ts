@@ -14,6 +14,7 @@ import {
     LUA_REGISTRYINDEX,
     type LuaAddress,
     type LuaDoOptions,
+    type LuaInjectName,
     type LuaMemoryOptions,
     type LuaRunOptions,
     LuaType,
@@ -124,6 +125,7 @@ export default class LuaState extends Thread {
 
     public constructor(cmodule: LuaModule, options: CreateStateOptions = {}) {
         const { libs = true, objects = 'proxy', errors = objects === 'copy', inject = false, memory, limits, gc, onWarn } = options
+        const injects = (name: LuaInjectName): boolean => inject === true || (inject !== false && inject.includes(name))
 
         const created = createAddress(cmodule, memory)
         super(cmodule, [], created.address)
@@ -140,18 +142,18 @@ export default class LuaState extends Thread {
 
         // Generic handlers - These may be required to be registered for additional types.
         this.registerTypeExtension(BUILT_IN_PRIORITY.table, createTableType(this))
-        this.functions = createFunctionType(this, limits?.functionTimeout)
+        this.functions = createFunctionType(this, { ...limits, onAsyncError: options.onAsyncError })
         this.registerTypeExtension(BUILT_IN_PRIORITY.function, this.functions)
 
         // Contains the :await functionality.
-        this.registerTypeExtension(BUILT_IN_PRIORITY.promise, createPromiseType(this, inject))
+        this.registerTypeExtension(BUILT_IN_PRIORITY.promise, createPromiseType(this, injects('Promise')))
 
-        if (inject) {
+        if (injects('null')) {
             this.registerTypeExtension(BUILT_IN_PRIORITY.null, createNullType(this))
         }
 
         if (errors) {
-            this.registerTypeExtension(BUILT_IN_PRIORITY.error, createErrorType(this, inject))
+            this.registerTypeExtension(BUILT_IN_PRIORITY.error, createErrorType(this, injects('Error')))
         }
 
         if (objects === 'proxy') {
@@ -170,7 +172,7 @@ export default class LuaState extends Thread {
 
         this.defaultMaxInstructions = limits?.maxInstructions
 
-        if (inject) {
+        if (injects('async')) {
             this.functions.injectAsync()
         }
     }
@@ -209,16 +211,24 @@ export default class LuaState extends Thread {
     }
 
     /**
-     * Calls a Lua function obtained from this state as a run of its own, which is what lets it
-     * `:await()`: called directly it runs synchronously, and an await in it is an error. Resolves
-     * to the function's first result. `limits.functionTimeout` applies unless `options.timeout`
-     * replaces it.
+     * The asynchronous counterpart of a Lua function obtained from this state, as `async function`
+     * is to `function`. Called directly a Lua function runs synchronously, and an `:await()` in it
+     * is an error; what this returns starts it as a run of its own instead, and gives back a
+     * promise of its first result.
+     *
+     * ```js
+     * emitter.on('request', state.async(handler))
+     * const body = await state.async(fetchPage, { timeout: 1000 })(url)
+     * ```
+     *
+     * Each call is a run like a `doString`, under the same limits, with `limits.functionTimeout`
+     * on top unless `options.timeout` replaces it.
      */
-    public callAsync<T = any>(fn: (...args: any[]) => any, args: unknown[] = [], options?: LuaRunOptions): Promise<T> {
-        return this.functions.callAsync(fn, args, options) as Promise<T>
+    public async<T = any>(fn: (...args: any[]) => any, options?: LuaRunOptions): (...args: any[]) => Promise<T> {
+        return this.functions.async(fn, options) as (...args: any[]) => Promise<T>
     }
 
-    /** Whether `value` is a Lua function obtained from this state, the kind {@link callAsync} takes. */
+    /** Whether `value` is a Lua function obtained from this state, the kind {@link async} takes. */
     public isLuaFunction(value: unknown): value is (...args: any[]) => any {
         return this.functions.isLuaFunction(value)
     }

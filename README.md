@@ -224,7 +224,7 @@ build.
 
 ### Null
 
-`null` is injected as userdata type if `inject` is set to `true`. This works as expected except that it will evaluate to `true` in Lua.
+`null` is injected as userdata type if `inject` is `true` or names `'null'`. This works as expected except that it will evaluate to `true` in Lua.
 
 ### Promises
 
@@ -250,46 +250,36 @@ try {
 
 An `:await()` suspends the WebAssembly stack itself, through
 [JSPI](https://github.com/WebAssembly/js-promise-integration). That makes it work anywhere inside an
-asynchronous run (`doString`, `doFile`, `thread.run`, `callAsync`): at the top level, inside a
-`pcall`, across C-call boundaries such as a `table.sort` comparator or a `string.gsub` callback, and
-inside a coroutine that Lua code resumes, whose resumer simply waits.
+asynchronous run (`doString`, `doFile`, `thread.run`, a function made asynchronous as below): at the
+top level, inside a `pcall`, across C-call boundaries such as a `table.sort` comparator or a
+`string.gsub` callback, and inside a coroutine that Lua code resumes, whose resumer simply waits.
 
 It needs a platform with JSPI: Chrome or Edge 137, Firefox 153, Safari 27, Node.js 25, or newer.
-Everything else works without it, and an `:await()` raises an error saying so;
-`lua.module.jspiSupported` tells which one you are on.
+Everything else works without it, and an `:await()` raises an error saying so; `LuaRuntime.canAwait`
+tells which one you are on.
 
 A synchronous call cannot be suspended, so an `:await()` reached through `doStringSync`,
 `doFileSync`, `call` or a Lua function called directly from JS is an error.
 
-#### Calling a Lua function that awaits
+#### Functions that await
 
 A Lua function handed to JS is called synchronously and returns its value directly. To let it
-await, call it through `callAsync`, which runs it as a run of its own and returns a `Promise` of its
-first result:
+await, make it asynchronous, the way `async function` does in JS. From JS that is `state.async`,
+which returns a function that starts the Lua one as a run of its own and gives back a promise of
+its first result:
 
 ```js
 state.set('sleep', (length) => new Promise((resolve) => setTimeout(resolve, length)))
 const handler = await state.doString('return function(x) sleep(10):await() return x + 1 end')
 
 handler(5) // throws: cannot await inside a synchronous call
-await state.callAsync(handler, [5]) // 6
-await state.callAsync(handler, [5], { timeout: 1000 }) // takes the same options as a run
+await state.async(handler)(5) // 6
+emitter.on('request', state.async(handler)) // or hand it to whatever takes a callback
+state.async(handler, { timeout: 1000 }) // takes the same options as a run
 ```
 
-The Lua functions given to a promise's `next`, `catch` and `finally` are called this way already,
-so they can await:
-
-```lua
-local res = sleep(1):next(function()
-    sleep(10):await()
-    return 15
-end)
-print("res", res:await())
-```
-
-From Lua, with `inject: true`, `async(fn)` is what `async function` is in JS: it returns a function
-that runs `fn` as a run of its own and gives back a promise of its first result. Wrap a callback in
-it before handing it to a JS API, and it can await whoever calls it:
+From Lua it is `async`, one of the globals `inject` defines. Wrap a callback in it before handing
+it to a JS API, and it can await whoever calls it:
 
 ```lua
 -- setTimeout calls the function synchronously, which on its own could not await
@@ -299,12 +289,34 @@ setTimeout(async(function()
 end), 100)
 
 -- and it is how to start work without waiting for it
-local fetchAll = async(function(url) return fetch(url):await() end)
-local pages = Promise.all({ fetchAll(a), fetchAll(b) }):await()
+local fetchPage = async(function(url) return fetch(url):await() end)
+local pages = Promise.all({ fetchPage(a), fetchPage(b) }):await()
 ```
 
-As with an async function in JS, an error in it rejects the promise it returned, so await or
-`catch` that promise if the error matters.
+The Lua functions given to a promise's `next`, `catch` and `finally` are asynchronous already:
+
+```lua
+local res = sleep(1):next(function()
+    sleep(10):await()
+    return 15
+end)
+print("res", res:await())
+```
+
+Each call of an asynchronous function is a run like a `doString`, under the same limits, with
+`limits.functionTimeout` on top.
+
+As with an async function in JS, an error in one rejects the promise it returned. When a JS API
+called it and dropped that promise, the rejection is unhandled, which by default ends a Node
+process. Pass `onAsyncError` when creating the state to receive those errors instead:
+
+```js
+const state = lua.createState({ inject: true, onAsyncError: (error) => console.error(error) })
+```
+
+`inject: true` defines `Promise`, `async`, `Error` and `null`. That last one is a sentinel a JS
+`null` is marshalled as, and it is truthy in Lua; to leave it out, name the ones you want:
+`inject: ['Promise', 'async']`.
 
 #### Interrupting a parked run
 

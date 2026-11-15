@@ -5,12 +5,22 @@ import type Thread from '../thread'
 import TypeExtension from '../type-extension'
 import { LUA_REGISTRYINDEX, LuaReturn, type LuaAddress, type LuaRunOptions, LuaType } from '../types'
 import { isEmscriptenUnwind } from '../utils'
-import { SUSPEND } from '../async'
+import { reportIfUnobserved, SUSPEND } from '../async'
 
 export type FunctionType = (...args: any[]) => Promise<any> | any
 
 /** A Lua function as JS sees it, carrying the registry reference of the function it calls. */
 type LuaFunction = FunctionType & Record<symbol, number | undefined>
+
+/** The parts of the state's options that bear on calling a Lua function. */
+export interface FunctionCallOptions {
+    /** Milliseconds a Lua function called from JS may run before being interrupted. */
+    functionTimeout?: number | undefined
+    /** Instructions an asynchronous run of a function may execute, as for any other run. */
+    maxInstructions?: number | undefined
+    /** See `CreateStateOptions.onAsyncError`. */
+    onAsyncError?: ((error: unknown) => void) | undefined
+}
 
 const NO_OPTIONS: DecorationOptions = {}
 
@@ -35,7 +45,7 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
         }
     })
     /**
-     * Keys the registry reference on each Lua function handed to JS, which is how {@link callAsync}
+     * Keys the registry reference on each Lua function handed to JS, which is how {@link async}
      * finds the function to run. A symbol of this state's own, so another state's function does not
      * answer to it, and a property rather than a WeakMap entry, which cost more than the rest of
      * creating the wrapper put together.
@@ -52,13 +62,14 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
      */
     private readonly pooledCallThread: Thread
     private pooledCallThreadInUse = false
-    /** Milliseconds a Lua function called from JS may run before being interrupted. */
     private readonly functionTimeout: number | undefined
+    private readonly options: FunctionCallOptions
 
-    public constructor(state: LuaState, functionTimeout?: number) {
+    public constructor(state: LuaState, options: FunctionCallOptions = {}) {
         super(state, 'js_function')
 
-        this.functionTimeout = functionTimeout
+        this.options = options
+        this.functionTimeout = options.functionTimeout
         // Create a thread off of the global thread to be used to create function call threads without
         // interfering with the global context. This creates a callback context that will always exist
         // even if the thread that called getValue() has been destroyed. Neither anchor is ever
@@ -216,7 +227,7 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
             const callThread = this.acquireCallThread()
             let result: unknown
             try {
-                // Spelled out rather than shared with callAsync through a helper: this is the call
+                // Spelled out rather than shared with async through a helper: this is the call
                 // the interop benchmarks measure, and the extra frame showed up in them.
                 const internalType = callThread.module.lua_rawgeti(callThread.address, LUA_REGISTRYINDEX, func)
                 if (internalType !== LuaType.Function) {
@@ -235,7 +246,7 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
                 // this can name, instead of as Lua's error about yielding outside a coroutine.
                 const resumed = callThread.resume(args.length)
                 if (resumed.result === LuaReturn.Yield) {
-                    throw new Error('cannot yield in a Lua function called synchronously from JS, use callAsync to let it')
+                    throw new Error('cannot yield in a Lua function called synchronously from JS, wrap it with state.async to let it')
                 }
                 callThread.assertOk(resumed.result)
                 result = resumed.resultCount >= 1 ? callThread.getValue(1) : null
@@ -259,24 +270,28 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
     }
 
     /**
-     * Calls a Lua function as a run of its own instead of synchronously, which is what lets it
-     * `:await()`. Resolves to its first result, the same value a direct call returns.
+     * The asynchronous counterpart of a Lua function: calling what this returns starts the function
+     * as a run of its own instead of synchronously, which is what lets it `:await()`, and gives
+     * back a promise of its first result.
      */
-    public callAsync(jsFunc: FunctionType, args: unknown[], options?: LuaRunOptions): Promise<unknown> {
-        return this.runCall((thread) => {
-            const func = (jsFunc as LuaFunction | undefined)?.[this.luaFunction]
-            if (func === undefined) {
-                throw new TypeError('callAsync expects a Lua function obtained from this state')
-            }
-            const internalType = thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, func)
-            if (internalType !== LuaType.Function) {
-                this.assertHasCallMetamethod(thread, internalType)
-            }
-            for (const arg of args) {
-                thread.pushValue(arg)
-            }
-            return args.length
-        }, options)
+    public async(jsFunc: FunctionType, options?: LuaRunOptions): (...args: unknown[]) => Promise<unknown> {
+        if (!this.isLuaFunction(jsFunc)) {
+            throw new TypeError('async expects a Lua function obtained from this state')
+        }
+        return (...args) =>
+            this.runCall((thread) => {
+                // Read off the function on every call rather than once above: holding on to it is
+                // what keeps its registry reference from being released.
+                const func = (jsFunc as LuaFunction)[this.luaFunction]!
+                const internalType = thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, func)
+                if (internalType !== LuaType.Function) {
+                    this.assertHasCallMetamethod(thread, internalType)
+                }
+                for (const arg of args) {
+                    thread.pushValue(arg)
+                }
+                return args.length
+            }, options)
     }
 
     /**
@@ -292,15 +307,15 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
         const { state } = this
         const module = state.module
         const raw = { receiveThread: true, receiveArgsQuantity: true }
+        const { onAsyncError } = this.options
         // Called with the function and then its arguments, which are still on the caller's stack.
-        const start = decorate(
-            (caller: Thread, valueCount: number) =>
-                this.runCall((thread) => {
-                    module.lua_xmove(caller.address, thread.address, valueCount)
-                    return valueCount - 1
-                }),
-            raw,
-        )
+        const start = decorate((caller: Thread, valueCount: number) => {
+            const run = this.runCall((thread) => {
+                module.lua_xmove(caller.address, thread.address, valueCount)
+                return valueCount - 1
+            })
+            return onAsyncError ? reportIfUnobserved(run, onAsyncError) : run
+        }, raw)
         // Compiled by the first call rather than for every state that injects it, most of which
         // never make one: loading it up front cost a quarter of creating the state.
         let wrap: number | undefined
@@ -329,7 +344,9 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
 
     /**
      * Runs what `prepare` leaves on a new thread -- a function, and as many arguments as it returns
-     * the count of -- as a run of its own, and resolves to its first result.
+     * the count of -- as a run of its own, and resolves to its first result. A function that
+     * returned nil resolves to undefined like one that returned nothing, rather than to the null
+     * that `inject` marshals back into Lua as a sentinel, which is truthy there.
      */
     private async runCall(prepare: (thread: Thread) => number, options?: LuaRunOptions): Promise<unknown> {
         this.assertCallable()
@@ -338,12 +355,12 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
         // synchronous call made in the meantime.
         const { thread, reference } = this.callbackContext.newAnchoredThread()
         try {
-            const argCount = prepare(thread)
-            // The limit a direct call runs under, the function timeout, rather than the ones a
-            // doString run is seeded with.
-            const timeout = options?.timeout ?? this.functionTimeout
-            const values = await thread.run(argCount, timeout === undefined ? options : { ...options, timeout })
-            return values.length >= 1 ? values[0] : null
+            // The limits any other run starts under, and the function timeout on top of them.
+            thread.setLimits(this.state.getLimits())
+            const { functionTimeout: timeout, maxInstructions } = this.options
+            const defaults = timeout !== undefined || maxInstructions !== undefined
+            const values = await thread.run(prepare(thread), defaults ? { timeout, maxInstructions, ...options } : options)
+            return values[0] ?? undefined
         } finally {
             // The same teardown as LuaState.callByteCode. Sharing it through a helper costs each
             // parked doString a closure its suspended frame keeps alive.
@@ -377,6 +394,6 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
     }
 }
 
-export default function createTypeExtension(state: LuaState, functionTimeout?: number): FunctionTypeExtension {
-    return new FunctionTypeExtension(state, functionTimeout)
+export default function createTypeExtension(state: LuaState, options?: FunctionCallOptions): FunctionTypeExtension {
+    return new FunctionTypeExtension(state, options)
 }

@@ -4,7 +4,7 @@ import chaiAsPromised from 'chai-as-promised'
 
 use(chaiAsPromised)
 import { expect } from 'chai'
-import { LuaRuntime, LuaTimeoutError, LuaAbortError, LuaMultiReturn } from '../dist/index.js'
+import { LuaRuntime, LuaTimeoutError, LuaAbortError, LuaInstructionLimitError, LuaMultiReturn } from '../dist/index.js'
 import { getState } from './utils.js'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -206,7 +206,7 @@ describe('Awaiting outside an async run', () => {
         using state = await getState()
         state.set('ready', Promise.resolve(1))
         const fn = state.doStringSync('return function() return ready:await() end')
-        expect(() => fn()).to.throw('cannot await inside a synchronous call')
+        expect(() => fn()).to.throw('make the function asynchronous with async(fn) in Lua or state.async(fn) in JS')
         // The failed call leaves the state usable.
         expect(await state.doString('return ready:await()')).to.be.equal(1)
     })
@@ -224,6 +224,7 @@ describe('Awaiting outside an async run', () => {
         WebAssembly.Suspending = undefined
         let runtime
         try {
+            expect(LuaRuntime.canAwait).to.be.equal(false)
             runtime = await LuaRuntime.load()
         } finally {
             WebAssembly.Suspending = Suspending
@@ -231,6 +232,7 @@ describe('Awaiting outside an async run', () => {
         await using lua = runtime
         using state = lua.createState()
         expect(lua.module.jspiSupported).to.be.equal(false)
+        expect(LuaRuntime.canAwait).to.be.equal(true)
 
         state.set('ready', Promise.resolve(1))
         expect(await state.doString('return 1 + 1')).to.be.equal(2)
@@ -242,19 +244,26 @@ describe('Awaiting outside an async run', () => {
     })
 })
 
-describe('callAsync', () => {
+describe('state.async', () => {
     it('runs a Lua function that awaits and resolves to its first result', async () => {
         using state = await getState()
         state.set('later', later)
         const fn = state.doStringSync('return function(a, b) return later(a):await() + b, "ignored" end')
-        expect(await state.callAsync(fn, [1, 2])).to.be.equal(3)
+        expect(await state.async(fn)(1, 2)).to.be.equal(3)
     })
 
-    it('resolves to null for a function that returns nothing, like a direct call', async () => {
+    it('resolves to undefined for a function that returns nothing or nil, like a run does for nothing', async () => {
         using state = await getState()
-        const fn = state.doStringSync('return function() end')
-        expect(fn()).to.be.equal(null)
-        expect(await state.callAsync(fn)).to.be.equal(null)
+        expect(await state.async(state.doStringSync('return function() end'))()).to.be.equal(undefined)
+        expect(await state.async(state.doStringSync('return function() return nil end'))()).to.be.equal(undefined)
+        expect(await state.doString('')).to.be.equal(undefined)
+    })
+
+    it('returns a function to hand to whatever takes a callback', async () => {
+        using state = await getState()
+        state.set('later', later)
+        const double = state.async(state.doStringSync('return function(value) return later(value):await() * 2 end'))
+        expect(await Promise.all([1, 2, 3].map(double))).to.be.eql([2, 4, 6])
     })
 
     it('can await across a C-call boundary', async () => {
@@ -266,23 +275,23 @@ describe('callAsync', () => {
                 return table.concat(t, ",")
             end
         `)
-        expect(await state.callAsync(sorted, [[3, 1, 2]])).to.be.equal('1,2,3')
+        expect(await state.async(sorted)([3, 1, 2])).to.be.equal('1,2,3')
     })
 
     it('rejects with the Lua error the function raises', async () => {
         using state = await getState()
         state.set('later', later)
         const fn = state.doStringSync('return function() later(1):await() error("boom") end')
-        await expect(state.callAsync(fn)).to.eventually.be.rejectedWith('boom')
+        await expect(state.async(fn)()).to.eventually.be.rejectedWith('boom')
     })
 
     it('runs overlapping calls of one function independently', async () => {
         using state = await getState()
         state.set('later', later)
         const fn = state.doStringSync('return function(value) return later(value):await() * 2 end')
-        expect(await Promise.all([1, 2, 3].map((value) => state.callAsync(fn, [value])))).to.be.eql([2, 4, 6])
+        expect(await Promise.all([1, 2, 3].map((value) => state.async(fn)(value)))).to.be.eql([2, 4, 6])
         // Synchronous calls keep working while those are parked, and after.
-        const pending = state.callAsync(fn, [5])
+        const pending = state.async(fn)(5)
         expect(state.doStringSync('return function(value) return value + 1 end')(1)).to.be.equal(2)
         expect(await pending).to.be.equal(10)
     })
@@ -292,10 +301,10 @@ describe('callAsync', () => {
         state.set('never', new Promise(() => {}))
         const fn = state.doStringSync('return function() never:await() end')
 
-        await expect(state.callAsync(fn, [], { timeout: 10 })).to.eventually.be.rejectedWith(LuaTimeoutError)
+        await expect(state.async(fn, { timeout: 10 })()).to.eventually.be.rejectedWith(LuaTimeoutError)
 
         const controller = new AbortController()
-        const aborted = expect(state.callAsync(fn, [], { signal: controller.signal })).to.eventually.be.rejectedWith(LuaAbortError)
+        const aborted = expect(state.async(fn, { signal: controller.signal })()).to.eventually.be.rejectedWith(LuaAbortError)
         controller.abort()
         await aborted
     })
@@ -304,7 +313,21 @@ describe('callAsync', () => {
         using state = await getState({ limits: { functionTimeout: 10 } })
         state.set('never', new Promise(() => {}))
         const fn = state.doStringSync('return function() never:await() end')
-        await expect(state.callAsync(fn)).to.eventually.be.rejectedWith(LuaTimeoutError)
+        await expect(state.async(fn)()).to.eventually.be.rejectedWith(LuaTimeoutError)
+    })
+
+    it('runs under the instruction budget of the state, like any other run', async () => {
+        using state = await getState({ limits: { maxInstructions: 10_000 } })
+        state.set('ready', Promise.resolve())
+        const spin = state.doStringSync('return function() ready:await() while true do end end')
+
+        await expect(state.async(spin)()).to.eventually.be.rejectedWith(LuaInstructionLimitError)
+        await expect(
+            state.doString('return async(function() ready:await() while true do end end)():await()'),
+        ).to.eventually.be.rejectedWith(LuaInstructionLimitError)
+        await expect(state.doStringSync('return ready:next(function() while true do end end)')).to.eventually.be.rejectedWith(
+            LuaInstructionLimitError,
+        )
     })
 
     it('only takes a Lua function of the same state', async () => {
@@ -315,8 +338,8 @@ describe('callAsync', () => {
         expect(state.isLuaFunction(state.doStringSync('return function() end'))).to.be.equal(true)
         expect(state.isLuaFunction(foreign)).to.be.equal(false)
         expect(state.isLuaFunction(() => 1)).to.be.equal(false)
-        await expect(state.callAsync(() => 1)).to.eventually.be.rejectedWith(TypeError)
-        await expect(state.callAsync(foreign)).to.eventually.be.rejectedWith(TypeError)
+        expect(() => state.async(() => 1)).to.throw(TypeError)
+        expect(() => state.async(foreign)).to.throw(TypeError)
     })
 
     it('is what a promise calls its Lua reactions through, so they can await', async () => {
@@ -429,6 +452,49 @@ describe('async', () => {
         using state = await getState()
         await expect(state.doString('return async(42)')).to.eventually.be.rejectedWith('async expects a function, got number')
         await expect(state.doString('return async()')).to.eventually.be.rejectedWith('async expects a function, got no value')
+    })
+
+    it('gives nil back to Lua for a function that returned nil, not the truthy null sentinel', async () => {
+        using state = await getState()
+        state.set('later', later)
+        const result = await state.doString(`
+            local found = async(function() later(1):await() return nil end)():await()
+            return found == nil and not found
+        `)
+        expect(result).to.be.equal(true)
+    })
+
+    it('hands a failure nothing was waiting on to onAsyncError instead of leaving it unhandled', async () => {
+        const reported = []
+        using state = await getState({ onAsyncError: (error) => reported.push(error) })
+        state.set('later', later)
+        // Called and forgotten, the way an event emitter or a timer treats its callback.
+        state.set('fire', (callback) => void callback())
+
+        await state.doString('fire(async(function() later(1):await() error("lost") end))')
+        await sleep(20)
+        expect(reported).to.have.length(1)
+        expect(reported[0].message).to.include('lost')
+
+        // Someone waiting on the promise gets the error, and the handler is left out of it.
+        await expect(state.doString('return async(function() later(1):await() error("seen") end)():await()')).to.eventually.be.rejectedWith(
+            'seen',
+        )
+        expect(
+            await state.doString('return select(2, pcall(function() async(function() error("caught") end)():await() end)) ~= nil'),
+        ).to.be.equal(true)
+        await sleep(20)
+        expect(reported).to.have.length(1)
+    })
+
+    it('can be injected on its own', async () => {
+        using state = await getState({ inject: ['async', 'Promise'] })
+        state.set('later', later)
+        const types = await state.doString('return table.concat({ type(async), type(Promise), type(null), type(Error) }, ",")')
+        expect(types).to.be.equal('function,table,nil,nil')
+        // Without the null sentinel a JS null is nil in Lua.
+        state.set('nothing', null)
+        expect(await state.doString('return nothing == nil')).to.be.equal(true)
     })
 
     it('is not there without inject, and does not need the standard libraries', async () => {
@@ -650,8 +716,8 @@ describe('Async run isolation', () => {
         const runs = [
             state.doString('never:await()'),
             state.doString('never:await()'),
-            state.callAsync(state.get('callback')),
-            state.callAsync(state.get('callback')),
+            state.async(state.get('callback'))(),
+            state.async(state.get('callback'))(),
             state.doString('coroutine.yield()', { onYield: () => new Promise(() => {}) }),
         ]
         const checked = runs.map((run) => expect(run).to.eventually.be.rejectedWith('the Lua state is closed'))

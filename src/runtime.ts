@@ -1,3 +1,4 @@
+import { canSuspend } from './async'
 import LuaModule, { type EmscriptenFS, type EmscriptenPath, type LuaModuleOptions } from './module'
 import LuaState from './state'
 import type { CreateStateOptions } from './types'
@@ -9,6 +10,14 @@ import type { CreateStateOptions } from './types'
  * otherwise independent.
  */
 export default class LuaRuntime {
+    /**
+     * Whether Lua can `:await()` a promise on this platform, which takes JSPI: Chrome or Edge 137,
+     * Firefox 153, Safari 27, Node.js 25, or newer. Everything else works without it.
+     */
+    public static get canAwait(): boolean {
+        return canSuspend()
+    }
+
     /** Loads the Lua wasm module. Stdio and the filesystem are shared by every state on it. */
     public static async load(luaModuleOpts: Readonly<LuaModuleOptions> = {}): Promise<LuaRuntime> {
         return new LuaRuntime(await LuaModule.initialize(luaModuleOpts))
