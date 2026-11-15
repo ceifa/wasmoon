@@ -3,6 +3,18 @@
 Design proposal, 2026-09-05. Everything marked *measured* below was run against the current
 `dist/` (Node 26.7, V8 14.6) or against a one-off wasm build; the scripts are in `experiments/`.
 
+> **What shipped differs from this proposal.** It is kept for its reasoning and measurements; the
+> README section "Where `:await()` works" describes the behaviour.
+>
+> - JSPI is the only way to await. The coroutine-yielding engine (the YieldSuspender of §5.2) and
+>   the `async` load option were removed once JSPI reached every target, so an `:await()` on a
+>   platform without JSPI is an error and everything else still runs there.
+> - A Lua function called from JS is always synchronous. The sync-or-promise callable of §5.5 was
+>   replaced by `state.callAsync(fn, args, options)`, which a promise's `next`, `catch` and
+>   `finally` use for their Lua reactions.
+> - `Promise.async`, `decorate(fn, { call })`, `runtime.engine` and the ephemeron registry of §5.6
+>   were not built.
+
 ## TL;DR
 
 The current model has one primitive, "yield the Lua coroutine and let a JS loop look at what was

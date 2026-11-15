@@ -63,7 +63,7 @@ COMMON=(
     -s INITIAL_HEAP=1MB
     # The engines package.json promises, so the glue carries no fallbacks for older ones. The browser
     # minimums go on the web glue alone below: the host glue is Node only and would warn about them.
-    -s MIN_NODE_VERSION=240000
+    -s MIN_NODE_VERSION=260000
     -s EXPORTED_FUNCTIONS="[
         '_malloc', \
         '_free', \

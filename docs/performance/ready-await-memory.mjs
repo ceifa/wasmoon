@@ -1,6 +1,6 @@
 if (!global.gc || !process.argv[2]) throw new Error('Use --expose-gc and pass an absolute path to index.js')
 const { LuaRuntime } = await import(process.argv[2])
-const lua = await LuaRuntime.load({ async: 'jspi' })
+const lua = await LuaRuntime.load()
 const results = []
 for (let depth = 0; depth < 7; depth++) {
     const state = lua.createState()

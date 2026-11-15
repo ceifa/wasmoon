@@ -3,7 +3,7 @@ import type LuaModule from './module'
 import Thread from './thread'
 import type LuaTypeExtension from './type-extension'
 import createErrorType from './type-extensions/error'
-import createFunctionType from './type-extensions/function'
+import createFunctionType, { type FunctionTypeExtension } from './type-extensions/function'
 import createNullType from './type-extensions/null'
 import createPromiseType from './type-extensions/promise'
 import createProxyType from './type-extensions/proxy'
@@ -120,6 +120,7 @@ export default class LuaState extends Thread {
 
     private readonly allocatorFunctionPointer: number | undefined
     private readonly defaultMaxInstructions: number | undefined
+    private readonly functions: FunctionTypeExtension
 
     public constructor(cmodule: LuaModule, options: CreateStateOptions = {}) {
         const { libs = true, objects = 'proxy', errors = objects === 'copy', inject = false, memory, limits, gc, onWarn } = options
@@ -139,7 +140,8 @@ export default class LuaState extends Thread {
 
         // Generic handlers - These may be required to be registered for additional types.
         this.registerTypeExtension(BUILT_IN_PRIORITY.table, createTableType(this))
-        this.registerTypeExtension(BUILT_IN_PRIORITY.function, createFunctionType(this, limits?.functionTimeout))
+        this.functions = createFunctionType(this, limits?.functionTimeout)
+        this.registerTypeExtension(BUILT_IN_PRIORITY.function, this.functions)
 
         // Contains the :await functionality.
         this.registerTypeExtension(BUILT_IN_PRIORITY.promise, createPromiseType(this, inject))
@@ -187,19 +189,34 @@ export default class LuaState extends Thread {
     }
 
     /**
-     * Executes Lua code from a string synchronously. The script cannot yield, so `:await()` and a
-     * top level `coroutine.yield` are errors here.
+     * Executes Lua code from a string synchronously. Nothing can suspend a synchronous run, so
+     * `:await()` and a top level `coroutine.yield` are errors here.
      */
     public doStringSync<T = any>(script: string, options?: LuaDoOptions): T {
         return this.callByteCodeSync((thread) => thread.loadString(script, options), this.runOptions(options))
     }
 
     /**
-     * Executes Lua code from a file synchronously. The script cannot yield, so `:await()` and a
-     * top level `coroutine.yield` are errors here.
+     * Executes Lua code from a file synchronously. Nothing can suspend a synchronous run, so
+     * `:await()` and a top level `coroutine.yield` are errors here.
      */
     public doFileSync<T = any>(filename: string, options?: LuaDoOptions): T {
         return this.callByteCodeSync((thread) => thread.loadFile(filename, options), this.runOptions(options))
+    }
+
+    /**
+     * Calls a Lua function obtained from this state as a run of its own, which is what lets it
+     * `:await()`: called directly it runs synchronously, and an await in it is an error. Resolves
+     * to the function's first result. `limits.functionTimeout` applies unless `options.timeout`
+     * replaces it.
+     */
+    public callAsync<T = any>(fn: (...args: any[]) => any, args: unknown[] = [], options?: LuaRunOptions): Promise<T> {
+        return this.functions.callAsync(fn, args, options) as Promise<T>
+    }
+
+    /** Whether `value` is a Lua function obtained from this state, the kind {@link callAsync} takes. */
+    public isLuaFunction(value: unknown): value is (...args: any[]) => any {
+        return this.functions.isLuaFunction(value)
     }
 
     /**

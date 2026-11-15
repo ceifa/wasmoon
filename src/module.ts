@@ -98,12 +98,6 @@ export interface LuaModuleOptions {
      * that state overrides it. Defaults to `console.warn`.
      */
     onWarn?: LuaWarnHandler | undefined
-    /**
-     * Which async engine to run under. `'auto'` (the default) uses JSPI where supported, with
-     * coroutine yielding as its fallback. `'jspi'` requires JSPI and throws if it is unavailable.
-     * `'yield'` uses coroutine yielding on every platform.
-     */
-    async?: 'auto' | 'jspi' | 'yield' | undefined
 }
 
 // One-shot conversions, so a single stateless codec pair is shared by every module. Streaming
@@ -184,6 +178,9 @@ function buildTrampolineModule(signature: string): WebAssembly.Module {
 
     return new WebAssembly.Module(Uint8Array.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, ...typeSection, ...importSection, ...exportSection]))
 }
+
+/** `lua_resume`, or its `WebAssembly.promising` wrapper where a resume can suspend. */
+type SuspendableResume = (...args: Parameters<LuaModule['lua_resume']>) => Promise<LuaReturn> | LuaReturn
 
 /** A {@link LuaModuleOptions.mounts} entry with both sides checked, ready for `FS.mount`. */
 interface ResolvedMount {
@@ -358,14 +355,12 @@ export default class LuaModule {
             throw new Error(`fs: 'host' needs glue-host.js, which the bundle replaced with a stub because it targets the browser`)
         }
 
-        const asyncEngine = opts.async ?? 'auto'
         const load = async (wasmFile?: string): Promise<LuaModule> => {
             return new LuaModule(
                 await init({ ...(wasmFile === undefined ? {} : { locateFile: () => wasmFile }), preRun, printErr }),
                 opts.onWarn,
                 fs,
                 mounts,
-                asyncEngine,
             )
         }
 
@@ -416,8 +411,6 @@ export default class LuaModule {
     public readonly onWarn: LuaWarnHandler | undefined
     /** Which filesystem this module was loaded with, as {@link LuaModuleOptions.fs}. */
     public readonly fs: LuaFileSystem
-    /** The async engine requested at load, as {@link LuaModuleOptions.async}. */
-    public readonly asyncEngine: 'auto' | 'jspi' | 'yield'
 
     declare public luaL_checkversion_: (L: LuaAddress, ver: number, sz: number) => void
     declare public luaL_getmetafield: (L: LuaAddress, obj: number, e: string | null) => LuaType
@@ -564,7 +557,7 @@ export default class LuaModule {
     declare public lua_upvaluejoin: (L: LuaAddress, fidx1: number, n1: number, fidx2: number, n2: number) => void
     declare public lua_sethook: (L: LuaAddress, func: number | null, mask: number, count: number) => void
     /** Installs the await hook the {@link wasmoon_push_jsfunction} closures suspend through. */
-    declare public wasmoon_set_await_hook: (hook: number, resumeHook?: number) => void
+    declare public wasmoon_set_await_hook: (hook: number, resumeHook: number) => void
     /** Pops the reference box on the stack and pushes a JS function closure over it and `callHook`. */
     declare public wasmoon_push_jsfunction: (L: LuaAddress, callHook: number) => void
     declare public lua_gethook: (L: LuaAddress) => number
@@ -626,15 +619,15 @@ export default class LuaModule {
     public readonly interruptToken: number
     /**
      * The wasm stack pointer while control is in JS with none of our wasm frames below, captured
-     * once. A JSPI suspension frees the C stack from the run's frontier up to here, and restores it
+     * once. A suspension frees the C stack from the run's frontier up to here, and restores it
      * before resuming. See {@link installAwaitHook}.
      */
     public readonly mainStackPointer: number
     /**
-     * Set true only while a JSPI promising resume is the innermost driver on the stack, so an
-     * `:await()` knows a suspend would reach a promising boundary. A synchronous entry point
-     * (doStringSync, a JS→Lua callback) sets it false around its own resume, so an await there
-     * takes the yield path instead of trapping.
+     * Set true only while a promising resume is the innermost driver on the stack, so an `:await()`
+     * knows a suspend would reach a promising boundary. A synchronous entry point (doStringSync, a
+     * JS→Lua callback) sets it false around its own call, so an await there raises an error instead
+     * of trapping.
      */
     public stackCanSuspend = false
     /**
@@ -655,15 +648,8 @@ export default class LuaModule {
         return yieldToEventLoop()
     }
 
-    /**
-     * Whether runs on this module go through JSPI. On unless the platform lacks it or `async` asked
-     * for the yielding engine, in which case an `:await()` can only park at a coroutine boundary.
-     */
-    public readonly useJspi: boolean
-    /** `promising(lua_resume)`, built once. */
-    private promisingResumeFunction:
-        | ((L: LuaAddress, from: LuaAddress | null, narg: number, nres: number) => Promise<LuaReturn>)
-        | undefined
+    /** Built on first use by {@link suspendableResume}, then kept for the module's lifetime. */
+    private suspendableResumeFunction: SuspendableResume | undefined
     private stringBuffer = 0
     // Initialized together on the first short ASCII read. Numeric-only runtimes need no cache.
     // Empty slots hold '', which no non-empty read can match, under a hash of 0.
@@ -679,19 +665,11 @@ export default class LuaModule {
         onWarn?: LuaWarnHandler,
         fs: LuaFileSystem = 'memory',
         mounts: readonly ResolvedMount[] = [],
-        asyncEngine: 'auto' | 'jspi' | 'yield' = 'auto',
     ) {
         this.emscripten = module
         this.onWarn = onWarn
         this.fs = fs
         this.mounts = [...mounts]
-        this.asyncEngine = asyncEngine
-
-        if (asyncEngine === 'jspi' && !this.jspiSupported) {
-            throw new Error(
-                "async: 'jspi' needs a platform with the JavaScript Promise Integration API and a glue built with SUPPORT_LONGJMP=wasm",
-            )
-        }
 
         // The bindings that marshal a string or take a lua_Integer are wrapped over the raw export.
         // Every other binding crosses only numbers and is the export itself.
@@ -861,16 +839,19 @@ export default class LuaModule {
 
         // Captured while no Lua is running, so it is the top of the C stack in JS land.
         this.mainStackPointer = this.stackSave()
-        this.useJspi = this.jspiSupported && this.asyncEngine !== 'yield'
-        if (this.useJspi) {
+        if (this.jspiSupported) {
             this.installAwaitHook()
         }
     }
 
-    /** {@link promising}-wrapped `lua_resume`, built on first use and kept. */
-    public promisingResume(): (L: LuaAddress, from: LuaAddress | null, narg: number, nres: number) => Promise<LuaReturn> {
-        this.promisingResumeFunction ??= WebAssembly.promising(this.lua_resume)
-        return this.promisingResumeFunction
+    /**
+     * The `lua_resume` async runs are driven through: wrapped in `WebAssembly.promising`, so an
+     * `:await()` inside it can suspend the wasm stack. Where the platform has no JSPI it is the plain
+     * export, and a run is a resume nothing can suspend.
+     */
+    public suspendableResume(): SuspendableResume {
+        this.suspendableResumeFunction ??= this.jspiSupported ? WebAssembly.promising(this.lua_resume) : this.lua_resume
+        return this.suspendableResumeFunction
     }
 
     /**
@@ -889,7 +870,7 @@ export default class LuaModule {
                 const suspend = this.pendingSuspend
                 this.pendingSuspend = undefined
                 if (suspend === undefined) {
-                    throw new Error('the JSPI await hook ran with no pending suspend')
+                    throw new Error('the await hook ran with no pending suspend')
                 }
 
                 const stackPointer = this.stackSave()
@@ -1135,9 +1116,9 @@ export default class LuaModule {
     }
 
     /**
-     * Whether this runtime can run Lua under JSPI, so an `:await()` can suspend the wasm stack
-     * anywhere instead of only at a coroutine boundary. Needs the VM support and a glue built with
-     * `SUPPORT_LONGJMP=wasm`, without which a suspend trap fires on the `invoke_*` JS trampolines.
+     * Whether the platform has JSPI (the WebAssembly JavaScript Promise Integration API), which is
+     * what lets an `:await()` suspend the wasm stack. Without it everything else works and an
+     * `:await()` is an error.
      */
     public readonly jspiSupported: boolean = typeof WebAssembly.Suspending === 'function' && typeof WebAssembly.promising === 'function'
 

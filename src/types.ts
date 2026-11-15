@@ -127,15 +127,15 @@ export interface LuaRunOptions {
      *
      * Interrupts parked awaits and onYield handlers without waiting for their promises to settle.
      * A signal cannot fire while the event loop is blocked, so a timer cannot abort a tight Lua
-     * loop without async steps; use `timeout` or `maxInstructions` for those. Repeated awaits and
-     * host yields periodically give timers a turn.
+     * loop without async steps; use `timeout` or `maxInstructions` for those. Repeated awaits
+     * periodically give timers a turn, and a top level `coroutine.yield` without a handler always does.
      */
     signal?: AbortSignal | undefined
     /**
-     * Called with the values of a top level `coroutine.yield` that is not an `:await()`. Its return
+     * Called with the values of a top level `coroutine.yield`. Its return
      * becomes the result of that yield when the run resumes; a returned promise is awaited first, a
      * `LuaMultiReturn` becomes several values, and `undefined` resumes with none. Without a handler
-     * such a yield resumes with nothing. Both engines periodically yield to the event loop.
+     * such a yield gives the event loop a turn and resumes with nothing.
      */
     onYield?: ((values: MultiReturn) => unknown | Promise<unknown>) | undefined
 }

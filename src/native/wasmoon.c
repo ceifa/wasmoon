@@ -51,10 +51,10 @@ void wasmoon_rawseti(lua_State *L, int idx, double n) {
  *
  * The call hook runs the JS function. When it returns -1 the JS side has stashed a promise and
  * asked to suspend, and the await hook is reached from this wasm frame with no JS frame in between,
- * which is what the JSPI engine needs to switch the stack. The await hook is a plain never
- * suspending stub under the fallback engine, where the call hook never returns -1.
- * With a resume hook, the await returns a JS reference, consumed synchronously to restore the
- * linear-memory stack before Lua can read it. Promise reactions cannot interleave that restore.
+ * which is what JSPI needs to switch the stack. The await hook answers with a JS reference, which
+ * the resume hook consumes synchronously to restore the linear-memory stack before Lua can read
+ * it: no promise reaction can interleave that restore. Neither hook is set on a platform without
+ * JSPI, where the call hook never returns -1.
  */
 
 static lua_CFunction await_hook;
@@ -64,10 +64,7 @@ static int wasmoon_jsfunction(lua_State *L) {
     lua_CFunction call_hook = (lua_CFunction)lua_touserdata(L, lua_upvalueindex(2));
     int n = call_hook(L);
     if (n == -1) {
-        n = await_hook(L);
-        if (resume_hook) {
-            n = resume_hook(n);
-        }
+        n = resume_hook(await_hook(L));
     }
     return n;
 }

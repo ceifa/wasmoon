@@ -9,7 +9,7 @@ for (let round = 0; round < 30; round++) {
         global.gc()
         const start = performance.now()
         for (let i = 0; i < 10; i++) {
-            const lua = await libraries[variant].LuaRuntime.load({ async: 'yield' })
+            const lua = await libraries[variant].LuaRuntime.load()
             const state = lua.createState()
             state.doStringSync('return 1+1')
             state.close()

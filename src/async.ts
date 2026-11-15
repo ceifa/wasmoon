@@ -33,7 +33,7 @@ export const yieldToEventLoop = (): Promise<void> => {
 /**
  * The interrupt a deadline or aborted signal calls for, or undefined when neither has fired. The
  * single source of both the abort-vs-timeout classification and its message, shared by the debug
- * hook's limit check and the JSPI await hook.
+ * hook's limit check and the await hook.
  */
 export function limitError(signal: AbortSignal | undefined, deadline: number | undefined): LuaInterruptError | undefined {
     if (signal?.aborted) {
@@ -51,7 +51,7 @@ export type SettleOutcome =
     | { status: 'interrupted'; error: LuaInterruptError }
 
 /**
- * The promise a JSPI `:await()` stashed for the C trampoline's await hook to suspend on, along
+ * The promise an `:await()` stashed for the C trampoline's await hook to suspend on, along
  * with how to marshal its settled value back onto the Lua stack.
  */
 export interface PendingSuspend {
@@ -64,8 +64,8 @@ export interface PendingSuspend {
 
 /**
  * Awaits `promise`, but reports an interruption instead if `signal` aborts or `deadline` passes
- * first. Used by the JSPI await hook, which unwinds the suspended run with a Lua error when it is
- * interrupted rather than waiting for the promise it was parked on.
+ * first. Used for an `onYield` handler, and by the await hook, which unwinds the suspended run with
+ * a Lua error when it is interrupted rather than waiting for the promise it was parked on.
  */
 export function settleOrInterrupt(promise: unknown, signal: AbortSignal | undefined, deadline: number | undefined): Promise<SettleOutcome> {
     const settled: Promise<SettleOutcome> = Promise.resolve(promise).then(
@@ -127,13 +127,7 @@ export function settleOrInterrupt(promise: unknown, signal: AbortSignal | undefi
 }
 
 /**
- * Returned by a JS function through the C trampoline to ask it to suspend the JSPI stack. The
+ * Returned by a JS function through the C trampoline to ask it to suspend the wasm stack. The
  * function extension turns it into the -1 the trampoline reads; nothing else produces it.
  */
 export const SUSPEND: unique symbol = Symbol('wasmoon.suspend')
-
-/** One record per coroutine await, shared by the continuation and its host driver. */
-export interface PendingAwait {
-    promise: Promise<unknown>
-    result: { status: 'fulfilled' | 'rejected'; value: unknown } | undefined
-}

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { performance } from 'node:perf_hooks'
 const paths = process.argv.slice(2)
 if (paths.length !== 2) throw new Error('Pass absolute paths to baseline and candidate index.js files')
-const runtimes = await Promise.all(paths.map(async (path) => (await import(path)).LuaRuntime.load({ async: 'jspi' })))
+const runtimes = await Promise.all(paths.map(async (path) => (await import(path)).LuaRuntime.load()))
 const states = runtimes.map((lua) => lua.createState())
 for (const state of states) state.set('ready', Promise.resolve(1))
 const samples = [[], []]

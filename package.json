@@ -37,7 +37,7 @@
         "!dist/*.map"
     ],
     "engines": {
-        "node": ">=24"
+        "node": ">=26"
     },
     "browserslist": [
         "chrome >= 134",
