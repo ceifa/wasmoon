@@ -169,6 +169,10 @@ export default class LuaState extends Thread {
         }
 
         this.defaultMaxInstructions = limits?.maxInstructions
+
+        if (inject) {
+            this.functions.injectAsync()
+        }
     }
 
     /**

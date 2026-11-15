@@ -287,6 +287,25 @@ end)
 print("res", res:await())
 ```
 
+From Lua, with `inject: true`, `async(fn)` is what `async function` is in JS: it returns a function
+that runs `fn` as a run of its own and gives back a promise of its first result. Wrap a callback in
+it before handing it to a JS API, and it can await whoever calls it:
+
+```lua
+-- setTimeout calls the function synchronously, which on its own could not await
+setTimeout(async(function()
+    sleep(10):await()
+    print("later")
+end), 100)
+
+-- and it is how to start work without waiting for it
+local fetchAll = async(function(url) return fetch(url):await() end)
+local pages = Promise.all({ fetchAll(a), fetchAll(b) }):await()
+```
+
+As with an async function in JS, an error in it rejects the promise it returned, so await or
+`catch` that promise if the error matters.
+
 #### Interrupting a parked run
 
 A run parked on a promise is interrupted by its `timeout` or `AbortSignal` without waiting for the

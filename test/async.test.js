@@ -348,6 +348,99 @@ describe('callAsync', () => {
     })
 })
 
+describe('async', () => {
+    it('wraps a Lua function so that calling it starts a run and returns its promise', async () => {
+        using state = await getState()
+        state.set('later', later)
+        expect(await state.doString('return async(function(a, b) return later(a):await() + b end)(1, 2):await()')).to.be.equal(3)
+    })
+
+    it('lets a function handed straight to a JS API await', async () => {
+        using state = await getState()
+        state.set('later', later)
+        let outcome
+        const called = new Promise((resolve) => {
+            state.set('schedule', (callback) => {
+                setTimeout(() => {
+                    outcome = callback(20)
+                    resolve()
+                }, 1)
+            })
+        })
+        await state.doString('schedule(async(function(x) return later(x):await() + 1 end))')
+        await called
+        expect(outcome).to.be.instanceOf(Promise)
+        expect(await outcome).to.be.equal(21)
+    })
+
+    it('runs the calls it starts concurrently', async () => {
+        using state = await getState()
+        const order = []
+        state.set('mark', (value) => void order.push(value))
+        state.set('sleep', sleep)
+        await state.doString(`
+            local work = async(function(name, ms) mark(name .. " in") sleep(ms):await() mark(name .. " out") end)
+            Promise.all({ work("slow", 20), work("fast", 1) }):await()
+        `)
+        expect(order).to.be.eql(['slow in', 'fast in', 'fast out', 'slow out'])
+    })
+
+    it('passes its arguments as the Lua values they are', async () => {
+        // Under 'copy' a table that went through JS would come back as another table.
+        using state = await getState({ objects: 'copy' })
+        state.set('later', later)
+        const result = await state.doString(`
+            local t = {}
+            local same = async(function(x) later(1):await() x.seen = true return x == t end)(t):await()
+            return same and t.seen
+        `)
+        expect(result).to.be.equal(true)
+    })
+
+    it('can await across a C-call boundary and from a synchronous run', async () => {
+        using state = await getState()
+        state.set('later', later)
+        const promise = state.doStringSync(`
+            return async(function()
+                local t = {3, 1, 2}
+                table.sort(t, function(a, b) later(0):await() return a < b end)
+                return table.concat(t, ",")
+            end)()
+        `)
+        expect(promise).to.be.instanceOf(Promise)
+        expect(await promise).to.be.equal('1,2,3')
+    })
+
+    it('rejects the promise with the error the function raises', async () => {
+        using state = await getState()
+        state.set('later', later)
+        await expect(state.doString('return async(function() later(1):await() error("boom") end)():await()')).to.eventually.be.rejectedWith(
+            'boom',
+        )
+    })
+
+    it('runs under the function timeout of the state', async () => {
+        using state = await getState({ limits: { functionTimeout: 10 } })
+        state.set('never', new Promise(() => {}))
+        await expect(state.doStringSync('return async(function() never:await() end)()')).to.eventually.be.rejectedWith(LuaTimeoutError)
+    })
+
+    it('only wraps a function', async () => {
+        using state = await getState()
+        await expect(state.doString('return async(42)')).to.eventually.be.rejectedWith('async expects a function, got number')
+        await expect(state.doString('return async()')).to.eventually.be.rejectedWith('async expects a function, got no value')
+    })
+
+    it('is not there without inject, and does not need the standard libraries', async () => {
+        using plain = await getState({ inject: false })
+        expect(plain.doStringSync('return async')).to.be.equal(null)
+
+        using bare = await getState({ libs: false })
+        bare.set('later', later)
+        expect(await bare.doString('return async(function() return later(3):await() end)():await()')).to.be.equal(3)
+    })
+})
+
 describe('Async run isolation', () => {
     it('keeps Node alive until queued continuations finish, then exits', () => {
         const entry = new URL('../dist/index.js', import.meta.url).href

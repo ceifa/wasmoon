@@ -1,4 +1,5 @@
-import { Decoration, type DecorationOptions } from '../decoration'
+import { decorate, Decoration, type DecorationOptions } from '../decoration'
+import RawResult from '../raw-result'
 import type LuaState from '../state'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
@@ -12,6 +13,15 @@ export type FunctionType = (...args: any[]) => Promise<any> | any
 type LuaFunction = FunctionType & Record<symbol, number | undefined>
 
 const NO_OPTIONS: DecorationOptions = {}
+
+/**
+ * What `async(fn)` returns, as a chunk that takes the JS function starting the run and gives back
+ * the function doing the wrapping. See {@link FunctionTypeExtension.injectAsync}.
+ */
+const ASYNC_SOURCE = `local start = ...
+return function(fn)
+    return function(...) return start(fn, ...) end
+end`
 
 /** Whether the wrapper would behave any differently for these options than for none. */
 function affectsCall(options: DecorationOptions): boolean {
@@ -252,17 +262,12 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
      * Calls a Lua function as a run of its own instead of synchronously, which is what lets it
      * `:await()`. Resolves to its first result, the same value a direct call returns.
      */
-    public async callAsync(jsFunc: FunctionType, args: unknown[], options?: LuaRunOptions): Promise<unknown> {
-        const func = (jsFunc as LuaFunction | undefined)?.[this.luaFunction]
-        if (func === undefined) {
-            throw new TypeError('callAsync expects a Lua function obtained from this state')
-        }
-        this.assertCallable()
-
-        // A thread of its own rather than the pooled one, which a parked run would keep from every
-        // synchronous call made in the meantime.
-        const { thread, reference } = this.callbackContext.newAnchoredThread()
-        try {
+    public callAsync(jsFunc: FunctionType, args: unknown[], options?: LuaRunOptions): Promise<unknown> {
+        return this.runCall((thread) => {
+            const func = (jsFunc as LuaFunction | undefined)?.[this.luaFunction]
+            if (func === undefined) {
+                throw new TypeError('callAsync expects a Lua function obtained from this state')
+            }
             const internalType = thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, func)
             if (internalType !== LuaType.Function) {
                 this.assertHasCallMetamethod(thread, internalType)
@@ -270,10 +275,74 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
             for (const arg of args) {
                 thread.pushValue(arg)
             }
+            return args.length
+        }, options)
+    }
+
+    /**
+     * Defines the Lua global `async`: what `async function` is to JS. `async(fn)` returns a function
+     * that runs `fn` as a run of its own, so that it can `:await()` wherever it is called from, and
+     * hands back a promise of its first result.
+     *
+     * What it returns is a Lua closure over `fn`, built by {@link ASYNC_SOURCE}, rather than a JS
+     * function holding it: that way nothing has to be collected across the two heaps, and the
+     * arguments of a call move from one Lua stack to another without ever becoming JS values.
+     */
+    public injectAsync(): void {
+        const { state } = this
+        const module = state.module
+        const raw = { receiveThread: true, receiveArgsQuantity: true }
+        // Called with the function and then its arguments, which are still on the caller's stack.
+        const start = decorate(
+            (caller: Thread, valueCount: number) =>
+                this.runCall((thread) => {
+                    module.lua_xmove(caller.address, thread.address, valueCount)
+                    return valueCount - 1
+                }),
+            raw,
+        )
+        // Compiled by the first call rather than for every state that injects it, most of which
+        // never make one: loading it up front cost a quarter of creating the state.
+        let wrap: number | undefined
+
+        state.set(
+            'async',
+            decorate((thread: Thread) => {
+                const L = thread.address
+                const type = module.lua_type(L, 1)
+                if (type !== LuaType.Function) {
+                    throw new TypeError(`async expects a function, got ${module.lua_typename(L, type)}`)
+                }
+                if (wrap === undefined) {
+                    thread.loadString(ASYNC_SOURCE, { name: '=async' })
+                    thread.pushValue(start)
+                    module.lua_callk(L, 1, 1, 0, null)
+                    wrap = module.luaL_ref(L, LUA_REGISTRYINDEX)
+                }
+                module.lua_rawgeti(L, LUA_REGISTRYINDEX, wrap)
+                module.lua_pushvalue(L, 1)
+                module.lua_callk(L, 1, 1, 0, null)
+                return new RawResult(1)
+            }, raw),
+        )
+    }
+
+    /**
+     * Runs what `prepare` leaves on a new thread -- a function, and as many arguments as it returns
+     * the count of -- as a run of its own, and resolves to its first result.
+     */
+    private async runCall(prepare: (thread: Thread) => number, options?: LuaRunOptions): Promise<unknown> {
+        this.assertCallable()
+
+        // A thread of its own rather than the pooled one, which a parked run would keep from every
+        // synchronous call made in the meantime.
+        const { thread, reference } = this.callbackContext.newAnchoredThread()
+        try {
+            const argCount = prepare(thread)
             // The limit a direct call runs under, the function timeout, rather than the ones a
             // doString run is seeded with.
             const timeout = options?.timeout ?? this.functionTimeout
-            const values = await thread.run(args.length, timeout === undefined ? options : { ...options, timeout })
+            const values = await thread.run(argCount, timeout === undefined ? options : { ...options, timeout })
             return values.length >= 1 ? values[0] : null
         } finally {
             // The same teardown as LuaState.callByteCode. Sharing it through a helper costs each

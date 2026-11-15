@@ -108,7 +108,7 @@ export interface CreateStateOptions {
      * because the proxy already covers errors when it is enabled.
      */
     errors?: boolean | undefined
-    /** Injects `Error`, `Promise` and `null` into the Lua globals. */
+    /** Injects `Error`, `Promise`, `null` and `async` into the Lua globals. */
     inject?: boolean | undefined
     memory?: LuaMemoryOptions | undefined
     limits?: LuaLimitOptions | undefined
