@@ -58,7 +58,7 @@ doString(code)                          Lua                              JS func
 Relevant code: `Thread.run` (`src/thread.ts:158`), the promise extension
 (`src/type-extensions/promise.ts`), `FunctionTypeExtension.getValue` which calls Lua from JS
 with a synchronous `lua_pcallk` (`src/type-extensions/function.ts:191`), and the limit hook
-(`src/thread.ts` `applyHook`/`checkYieldLimits`).
+(`src/thread.ts` `applyHook`/`limitReached`).
 
 Properties of this model:
 

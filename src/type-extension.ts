@@ -15,21 +15,27 @@ export default abstract class LuaTypeExtension<T> {
      * in Lua. Weak, so the cache never keeps a Lua value alive: an entry goes as soon as Lua drops
      * the value, before the userdata's `__gc` releases the reference index it is keyed by. Per
      * extension, because the same value pushed through two extensions must not share a userdata
-     * carrying the wrong metatable.
+     * carrying the wrong metatable. Created on first use: table copies never use this cache,
+     * and states need not allocate caches for reference types they never push.
      */
-    protected readonly pushedValueCacheReference: number
+    private cacheReference = 0
 
     public constructor(state: LuaState, name: string) {
         this.state = state
         this.name = name
+    }
 
-        const module = state.module
-        module.lua_createtable(state.address, 0, 0)
-        module.lua_createtable(state.address, 0, 1)
-        module.lua_pushstring(state.address, 'v')
-        module.lua_setfield(state.address, -2, '__mode')
-        module.lua_setmetatable(state.address, -2)
-        this.pushedValueCacheReference = module.luaL_ref(state.address, LUA_REGISTRYINDEX)
+    protected get pushedValueCacheReference(): number {
+        if (!this.cacheReference) {
+            const { module, address } = this.state
+            module.lua_createtable(address, 0, 0)
+            module.lua_createtable(address, 0, 1)
+            module.lua_pushstring(address, 'v')
+            module.lua_setfield(address, -2, '__mode')
+            module.lua_setmetatable(address, -2)
+            this.cacheReference = module.luaL_ref(address, LUA_REGISTRYINDEX)
+        }
+        return this.cacheReference
     }
 
     public isType(_thread: Thread, _index: number, type: LuaType, name?: string): boolean {

@@ -4,13 +4,15 @@ import pkg from './package.json' with { type: 'json' }
 import { UNWIND_BRAND } from './src/utils'
 
 export default defineConfig({
-    input: './src/index.ts',
+    // The CLI is an entry of its own: it imports the library by package name at run time rather
+    // than bundling a second copy of it, and is minified the same way.
+    input: { index: './src/index.ts', cli: './src/cli.js' },
     output: {
         // A directory rather than a single file, because the host filesystem glue that module.ts
         // imports on demand has to stay a chunk of its own: a browser bundle then leaves it alone,
         // and Node loads it only when someone asks for `fs: 'host'`.
         dir: 'dist',
-        entryFileNames: 'index.js',
+        entryFileNames: '[name].js',
         // Named rather than hashed, so the `browser` field in package.json can point at it.
         chunkFileNames: 'glue-host.js',
         format: 'esm',
@@ -18,12 +20,15 @@ export default defineConfig({
         // The glue arrives from emcc already minified and rolldown would otherwise re-print it
         // several kilobytes larger than it started. Consumers minify us anyway -- which the
         // Bundling suite covers -- so doing it here only decides what the package and a CDN
-        // consumer download. The sourcemap keeps our own frames readable.
-        minify: { mangle: { toplevel: false } },
+        // consumer download. The sourcemap keeps our own frames readable. Module level names are
+        // mangled too, except that classes keep theirs: those are what a consumer sees, in a
+        // constructor's `name` and in the console, while the helpers between them are not.
+        minify: { mangle: { toplevel: true, keepNames: { function: false, class: true } } },
     },
     // Only the glue imports a node builtin now; the mounts reach node:fs through
-    // process.getBuiltinModule, which a bundler never has to resolve.
-    external: ['node:module'],
+    // process.getBuiltinModule, which a bundler never has to resolve. The rest is the CLI's: the
+    // builtins it uses, the library it runs, and the package.json it reads its version from.
+    external: ['node:module', 'node:fs', 'node:readline', 'wasmoon', '../package.json'],
     plugins: [
         {
             name: 'package-version',

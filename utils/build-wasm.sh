@@ -8,7 +8,7 @@ if [ "$1" == "dev" ];
 then
     extension=(-O0 -g3 -s ASSERTIONS=1 -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2)
 else
-    extension=(-Oz -fno-inline-functions -DLUA_USE_JUMPTABLE=0 -s BINARYEN_EXTRA_PASSES=gufa-optimizing,converge)
+    extension=(-Oz -DLUA_USE_JUMPTABLE=0 -s BINARYEN_EXTRA_PASSES=gufa-optimizing,converge)
 fi
 
 # Everything that is not about the filesystem, shared by both glues below so they can share one
@@ -55,7 +55,15 @@ COMMON=(
     -s EXPORT_ES6=1
     -s MALLOC=emmalloc
     -s STACK_SIZE=1MB
-    -s WASM_BIGINT
+    # The heap starts small and grows on demand (ALLOW_MEMORY_GROWTH below): a fresh state is
+    # around 20 KB and a hello world never grows, while the 16 MB default was almost entirely
+    # untouched address space that every heap snapshot and memory profile still counted.
+    # Growing is cheap here (twelve 20% steps from 2 to 18 MB measure well under a millisecond),
+    # and the JS side never caches a heap view across a call that can grow it.
+    -s INITIAL_HEAP=1MB
+    # The engines package.json promises, so the glue carries no fallbacks for older ones. The browser
+    # minimums go on the web glue alone below: the host glue is Node only and would warn about them.
+    -s MIN_NODE_VERSION=240000
     -s EXPORTED_FUNCTIONS="[
         '_malloc', \
         '_free', \
@@ -208,6 +216,7 @@ COMMON=(
         '_luaopen_package', \
         '_luaL_openselectedlibs', \
         '_lua_gc', \
+        '_wasmoon_isarray', \
         '_wasmoon_pushinteger', \
         '_wasmoon_geti', \
         '_wasmoon_rawgeti', \
@@ -224,6 +233,9 @@ COMMON=(
 emcc "${COMMON[@]}" \
     -lnodefs.js \
     -s ENVIRONMENT="web,worker,node" \
+    -s MIN_CHROME_VERSION=134 \
+    -s MIN_FIREFOX_VERSION=138 \
+    -s MIN_SAFARI_VERSION=260000 \
     -o ../build/glue.js \
     ${LUA_SRC}
 

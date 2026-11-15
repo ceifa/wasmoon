@@ -5,6 +5,7 @@
  * MessageChannel where it exists, because a browser clamps a nested setTimeout to 4ms while a
  * message post is not clamped; setImmediate under Node; setTimeout as the last resort.
  */
+import type Thread from './thread'
 import { LuaAbortError, type LuaInterruptError, LuaTimeoutError } from './types'
 
 type Macrotask = (task: () => void) => void
@@ -45,9 +46,21 @@ export function limitError(signal: AbortSignal | undefined, deadline: number | u
 }
 
 export type SettleOutcome =
-    | { interrupted: false; resolved: true; value: unknown }
-    | { interrupted: false; resolved: false; error: unknown }
-    | { interrupted: true; error: LuaInterruptError }
+    | { status: 'fulfilled'; value: unknown }
+    | { status: 'rejected'; error: unknown }
+    | { status: 'interrupted'; error: LuaInterruptError }
+
+/**
+ * The promise a JSPI `:await()` stashed for the C trampoline's await hook to suspend on, along
+ * with how to marshal its settled value back onto the Lua stack.
+ */
+export interface PendingSuspend {
+    run: Thread
+    promise: PromiseLike<unknown>
+    signal: AbortSignal | undefined
+    deadline: number | undefined
+    resume: (outcome: SettleOutcome) => number
+}
 
 /**
  * Awaits `promise`, but reports an interruption instead if `signal` aborts or `deadline` passes
@@ -56,8 +69,8 @@ export type SettleOutcome =
  */
 export function settleOrInterrupt(promise: unknown, signal: AbortSignal | undefined, deadline: number | undefined): Promise<SettleOutcome> {
     const settled: Promise<SettleOutcome> = Promise.resolve(promise).then(
-        (value) => ({ interrupted: false, resolved: true, value }),
-        (error) => ({ interrupted: false, resolved: false, error }),
+        (value) => ({ status: 'fulfilled', value }),
+        (error) => ({ status: 'rejected', error }),
     )
     if (signal === undefined && deadline === undefined) {
         return settled
@@ -89,7 +102,7 @@ export function settleOrInterrupt(promise: unknown, signal: AbortSignal | undefi
                 () => {
                     const error = limitError(signal, deadline)
                     if (error) {
-                        finish({ interrupted: true, error })
+                        finish({ status: 'interrupted', error })
                     } else {
                         scheduleDeadline()
                     }
@@ -102,10 +115,10 @@ export function settleOrInterrupt(promise: unknown, signal: AbortSignal | undefi
         let onAbort: (() => void) | undefined
         if (signal !== undefined) {
             if (signal.aborted) {
-                finish({ interrupted: true, error: new LuaAbortError('thread aborted') })
+                finish({ status: 'interrupted', error: new LuaAbortError('thread aborted') })
                 return
             }
-            onAbort = () => finish({ interrupted: true, error: new LuaAbortError('thread aborted') })
+            onAbort = () => finish({ status: 'interrupted', error: new LuaAbortError('thread aborted') })
             signal.addEventListener('abort', onAbort, { once: true })
         }
 

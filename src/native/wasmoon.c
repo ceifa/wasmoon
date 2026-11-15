@@ -1,5 +1,24 @@
 #include "lua.h"
 
+/* Matches the iteration order used to copy a table into a JS array. Empty tables
+ * remain objects. This walk leaves the stack unchanged and invokes no metamethods. */
+int wasmoon_isarray(lua_State *L, int idx) {
+    if (lua_rawlen(L, idx) == 0) {
+        return 0;
+    }
+    idx = lua_absindex(L, idx);
+    lua_Integer count = 0;
+    lua_pushnil(L);
+    while (lua_next(L, idx)) {
+        if (!lua_isinteger(L, -2) || lua_tointeger(L, -2) != ++count) {
+            lua_pop(L, 2);
+            return 0;
+        }
+        lua_pop(L, 1);
+    }
+    return 1;
+}
+
 /*
  * Twins of the lua_Integer entry points that take a double where the originals take a 64 bit
  * integer. lua_Integer crosses the wasm boundary as a BigInt, so pushing a plain JS number would
@@ -34,21 +53,28 @@ void wasmoon_rawseti(lua_State *L, int idx, double n) {
  * asked to suspend, and the await hook is reached from this wasm frame with no JS frame in between,
  * which is what the JSPI engine needs to switch the stack. The await hook is a plain never
  * suspending stub under the fallback engine, where the call hook never returns -1.
+ * With a resume hook, the await returns a JS reference, consumed synchronously to restore the
+ * linear-memory stack before Lua can read it. Promise reactions cannot interleave that restore.
  */
 
 static lua_CFunction await_hook;
+static int (*resume_hook)(int);
 
 static int wasmoon_jsfunction(lua_State *L) {
     lua_CFunction call_hook = (lua_CFunction)lua_touserdata(L, lua_upvalueindex(2));
     int n = call_hook(L);
     if (n == -1) {
         n = await_hook(L);
+        if (resume_hook) {
+            n = resume_hook(n);
+        }
     }
     return n;
 }
 
-void wasmoon_set_await_hook(lua_CFunction hook) {
+void wasmoon_set_await_hook(lua_CFunction hook, int (*resume)(int)) {
     await_hook = hook;
+    resume_hook = resume;
 }
 
 /* Pops the reference box already on the stack and pushes the closure over it and call_hook. */

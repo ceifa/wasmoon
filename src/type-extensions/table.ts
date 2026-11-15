@@ -22,7 +22,7 @@ class TableTypeExtension extends TypeExtension<TableType> {
 
         let table = seenMap.get(pointer) as TableType | undefined
         if (!table) {
-            table = this.isSequential(thread, index) ? [] : {}
+            table = thread.module.emscripten._wasmoon_isarray(thread.address, index) ? [] : {}
 
             // Registered before the values are read, so a table that contains itself resolves to
             // this same object rather than to a second copy of it.
@@ -49,28 +49,22 @@ class TableTypeExtension extends TypeExtension<TableType> {
         try {
             const tableIndex = thread.getTop() + 1
 
-            const createTable = (arrayCount: number, keyCount: number): void => {
-                thread.module.lua_createtable(thread.address, arrayCount, keyCount)
-                const ref = thread.module.luaL_ref(thread.address, LUA_REGISTRYINDEX)
-                seenMap.set(target, ref)
-                thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, ref)
-            }
+            // A for..in loop would also copy inherited members.
+            const keys = Array.isArray(target) ? undefined : Object.keys(target)
+            thread.module.lua_createtable(thread.address, keys ? 0 : (target as any[]).length, keys?.length ?? 0)
+            thread.module.lua_pushvalue(thread.address, tableIndex)
+            seenMap.set(target, thread.module.luaL_ref(thread.address, LUA_REGISTRYINDEX))
 
-            if (Array.isArray(target)) {
-                createTable(target.length, 0)
-
-                for (let i = 0; i < target.length; i++) {
-                    thread.pushValue(target[i], seenMap)
+            if (!keys) {
+                const array = target as any[]
+                for (let i = 0; i < array.length; i++) {
+                    thread.pushValue(array[i], seenMap)
                     // Raw, so the table being built cannot be observed through metamethods.
                     thread.module.lua_rawseti(thread.address, tableIndex, i + 1)
                 }
             } else {
-                // A for..in loop would also walk the prototype chain and copy inherited members.
-                const keys = Object.keys(target)
-                createTable(0, keys.length)
-
                 for (const key of keys) {
-                    thread.pushValue(key, seenMap)
+                    thread.module.lua_pushstring(thread.address, key)
                     thread.pushValue((target as Record<string, any>)[key], seenMap)
 
                     thread.module.lua_rawset(thread.address, tableIndex)
@@ -85,40 +79,6 @@ class TableTypeExtension extends TypeExtension<TableType> {
             }
         }
 
-        return true
-    }
-
-    /**
-     * A table becomes a JS array only when `lua_next` walks exactly the integer keys 1..n in that
-     * order, which is Lua's own notion of a sequence. The keys this pass looks at are read again
-     * alongside the values, so it stops as soon as that is ruled out.
-     */
-    private isSequential(thread: Thread, index: number): boolean {
-        const module = thread.module
-
-        // A border of 0 means t[1] is nil, which settles every table read as an object -- the
-        // common case -- with one call instead of starting a walk.
-        if (module.lua_rawlen(thread.address, index) === 0n) {
-            return false
-        }
-
-        let count = 0
-        module.lua_pushnil(thread.address)
-        while (module.lua_next(thread.address, index)) {
-            // Compared as a number rather than through tostring, which would format the key in C
-            // and decode it in JS for every element. A float key with an integral value is stored
-            // as an integer, so this is the same test.
-            if (module.lua_type(thread.address, -2) !== LuaType.Number || module.lua_tonumberx(thread.address, -2, null) !== count + 1) {
-                // Pop the key and the value, since the walk is being abandoned part way.
-                thread.pop(2)
-                return false
-            }
-            count++
-            // Pop the value.
-            thread.pop()
-        }
-
-        // Non-empty, since a border above 0 means some element is present.
         return true
     }
 

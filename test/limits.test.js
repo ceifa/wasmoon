@@ -71,6 +71,23 @@ describe('Run limits', () => {
         expect(() => state.doStringSync(busyLoop)).to.throw(LuaInstructionLimitError)
     })
 
+    it('a parked run keeps its deadline snapshot when the state deadline changes', async () => {
+        using state = await getState()
+        let release
+        state.set(
+            'gate',
+            new Promise((resolve) => {
+                release = resolve
+            }),
+        )
+        state.setDeadline(Date.now() + 60_000)
+        const pending = state.doString('gate:await() return 42')
+        state.setDeadline(Date.now() - 1)
+        release()
+        expect(await pending).to.equal(42)
+        await expect(state.doString('gate:await()')).to.eventually.be.rejectedWith(LuaTimeoutError)
+    })
+
     it('every limit shares one catchable base', async function () {
         this.timeout(20_000)
         using state = await getState()

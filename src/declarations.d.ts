@@ -19,3 +19,8 @@ declare module 'package-version' {
     const value: string
     export default value
 }
+
+declare namespace WebAssembly {
+    function promising<T extends (...args: any[]) => any>(fn: T): (...args: Parameters<T>) => Promise<ReturnType<T>>
+    const Suspending: new (fn: (...args: any[]) => any) => (...args: any[]) => any
+}

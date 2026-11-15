@@ -358,11 +358,29 @@ async function writeInlinedPage() {
         `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>
 <script type="module">
 ${bundle}
-window.__LuaRuntime = LuaRuntime
+window.__LuaRuntime = ${exportedBinding(bundle, 'LuaRuntime')}
 window.__ready = true
 </script>
 </body></html>`,
     )
 
     return { htmlFile, cleanup: () => rm(tempDir, { recursive: true, force: true }) }
+}
+
+/**
+ * The bundle's own name for one of its exports. Inlined into a page it cannot be imported from, and
+ * its top level names are minified, so the export clause is the only way to get hold of a binding.
+ */
+function exportedBinding(bundle, exported) {
+    const clause = /export\s*\{([^}]*)\}/.exec(bundle)
+    if (!clause) {
+        throw new Error('the bundle has no export clause')
+    }
+    for (const entry of clause[1].split(',')) {
+        const [local, name = local] = entry.trim().split(/\s+as\s+/)
+        if (name === exported) {
+            return local
+        }
+    }
+    throw new Error(`the bundle does not export ${exported}`)
 }

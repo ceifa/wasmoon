@@ -350,6 +350,43 @@ describe('Async run isolation', () => {
         await checked
     })
 
+    it('does not marshal a settled await into a state closed before resumption', async () => {
+        for (let depth = 0; depth < 12; depth++) {
+            using state = await getState()
+            let release
+            state.set(
+                'gate',
+                new Promise((resolve) => {
+                    release = resolve
+                }),
+            )
+            const pushNil = state.module.lua_pushnil
+            let touchedClosedState = false
+            state.module.lua_pushnil = (address) => {
+                if (state.isClosed()) {
+                    touchedClosedState = true
+                    throw new Error('attempted to marshal into a closed state')
+                }
+                return pushNil(address)
+            }
+            try {
+                const observed = state.doString('gate:await() return 42').then(
+                    (value) => value,
+                    (error) => error.message,
+                )
+                release()
+                for (let i = 0; i < depth; i++) await Promise.resolve()
+                state.close()
+                expect(await observed).to.be.oneOf([42, 'the Lua state is closed'])
+                // The close listener can reject the run before its native continuation reacts.
+                for (let i = 0; i < 10; i++) await Promise.resolve()
+                expect(touchedClosedState, `close at microtask ${depth}`).to.equal(false)
+            } finally {
+                state.module.lua_pushnil = pushNil
+            }
+        }
+    })
+
     it('can interleave many runs with different suspension depths and settlement orders', async () => {
         using state = await getState()
         state.set('pause', () => Promise.resolve())

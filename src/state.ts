@@ -120,7 +120,6 @@ export default class LuaState extends Thread {
 
     private readonly allocatorFunctionPointer: number | undefined
     private readonly defaultMaxInstructions: number | undefined
-    private readonly closeListeners: (() => void)[] = []
 
     public constructor(cmodule: LuaModule, options: CreateStateOptions = {}) {
         const { libs = true, objects = 'proxy', errors = objects === 'copy', inject = false, memory, limits, gc, onWarn } = options
@@ -259,17 +258,6 @@ export default class LuaState extends Thread {
         }
     }
 
-    /** Notified once when this state closes, so an owner can drop its reference. Returns a function that removes the listener. */
-    public onClose(listener: () => void): () => void {
-        this.closeListeners.push(listener)
-        return () => {
-            const index = this.closeListeners.indexOf(listener)
-            if (index >= 0) {
-                this.closeListeners.splice(index, 1)
-            }
-        }
-    }
-
     /** Closes the state and frees everything it owns. Safe to call more than once. */
     public override close(): void {
         if (this.isClosed()) {
@@ -290,11 +278,6 @@ export default class LuaState extends Thread {
 
         for (const wrapper of this.typeExtensions) {
             wrapper.extension.close()
-        }
-
-        // Listeners may unsubscribe themselves while rejecting a parked run.
-        while (this.closeListeners.length > 0) {
-            this.closeListeners.pop()!()
         }
     }
 
@@ -333,8 +316,9 @@ export default class LuaState extends Thread {
         const { thread, reference } = this.newAnchoredThread()
         try {
             // Seeded from the state so a state wide setLimits reaches the async path too, which
-            // runs on a child thread rather than on the state itself.
-            thread.setLimits(this.getLimits())
+            // runs on a child thread rather than on the state itself. setLimits takes a snapshot,
+            // so going through getLimits first would copy the same configuration twice.
+            thread.setLimits(this.limits)
             loader(thread)
             return (await thread.run(0, options))[0]
         } finally {

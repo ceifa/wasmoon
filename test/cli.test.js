@@ -7,7 +7,7 @@ import { expect } from 'chai'
 import pkg from '../package.json' with { type: 'json' }
 
 // Absolute, so a test can hand the child a cwd of its own.
-const CLI = fileURLToPath(new URL('../bin/wasmoon', import.meta.url))
+const CLI = fileURLToPath(new URL('../dist/cli.js', import.meta.url))
 
 // stdin defaults to closed, matching a piped invocation with nothing to read. Never a TTY here,
 // so the REPL branch and `-i` stay out of reach.

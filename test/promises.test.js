@@ -1,8 +1,25 @@
 import { expect } from 'chai'
 import { getLua, getState, tick } from './utils.js'
 import { mock } from 'node:test'
+import { LuaMultiReturn } from '../dist/index.js'
 
 describe('Promises', () => {
+    it('keeps an awaited undefined distinct from an empty return list', async () => {
+        using state = await getState()
+        state.set('nothing', () => undefined)
+        state.set('pending', Promise.resolve(undefined))
+        state.set('empty', Promise.resolve(LuaMultiReturn.of()))
+        expect(
+            await state.doString(`
+            assert(select('#', nothing()) == 0)
+            assert(select('#', pending:await()) == 1)
+            assert(pending:await() == nil)
+            assert(select('#', empty:await()) == 0)
+            return true
+        `),
+        ).to.equal(true)
+    })
+
     it('use promise next should succeed', async () => {
         using state = await getState()
         const check = mock.fn()

@@ -1,4 +1,5 @@
 import { Decoration, type DecorationOptions } from '../decoration'
+import type MultiReturn from '../multireturn'
 import type LuaState from '../state'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
@@ -215,8 +216,7 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
             // A call can leave its thread in an inconsistent state, so each one gets a thread that
             // is either fresh or has been reset since the last call.
             const callThread = this.acquireCallThread()
-            let handedOff = false
-            let failed = false
+            let result: unknown
             try {
                 const internalType = callThread.module.lua_rawgeti(callThread.address, LUA_REGISTRYINDEX, func)
                 if (internalType !== LuaType.Function) {
@@ -238,21 +238,18 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
                 // Run on the coroutine rather than through lua_pcallk, so an `:await()` reached
                 // inside can park by yielding. If it does, the call has become asynchronous and a
                 // promise is returned; the common case runs to completion in this one resume.
-                const first = callThread.resumeYielding(args.length)
+                const first = callThread.resume(args.length)
                 if (first.result === LuaReturn.Yield) {
-                    handedOff = true
                     return this.finishAsyncCall(callThread, first)
                 }
                 callThread.assertOk(first.result)
-                return callThread.getTop() >= 1 ? callThread.getValue(1) : null
+                result = first.resultCount >= 1 ? callThread.getValue(1) : null
             } catch (err) {
-                failed = true
+                this.releaseCallThread(callThread, true)
                 throw err
-            } finally {
-                if (!handedOff) {
-                    this.releaseCallThread(callThread, failed)
-                }
             }
+            this.releaseCallThread(callThread, false)
+            return result
         }
 
         this.functionRegistry.register(jsFunc, func)
@@ -262,16 +259,15 @@ class FunctionTypeExtension extends TypeExtension<FunctionType> {
 
     /** Drives a callback that parked on an await to completion, resolving to its first result. */
     private async finishAsyncCall(callThread: Thread, first: LuaResumeResult): Promise<unknown> {
-        let failed = false
+        let values: MultiReturn
         try {
-            const values = await callThread.continueYielding(first)
-            return values.length >= 1 ? values[0] : null
+            values = await callThread.continueYielding(first)
         } catch (err) {
-            failed = true
+            this.releaseCallThread(callThread, true)
             throw err
-        } finally {
-            this.releaseCallThread(callThread, failed)
         }
+        this.releaseCallThread(callThread, false)
+        return values.length >= 1 ? values[0] : null
     }
 }
 

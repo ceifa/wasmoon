@@ -1,6 +1,5 @@
 import { decorate, type Decoration } from '../decoration'
 import type LuaState from '../state'
-import MultiReturn from '../multireturn'
 import RawResult from '../raw-result'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
@@ -56,7 +55,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
             if (status === 'rejected') {
                 return this.marshalRejected(continuanceThread, value)
             }
-            return this.marshalResolved(continuanceThread, value)
+            return continuanceThread.pushReturnValues(value, true)
         }, 'iiii')
 
         this.defineMetatable({
@@ -164,27 +163,16 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
             promise,
             signal,
             deadline,
-            isClosed: () => run.isClosed(),
-            onResolve: (value: unknown) => this.marshalResolved(thread, value),
-            onReject: (error: unknown) => this.marshalRejected(thread, error),
-            onInterrupt: (error) => thread.interruptWith(error),
+            resume: (outcome) => {
+                if (outcome.status === 'interrupted') {
+                    return thread.interruptWith(outcome.error)
+                }
+                return outcome.status === 'fulfilled'
+                    ? thread.pushReturnValues(outcome.value, true)
+                    : this.marshalRejected(thread, outcome.error)
+            },
         }
         return SUSPEND
-    }
-
-    /** Pushes a settled promise value as Lua results and returns how many; `undefined` becomes nil. */
-    private marshalResolved(thread: Thread, value: unknown): number {
-        if (value instanceof RawResult) {
-            return value.count
-        }
-        if (value instanceof MultiReturn) {
-            for (const item of value) {
-                thread.pushValue(item)
-            }
-            return value.length
-        }
-        thread.pushValue(value)
-        return 1
     }
 
     /** Raises a rejected promise as a Lua error on `thread`. */
