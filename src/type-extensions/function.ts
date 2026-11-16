@@ -63,13 +63,15 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
     private readonly pooledCallThread: Thread
     private pooledCallThreadInUse = false
     private readonly functionTimeout: number | undefined
-    private readonly options: FunctionCallOptions
+    private readonly maxInstructions: number | undefined
+    private readonly onAsyncError: ((error: unknown) => void) | undefined
 
     public constructor(state: LuaState, options: FunctionCallOptions = {}) {
         super(state, 'js_function')
 
-        this.options = options
         this.functionTimeout = options.functionTimeout
+        this.maxInstructions = options.maxInstructions
+        this.onAsyncError = options.onAsyncError
         // Create a thread off of the global thread to be used to create function call threads without
         // interfering with the global context. This creates a callback context that will always exist
         // even if the thread that called getValue() has been destroyed. Neither anchor is ever
@@ -307,7 +309,7 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
         const { state } = this
         const module = state.module
         const raw = { receiveThread: true, receiveArgsQuantity: true }
-        const { onAsyncError } = this.options
+        const { onAsyncError } = this
         // Called with the function and then its arguments, which are still on the caller's stack.
         const start = decorate((caller: Thread, valueCount: number) => {
             const run = this.runCall((thread) => {
@@ -357,7 +359,7 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
         try {
             // The limits any other run starts under, and the function timeout on top of them.
             thread.setLimits(this.state.getLimits())
-            const { functionTimeout: timeout, maxInstructions } = this.options
+            const { functionTimeout: timeout, maxInstructions } = this
             const defaults = timeout !== undefined || maxInstructions !== undefined
             const values = await thread.run(prepare(thread), defaults ? { timeout, maxInstructions, ...options } : options)
             return values[0] ?? undefined

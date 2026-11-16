@@ -84,7 +84,7 @@ export default class Thread {
     private pendingInterrupt: LuaInterruptError | undefined
     private closeListeners: (() => void)[] | undefined
 
-    /** The driver itself is the run context; no separate context allocation is needed. */
+    /** The limits of the run this thread is driving, as an `:await()` reads them when it parks. */
     public get runLimits(): Readonly<LuaThreadLimits> {
         return this.limits
     }
@@ -328,7 +328,7 @@ export default class Thread {
         module.writePointer(nresPointer, 0)
         let pending: Promise<LuaReturn> | LuaReturn
         try {
-            pending = module.suspendableResume()(this.address, null, argCount, nresPointer)
+            pending = module.suspendableResume(this.address, null, argCount, nresPointer)
         } finally {
             // Restore the caller immediately, not when this suspended run eventually settles: a call
             // made while it is parked then reuses the C stack rather than growing past it.

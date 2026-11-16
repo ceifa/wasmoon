@@ -138,10 +138,10 @@ Wasmoon is **~10x faster** than fengari for pure Lua execution. If your use case
 Fengari is smaller than wasmoon, which can improve the user experience if in web environments.
 Both minified, and wasmoon counted as its JS plus `glue.wasm`:
 
-|             | wasmoon          | fengari |
-| ----------- | ---------------- | ------- |
-| **plain**   | 294kB (97 + 197) | 228kB   |
-| **gzipped** | 124kB (29 + 95)  | 74kB    |
+|             | wasmoon           | fengari |
+| ----------- | ----------------- | ------- |
+| **plain**   | 302kB (108 + 194) | 228kB   |
+| **gzipped** | 128kB (34 + 94)   | 74kB    |
 
 Almost all of wasmoon's weight is the wasm, which is a separate file: it is fetched in parallel
 with your JS rather than parsed as part of it, and it caches on its own across releases of your app.

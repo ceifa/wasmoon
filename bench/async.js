@@ -1,70 +1,114 @@
-// node --expose-gc bench/async.js [path/to/index.js]
-// An alternate bundle makes before/after comparisons use exactly the same workloads.
+import { LuaRuntime } from '../dist/index.js'
 import assert from 'node:assert/strict'
-import { resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { isMainModule, parseBenchOptions, runBenchmarks } from './utils.js'
 
-const { LuaRuntime } = await import(pathToFileURL(resolve(process.argv[2] ?? 'dist/index.js')).href)
-const median = (values) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)]
+// The cost of the asynchronous paths on their own: every promise here is settled already, so what
+// is timed is the suspend and resume around it rather than whatever it would be waiting for.
+const AWAIT_COUNT = 20000
+const RUN_COUNT = 1000
+const PARKED_RUNS = 1000
 
-const runtime = await LuaRuntime.load()
-const state = runtime.createState({ inject: true, memory: { trace: true } })
-state.set('ready', Promise.resolve(1))
-state.set('add', (a, b) => a + b)
-state.doStringSync('function addLua(a, b) return a + b end')
-const addLua = state.get('addLua')
-const workloads = {
-    '20k settled awaits': () => state.doString('local n = 0 for i=1,20000 do n = n + ready:await() end return n'),
-    '20k JS to Lua calls': () => {
-        for (let i = 0; i < 20000; i++) assert.equal(addLua(i, 1), i + 1)
-    },
-    '20k Lua to JS calls': () => state.doStringSync('local n = 0 for i=1,20000 do n = add(n, 1) end return n'),
-    '1k async entries': async () => {
-        for (let i = 0; i < 1000; i++) assert.equal(await state.doString('return 1'), 1)
-    },
-    'CPU loop': () => state.doStringSync('local n = 0 for i=1,1000000 do n = n + i end return n'),
-}
-const timings = {}
-for (const [name, run] of Object.entries(workloads)) {
-    for (let i = 0; i < 3; i++) await run()
-    const samples = []
-    for (let i = 0; i < 7; i++) {
-        const start = performance.now()
-        await run()
-        samples.push(performance.now() - start)
+function withState(lua, body) {
+    return async () => {
+        const state = lua.createState({ inject: true })
+        try {
+            return await body(state)
+        } finally {
+            state.close()
+        }
     }
-    timings[name] = Number(median(samples).toFixed(2))
 }
 
-const heapSamples = []
-const bufferSamples = []
-const luaSamples = []
-for (let sample = 0; sample < 5; sample++) {
-    let release
-    state.set(
-        'gate',
-        new Promise((resolve) => {
-            release = resolve
-        }),
-    )
-    state.gc.collect()
-    global.gc?.()
-    const before = process.memoryUsage()
-    const luaBefore = state.memory.used
-    const runs = Array.from({ length: 1000 }, () => state.doString('gate:await() return 1'))
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    global.gc?.()
-    const during = process.memoryUsage()
-    heapSamples.push(during.heapUsed - before.heapUsed)
-    bufferSamples.push(during.arrayBuffers - before.arrayBuffers)
-    luaSamples.push(state.memory.used - luaBefore)
-    release()
-    assert.ok((await Promise.all(runs)).every((value) => value === 1))
+function createSettledAwaitBenchmark(lua) {
+    return withState(lua, async (state) => {
+        state.set('ready', Promise.resolve(1))
+        const total = await state.doString(`
+            local sum = 0
+            for i = 1, ${AWAIT_COUNT} do sum = sum + ready:await() end
+            return sum
+        `)
+        assert.equal(total, AWAIT_COUNT)
+    })
 }
-console.log(
-    JSON.stringify({
-        medianMs: timings,
-        parked1000: { jsHeapBytes: median(heapSamples), arrayBufferBytes: median(bufferSamples), luaBytes: median(luaSamples) },
-    }),
-)
-state.close()
+
+function createDoStringBenchmark(lua) {
+    return withState(lua, async (state) => {
+        for (let i = 0; i < RUN_COUNT; i++) {
+            assert.equal(await state.doString('return 1'), 1)
+        }
+    })
+}
+
+function createStateAsyncBenchmark(lua) {
+    return withState(lua, async (state) => {
+        state.doStringSync('function add(a, b) return a + b end')
+        const add = state.async(state.get('add'))
+        for (let i = 0; i < RUN_COUNT; i++) {
+            assert.equal(await add(i, 1), i + 1)
+        }
+    })
+}
+
+function createLuaAsyncBenchmark(lua) {
+    return withState(lua, async (state) => {
+        const total = await state.doString(`
+            local add = async(function(a, b) return a + b end)
+            local sum = 0
+            for i = 1, ${RUN_COUNT} do sum = sum + add(i, 1):await() end
+            return sum
+        `)
+        assert.equal(total, (RUN_COUNT * (RUN_COUNT + 1)) / 2 + RUN_COUNT)
+    })
+}
+
+// What a run costs while it waits, which no timing shows. Needs `node --expose-gc`.
+async function printParkedRunMemory(lua) {
+    if (typeof globalThis.gc !== 'function') {
+        console.log('\nMemory of a parked run: skipped, run node with --expose-gc to measure it')
+        return
+    }
+
+    const state = lua.createState({ memory: { trace: true } })
+    try {
+        const gate = Promise.withResolvers()
+        state.set('gate', gate.promise)
+        state.gc.collect()
+        globalThis.gc()
+        const jsBefore = process.memoryUsage().heapUsed
+        const luaBefore = state.memory.used
+
+        const runs = Array.from({ length: PARKED_RUNS }, () => state.doString('gate:await() return 1'))
+        // The runs park as their await hooks get to run, which takes a turn of the event loop.
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        globalThis.gc()
+        const js = (process.memoryUsage().heapUsed - jsBefore) / PARKED_RUNS
+        const lua = (state.memory.used - luaBefore) / PARKED_RUNS
+
+        gate.resolve()
+        await Promise.all(runs)
+        console.log(`\nMemory of a parked run: ${js.toFixed(0)} bytes of JS heap, ${lua.toFixed(0)} bytes of Lua heap`)
+    } finally {
+        state.close()
+    }
+}
+
+export async function runAsyncBench(options = {}) {
+    const lua = await LuaRuntime.load()
+
+    const results = await runBenchmarks({
+        title: 'Async benchmarks',
+        benches: [
+            { name: 'Await a settled promise', run: createSettledAwaitBenchmark(lua) },
+            { name: 'doString', run: createDoStringBenchmark(lua) },
+            { name: 'Call Lua from JS with state.async', run: createStateAsyncBenchmark(lua) },
+            { name: 'Call a Lua async function', run: createLuaAsyncBenchmark(lua) },
+        ],
+        options,
+    })
+    await printParkedRunMemory(lua)
+    return results
+}
+
+if (isMainModule(import.meta.url)) {
+    await runAsyncBench(parseBenchOptions())
+}

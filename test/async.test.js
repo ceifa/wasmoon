@@ -1,8 +1,4 @@
 import { execFileSync } from 'node:child_process'
-import { use } from 'chai'
-import chaiAsPromised from 'chai-as-promised'
-
-use(chaiAsPromised)
 import { expect } from 'chai'
 import { LuaRuntime, LuaTimeoutError, LuaAbortError, LuaInstructionLimitError, LuaMultiReturn } from '../dist/index.js'
 import { getState } from './utils.js'
@@ -38,7 +34,7 @@ describe('Async runs', () => {
         expect(result).to.be.eql([9])
     })
 
-    it('an unrepresentable top level yield no longer crashes the run', async () => {
+    it('an unrepresentable top level yield does not crash the run', async () => {
         using state = await getState()
         const result = await state.doString('coroutine.yield(io.stdout) return 7')
         expect(result).to.be.equal(7)

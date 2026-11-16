@@ -142,7 +142,7 @@ const INLINE_DECODE_LIMIT = 32
 // globals, metamethod names -- so the string built for a run of bytes is kept and handed back the
 // next time those bytes are read, which also gives the property lookups it usually feeds the
 // same, already internalized string. Direct mapped on a hash of the bytes; a power of two. Sized
-// for a small working set of repeated names; a full cache must also fit the retained-memory budget.
+// for a small working set of repeated names, since a full cache is memory every runtime keeps.
 const DECODED_STRING_CACHE_SIZE = 32
 
 // The wasm value types Emscripten's function signature letters map to. `p` is a pointer, which is
@@ -178,9 +178,6 @@ function buildTrampolineModule(signature: string): WebAssembly.Module {
 
     return new WebAssembly.Module(Uint8Array.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, ...typeSection, ...importSection, ...exportSection]))
 }
-
-/** `lua_resume`, or its `WebAssembly.promising` wrapper where a resume can suspend. */
-type SuspendableResume = (...args: Parameters<LuaModule['lua_resume']>) => Promise<LuaReturn> | LuaReturn
 
 /** A {@link LuaModuleOptions.mounts} entry with both sides checked, ready for `FS.mount`. */
 interface ResolvedMount {
@@ -624,6 +621,18 @@ export default class LuaModule {
      */
     public readonly mainStackPointer: number
     /**
+     * Whether the platform has JSPI (the WebAssembly JavaScript Promise Integration API), which is
+     * what lets an `:await()` suspend the wasm stack. Without it everything else works and an
+     * `:await()` is an error.
+     */
+    public readonly jspiSupported: boolean
+    /**
+     * The `lua_resume` async runs are driven through: wrapped in `WebAssembly.promising`, so an
+     * `:await()` inside it can suspend the wasm stack. Where the platform has no JSPI it is the plain
+     * export, and a run is a resume nothing can suspend.
+     */
+    public readonly suspendableResume: (...args: Parameters<LuaModule['lua_resume']>) => Promise<LuaReturn> | LuaReturn
+    /**
      * Set true only while a promising resume is the innermost driver on the stack, so an `:await()`
      * knows a suspend would reach a promising boundary. A synchronous entry point (doStringSync, a
      * JS→Lua callback) sets it false around its own call, so an await there raises an error instead
@@ -647,9 +656,6 @@ export default class LuaModule {
         this.asyncSteps = 0
         return yieldToEventLoop()
     }
-
-    /** Built on first use by {@link suspendableResume}, then kept for the module's lifetime. */
-    private suspendableResumeFunction: SuspendableResume | undefined
     private stringBuffer = 0
     // Initialized together on the first short ASCII read. Numeric-only runtimes need no cache.
     // Empty slots hold '', which no non-empty read can match, under a hash of 0.
@@ -839,19 +845,11 @@ export default class LuaModule {
 
         // Captured while no Lua is running, so it is the top of the C stack in JS land.
         this.mainStackPointer = this.stackSave()
+        this.jspiSupported = canSuspend()
+        this.suspendableResume = this.jspiSupported ? WebAssembly.promising(this.lua_resume) : this.lua_resume
         if (this.jspiSupported) {
             this.installAwaitHook()
         }
-    }
-
-    /**
-     * The `lua_resume` async runs are driven through: wrapped in `WebAssembly.promising`, so an
-     * `:await()` inside it can suspend the wasm stack. Where the platform has no JSPI it is the plain
-     * export, and a run is a resume nothing can suspend.
-     */
-    public suspendableResume(): SuspendableResume {
-        this.suspendableResumeFunction ??= this.jspiSupported ? WebAssembly.promising(this.lua_resume) : this.lua_resume
-        return this.suspendableResumeFunction
     }
 
     /**
@@ -1114,13 +1112,6 @@ export default class LuaModule {
     public writePointer(pointer: number, value: number): void {
         this.emscripten.HEAPU32[pointer >>> 2] = value
     }
-
-    /**
-     * Whether the platform has JSPI (the WebAssembly JavaScript Promise Integration API), which is
-     * what lets an `:await()` suspend the wasm stack. Without it everything else works and an
-     * `:await()` is an error.
-     */
-    public readonly jspiSupported: boolean = canSuspend()
 
     /** The current wasm stack pointer, saved so a suspended run's C frames can be restored. */
     public stackSave(): number {

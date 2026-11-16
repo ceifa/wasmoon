@@ -1,16 +1,11 @@
-/**
- * A macrotask, so pending promise reactions *and* timers get a turn before Lua is resumed. A
- * microtask would starve timer driven code such as setTimeout based sleeps.
- *
- * MessageChannel where it exists, because a browser clamps a nested setTimeout to 4ms while a
- * message post is not clamped; setImmediate under Node; setTimeout as the last resort.
- */
 import type Thread from './thread'
-import { LuaAbortError, type LuaInterruptError, LuaTimeoutError } from './types'
+import { type LuaInterruptError, LuaAbortError, LuaTimeoutError } from './types'
 
-type Macrotask = (task: () => void) => void
-
-const macrotask: Macrotask = (() => {
+/**
+ * setImmediate under Node. In a browser a MessageChannel, because a nested setTimeout is clamped to
+ * 4ms there while a message post is not; setTimeout as the last resort.
+ */
+const macrotask: (task: () => void) => void = (() => {
     if (typeof setImmediate === 'function') {
         return (task: () => void) => void setImmediate(task)
     }
@@ -68,9 +63,11 @@ export function reportIfUnobserved(run: Promise<unknown>, report: (error: unknow
     return promise
 }
 
-export const yieldToEventLoop = (): Promise<void> => {
-    return new Promise((resolve) => macrotask(resolve))
-}
+/**
+ * A macrotask, so pending promise reactions *and* timers get a turn before Lua is resumed. A
+ * microtask would starve timer driven code such as setTimeout based sleeps.
+ */
+export const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => macrotask(resolve))
 
 /**
  * The interrupt a deadline or aborted signal calls for, or undefined when neither has fired. The
@@ -119,52 +116,26 @@ export function settleOrInterrupt(promise: unknown, signal: AbortSignal | undefi
     }
 
     return new Promise<SettleOutcome>((resolve) => {
-        let done = false
+        let timer: ReturnType<typeof setTimeout> | undefined
+        // Whichever comes first wins: resolving again does nothing, and neither does clearing.
         const finish = (outcome: SettleOutcome): void => {
-            if (done) {
-                return
-            }
-            done = true
-            if (timer !== undefined) {
-                clearTimeout(timer)
-            }
-            if (onAbort !== undefined) {
-                signal?.removeEventListener('abort', onAbort)
-            }
+            clearTimeout(timer)
+            signal?.removeEventListener('abort', check)
             resolve(outcome)
         }
-
-        let timer: ReturnType<typeof setTimeout> | undefined
-        const scheduleDeadline = (): void => {
-            if (deadline === undefined) {
-                return
+        // The abort listener and the timer both end up here. A timer can fire early, and a delay
+        // above 2^31-1 overflows to 1ms in Node, so it is armed again until the deadline has passed.
+        const check = (): void => {
+            const error = limitError(signal, deadline)
+            if (error) {
+                finish({ status: 'interrupted', error })
+            } else if (deadline !== undefined) {
+                timer = setTimeout(check, Math.min(0x7fffffff, deadline - Date.now()))
             }
-            // Timers can fire early and delays above 2^31-1 overflow to 1ms in Node.
-            timer = setTimeout(
-                () => {
-                    const error = limitError(signal, deadline)
-                    if (error) {
-                        finish({ status: 'interrupted', error })
-                    } else {
-                        scheduleDeadline()
-                    }
-                },
-                Math.min(0x7fffffff, Math.max(0, deadline - Date.now())),
-            )
         }
-        scheduleDeadline()
-
-        let onAbort: (() => void) | undefined
-        if (signal !== undefined) {
-            if (signal.aborted) {
-                finish({ status: 'interrupted', error: new LuaAbortError('thread aborted') })
-                return
-            }
-            onAbort = () => finish({ status: 'interrupted', error: new LuaAbortError('thread aborted') })
-            signal.addEventListener('abort', onAbort, { once: true })
-        }
-
-        settled.then(finish)
+        signal?.addEventListener('abort', check, { once: true })
+        check()
+        void settled.then(finish)
     })
 }
 
