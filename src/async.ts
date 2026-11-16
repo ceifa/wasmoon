@@ -21,10 +21,7 @@ const macrotask: (task: () => void) => void = (() => {
     return (task: () => void) => void setTimeout(task, 0)
 })()
 
-/**
- * Whether the platform has JSPI (the WebAssembly JavaScript Promise Integration API), which is what
- * lets an `:await()` suspend the wasm stack.
- */
+/** Whether the platform has JSPI, which is what lets an `:await()` suspend the wasm stack. */
 export const canSuspend = (): boolean => typeof WebAssembly.Suspending === 'function' && typeof WebAssembly.promising === 'function'
 
 /** A promise that knows whether anything has asked for its outcome. */
@@ -69,11 +66,7 @@ export function reportIfUnobserved(run: Promise<unknown>, report: (error: unknow
  */
 export const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => macrotask(resolve))
 
-/**
- * The interrupt a deadline or aborted signal calls for, or undefined when neither has fired. The
- * single source of both the abort-vs-timeout classification and its message, shared by the debug
- * hook's limit check and the await hook.
- */
+/** The interrupt a deadline or aborted signal calls for, or undefined when neither has fired. */
 export function limitError(signal: AbortSignal | undefined, deadline: number | undefined): LuaInterruptError | undefined {
     if (signal?.aborted) {
         return new LuaAbortError('thread aborted')
@@ -101,11 +94,7 @@ export interface PendingSuspend {
     resume: (outcome: SettleOutcome) => number
 }
 
-/**
- * Awaits `promise`, but reports an interruption instead if `signal` aborts or `deadline` passes
- * first. Used for an `onYield` handler, and by the await hook, which unwinds the suspended run with
- * a Lua error when it is interrupted rather than waiting for the promise it was parked on.
- */
+/** Awaits `promise`, but reports an interruption instead if `signal` aborts or `deadline` passes first. */
 export function settleOrInterrupt(promise: unknown, signal: AbortSignal | undefined, deadline: number | undefined): Promise<SettleOutcome> {
     const settled: Promise<SettleOutcome> = Promise.resolve(promise).then(
         (value) => ({ status: 'fulfilled', value }),
@@ -117,14 +106,13 @@ export function settleOrInterrupt(promise: unknown, signal: AbortSignal | undefi
 
     return new Promise<SettleOutcome>((resolve) => {
         let timer: ReturnType<typeof setTimeout> | undefined
-        // Whichever comes first wins: resolving again does nothing, and neither does clearing.
         const finish = (outcome: SettleOutcome): void => {
             clearTimeout(timer)
             signal?.removeEventListener('abort', check)
             resolve(outcome)
         }
-        // The abort listener and the timer both end up here. A timer can fire early, and a delay
-        // above 2^31-1 overflows to 1ms in Node, so it is armed again until the deadline has passed.
+        // A timer can fire early, and a delay above 2^31-1 overflows to 1ms in Node, so it is armed
+        // again until the deadline has passed.
         const check = (): void => {
             const error = limitError(signal, deadline)
             if (error) {

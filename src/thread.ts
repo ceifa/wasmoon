@@ -40,10 +40,8 @@ const LUA_INTEGER_BITS = 64
 const NO_RESTORE = (): void => undefined
 const NO_OPTIONS: Readonly<DecorationOptions> = Object.freeze({})
 /**
- * The limits of a thread nothing has been set on, shared so a thread is not an object heavier than
- * it has to be: a JS callback made from a coroutine gets a wrapper of its own each time. Frozen, so
- * a write to it fails loudly; {@link Thread.setDeadline} is the one path that writes in place, and
- * it takes an object of its own first.
+ * The limits of a thread nothing has been set on, shared because a JS callback made from a
+ * coroutine gets a thread wrapper of its own each time. Frozen, so a write to it fails loudly.
  */
 const NO_LIMITS: Readonly<LuaThreadLimits> = Object.freeze({})
 
@@ -145,8 +143,7 @@ export default class Thread {
     /**
      * Raises a limit error in the coroutine running at `L`: the debug hook's way of stopping a run,
      * and the await hook's for one parked past its deadline or on an aborted signal. The token is
-     * what {@link assertOk} recognises the error by. Returns what `lua_error` returns, which never
-     * actually returns.
+     * what {@link assertOk} recognises the error by.
      */
     public interruptWith(error: LuaInterruptError, L = this.address): number {
         ;(this.module.activeRun ?? this).pendingInterrupt = error
@@ -311,11 +308,7 @@ export default class Thread {
         }
     }
 
-    /**
-     * One `lua_resume` that an `:await()` can suspend. The promise it returns resolves only once the
-     * resume runs to a host yield, a return or an error; an await in between suspends and resumes
-     * the wasm stack without this seeing it.
-     */
+    /** One `lua_resume` that an `:await()` can suspend, up to a host yield, a return or an error. */
     private async resumeSuspendable(argCount: number, nresPointer: number): Promise<LuaResumeResult> {
         this.assertNotClosed()
         this.pendingInterrupt = undefined
@@ -355,7 +348,7 @@ export default class Thread {
     /**
      * Pushes a JS value onto the stack as Lua results and returns how many: nothing for `undefined`,
      * `count` for a {@link RawResult}, one per element for a {@link MultiReturn}, else the single
-     * value. Shared by the run loop and the JS function wrapper.
+     * value.
      * @param nilOnUndefined Preserve undefined as one Lua nil, as `:await()` requires.
      */
     public pushReturnValues(value: unknown, nilOnUndefined = false): number {
@@ -663,8 +656,7 @@ export default class Thread {
      */
     public setDeadline(deadline: number | undefined): void {
         this.assertNotClosed()
-        // In place rather than by copy, since a function timeout sets one on every call: only the
-        // shared empty snapshot is replaced, once, and by the thread's own object.
+        // In place rather than by copy, since a function timeout sets one on every call.
         if (this.limits === NO_LIMITS) {
             this.limits = {}
         }

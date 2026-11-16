@@ -14,11 +14,8 @@ type LuaFunction = FunctionType & Record<symbol, number | undefined>
 
 /** The parts of the state's options that bear on calling a Lua function. */
 export interface FunctionCallOptions {
-    /** Milliseconds a Lua function called from JS may run before being interrupted. */
     functionTimeout?: number | undefined
-    /** Instructions an asynchronous run of a function may execute, as for any other run. */
     maxInstructions?: number | undefined
-    /** See `CreateStateOptions.onAsyncError`. */
     onAsyncError?: ((error: unknown) => void) | undefined
 }
 
@@ -26,7 +23,7 @@ const NO_OPTIONS: DecorationOptions = {}
 
 /**
  * What `async(fn)` returns, as a chunk that takes the JS function starting the run and gives back
- * the function doing the wrapping. See {@link FunctionTypeExtension.injectAsync}.
+ * the function doing the wrapping.
  */
 const ASYNC_SOURCE = `local start = ...
 return function(fn)
@@ -47,8 +44,7 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
     /**
      * Keys the registry reference on each Lua function handed to JS, which is how {@link async}
      * finds the function to run. A symbol of this state's own, so another state's function does not
-     * answer to it, and a property rather than a WeakMap entry, which cost more than the rest of
-     * creating the wrapper put together.
+     * answer to it, and a property rather than a WeakMap entry, which was slower to create.
      */
     private readonly luaFunction = Symbol('wasmoon.luaFunction')
 
@@ -129,8 +125,6 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
                 const result = target.apply(decorationOptions?.self, args)
 
                 if (result === SUSPEND) {
-                    // The JS function stashed a promise and asked to suspend: -1 tells the C
-                    // trampoline to reach the await hook, which is the only value it treats specially.
                     return -1
                 }
                 return calledThread.pushReturnValues(result)
@@ -209,8 +203,7 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
         const referent: unknown = affectsCall(decoration.options) ? decoration : decoration.target
 
         // Pushed through the C trampoline rather than a bare closure, so an `:await()` inside the
-        // function can suspend the wasm stack. The trampoline holds the reference box as its first
-        // upvalue and the wrapper as its second.
+        // function can suspend the wasm stack.
         this.pushReference(thread, referent, (L) => this.state.module.wasmoon_push_jsfunction(L, this.functionWrapper))
         return true
     }
@@ -266,16 +259,10 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
         return jsFunc
     }
 
-    /** Whether `value` is one of this state's Lua functions, as {@link getValue} hands them to JS. */
     public isLuaFunction(value: unknown): value is FunctionType {
         return typeof value === 'function' && (value as LuaFunction)[this.luaFunction] !== undefined
     }
 
-    /**
-     * The asynchronous counterpart of a Lua function: calling what this returns starts the function
-     * as a run of its own instead of synchronously, which is what lets it `:await()`, and gives
-     * back a promise of its first result.
-     */
     public async(jsFunc: FunctionType, options?: LuaRunOptions): (...args: unknown[]) => Promise<unknown> {
         if (!this.isLuaFunction(jsFunc)) {
             throw new TypeError('async expects a Lua function obtained from this state')
@@ -297,13 +284,10 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
     }
 
     /**
-     * Defines the Lua global `async`: what `async function` is to JS. `async(fn)` returns a function
-     * that runs `fn` as a run of its own, so that it can `:await()` wherever it is called from, and
-     * hands back a promise of its first result.
-     *
-     * What it returns is a Lua closure over `fn`, built by {@link ASYNC_SOURCE}, rather than a JS
-     * function holding it: that way nothing has to be collected across the two heaps, and the
-     * arguments of a call move from one Lua stack to another without ever becoming JS values.
+     * Defines the Lua global `async`. What `async(fn)` returns is a Lua closure over `fn`, built by
+     * {@link ASYNC_SOURCE}, rather than a JS function holding it: that way nothing has to be
+     * collected across the two heaps, and the arguments of a call move from one Lua stack to
+     * another without ever becoming JS values.
      */
     public injectAsync(): void {
         const { state } = this
@@ -357,7 +341,6 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
         // synchronous call made in the meantime.
         const { thread, reference } = this.callbackContext.newAnchoredThread()
         try {
-            // The limits any other run starts under, and the function timeout on top of them.
             thread.setLimits(this.state.getLimits())
             const { functionTimeout: timeout, maxInstructions } = this
             const defaults = timeout !== undefined || maxInstructions !== undefined

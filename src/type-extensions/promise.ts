@@ -45,9 +45,6 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
                 await: decorate(
                     (functionThread: Thread, rawSelf: unknown) => {
                         const self = asPromise(rawSelf)
-                        // Only a promising resume leaves a boundary the wasm stack can suspend to. A
-                        // synchronous entry point (doStringSync, a JS→Lua callback) has JS frames in
-                        // the way, and suspending through those traps.
                         if (!state.module.stackCanSuspend) {
                             throw new Error(state.module.jspiSupported ? SYNCHRONOUS_AWAIT : UNSUPPORTED_AWAIT)
                         }
@@ -84,13 +81,11 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
 
     /**
      * Hands the promise and how to marshal its result to the module's await hook, then returns the
-     * sentinel that makes the C trampoline reach that hook and suspend the wasm stack. The stack
-     * unwinds to the promising resume driving the run and resumes there once the promise settles.
+     * sentinel that makes the C trampoline reach that hook and suspend the wasm stack.
      */
     private suspend(thread: Thread, promise: Promise<unknown>): typeof SUSPEND {
-        // Captured now so a deadline or abort observed while parked interrupts the run rather than
-        // waiting for the promise. Read from the resuming run, not this thread, whose JS wrapper is
-        // often a fresh object without the run's limits on it.
+        // Read from the run being resumed, not this thread, whose JS wrapper is often a fresh object
+        // without the run's limits on it.
         const run = this.state.module.activeRun!
         const { deadline, signal } = run.runLimits
         this.state.module.pendingSuspend = {
@@ -110,7 +105,6 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
         return SUSPEND
     }
 
-    /** Raises a rejected promise as a Lua error on `thread`. */
     private marshalRejected(thread: Thread, error: unknown): number {
         thread.pushValue(error || new Error('promise rejected with no error'))
         return this.state.module.lua_error(thread.address)

@@ -147,7 +147,6 @@ export default abstract class LuaTypeExtension<T> {
         module.lua_setmetatable(L, -2)
 
         if (wrapClosure !== undefined) {
-            // Pops the box and pushes a closure holding it as an upvalue.
             wrapClosure(L)
         }
 

@@ -141,8 +141,7 @@ const INLINE_DECODE_LIMIT = 32
 // The short strings read out of Lua are mostly the same few names over and over -- table keys,
 // globals, metamethod names -- so the string built for a run of bytes is kept and handed back the
 // next time those bytes are read, which also gives the property lookups it usually feeds the
-// same, already internalized string. Direct mapped on a hash of the bytes; a power of two. Sized
-// for a small working set of repeated names, since a full cache is memory every runtime keeps.
+// same, already internalized string. Direct mapped on a hash of the bytes; a power of two.
 const DECODED_STRING_CACHE_SIZE = 32
 
 // The wasm value types Emscripten's function signature letters map to. `p` is a pointer, which is
@@ -553,9 +552,7 @@ export default class LuaModule {
     declare public lua_upvalueid: (L: LuaAddress, fidx: number, n: number) => LuaAddress
     declare public lua_upvaluejoin: (L: LuaAddress, fidx1: number, n1: number, fidx2: number, n2: number) => void
     declare public lua_sethook: (L: LuaAddress, func: number | null, mask: number, count: number) => void
-    /** Installs the await hook the {@link wasmoon_push_jsfunction} closures suspend through. */
     declare public wasmoon_set_await_hook: (hook: number, resumeHook: number) => void
-    /** Pops the reference box on the stack and pushes a JS function closure over it and `callHook`. */
     declare public wasmoon_push_jsfunction: (L: LuaAddress, callHook: number) => void
     declare public lua_gethook: (L: LuaAddress) => number
     declare public lua_gethookmask: (L: LuaAddress) => number
@@ -580,7 +577,6 @@ export default class LuaModule {
     // index. Combining them keeps just one array slot per hole when a high live index prevents
     // trimming, instead of retaining separate value and count arrays. Records exist only while
     // live. External indices are one-based so a reference box never carries a null pointer.
-    // Released tails are trimmed when at least half the slots can be dropped.
     private readonly references: (ReferenceEntry | number)[] = []
     private firstFreeReference = 0
     private highestReference = 0
@@ -620,17 +616,9 @@ export default class LuaModule {
      * before resuming. See {@link installAwaitHook}.
      */
     public readonly mainStackPointer: number
-    /**
-     * Whether the platform has JSPI (the WebAssembly JavaScript Promise Integration API), which is
-     * what lets an `:await()` suspend the wasm stack. Without it everything else works and an
-     * `:await()` is an error.
-     */
+    /** Whether the platform has JSPI. Without it an `:await()` is an error and everything else works. */
     public readonly jspiSupported: boolean
-    /**
-     * The `lua_resume` async runs are driven through: wrapped in `WebAssembly.promising`, so an
-     * `:await()` inside it can suspend the wasm stack. Where the platform has no JSPI it is the plain
-     * export, and a run is a resume nothing can suspend.
-     */
+    /** `lua_resume` wrapped in `WebAssembly.promising`, or the plain export where there is no JSPI. */
     public readonly suspendableResume: (...args: Parameters<LuaModule['lua_resume']>) => Promise<LuaReturn> | LuaReturn
     /**
      * Set true only while a promising resume is the innermost driver on the stack, so an `:await()`
@@ -843,7 +831,6 @@ export default class LuaModule {
             throw new Error('failed to allocate the scratch buffers for C out parameters')
         }
 
-        // Captured while no Lua is running, so it is the top of the C stack in JS land.
         this.mainStackPointer = this.stackSave()
         this.jspiSupported = canSuspend()
         this.suspendableResume = this.jspiSupported ? WebAssembly.promising(this.lua_resume) : this.lua_resume
@@ -862,8 +849,6 @@ export default class LuaModule {
         const resumes = new Map<number, () => number>()
         let nextReference = 0
         const awaitHook = this.emscripten.addFunction(
-            // The C signature passes the running coroutine, but it is always the one the await
-            // parked on, which the pendingSuspend marshallers already hold; nothing here needs it.
             new WebAssembly.Suspending(async (): Promise<number> => {
                 const suspend = this.pendingSuspend
                 this.pendingSuspend = undefined
@@ -899,8 +884,6 @@ export default class LuaModule {
                     if (suspend.run.isClosed()) {
                         throw new Error('the Lua state is closed')
                     }
-                    // Back on this run's stack: put its frames back before touching Lua, and mark the
-                    // stack promising again for any further await this resume reaches.
                     this.heap.set(savedStack, stackPointer)
                     this.stackRestore(stackPointer)
                     this.stackCanSuspend = true
@@ -1011,7 +994,6 @@ export default class LuaModule {
         }
         const heap = this.heap
         if (length <= INLINE_DECODE_LIMIT) {
-            // One pass hashes the bytes, stopping at the first that is not ASCII.
             let hash = length
             let index = 0
             while (index < length) {

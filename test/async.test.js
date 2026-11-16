@@ -4,7 +4,6 @@ import { LuaRuntime, LuaTimeoutError, LuaAbortError, LuaInstructionLimitError, L
 import { getState } from './utils.js'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-/** Settles with `value` a moment later. */
 const later = (value) => new Promise((resolve) => setTimeout(() => resolve(value), 1))
 
 describe('Async runs', () => {
