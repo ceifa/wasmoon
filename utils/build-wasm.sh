@@ -2,21 +2,21 @@
 cd $(dirname $0)
 mkdir -p ../build/host
 
-LUA_SRC=$(ls ../lua/*.c | grep -v "luac.c" | grep -v "lua.c" | tr "\n" " ")
+LUA_SRC="$(ls ../lua/*.c | grep -v "luac.c" | grep -v "lua.c" | tr "\n" " ") ../src/native/wasmoon.c"
 
-# Do not add --closure here: it renames properties, which would strip the brand the JS build puts on
-# the glue's longjmp unwind classes (see rolldown.config.ts) and turn every unwind into a Lua error.
 if [ "$1" == "dev" ];
 then
     extension=(-O0 -g3 -s ASSERTIONS=1 -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2)
 else
-    extension=(-Oz -fno-inline-functions -DLUA_USE_JUMPTABLE=0 -s BINARYEN_EXTRA_PASSES=gufa-optimizing,converge)
+    extension=(-Oz -DLUA_USE_JUMPTABLE=0 -s BINARYEN_EXTRA_PASSES=gufa-optimizing,converge)
 fi
 
 # Everything that is not about the filesystem, shared by both glues below so they can share one
 # `glue.wasm`.
 COMMON=(
     -s WASM=1
+    -s SUPPORT_LONGJMP=wasm
+    -I../lua
     "${extension[@]}"
     -s EXPORTED_RUNTIME_METHODS="[
         'addFunction', \
@@ -55,7 +55,15 @@ COMMON=(
     -s EXPORT_ES6=1
     -s MALLOC=emmalloc
     -s STACK_SIZE=1MB
-    -s WASM_BIGINT
+    # The heap starts small and grows on demand (ALLOW_MEMORY_GROWTH below): a fresh state is
+    # around 20 KB and a hello world never grows, while the 16 MB default was almost entirely
+    # untouched address space that every heap snapshot and memory profile still counted.
+    # Growing is cheap here (twelve 20% steps from 2 to 18 MB measure well under a millisecond),
+    # and the JS side never caches a heap view across a call that can grow it.
+    -s INITIAL_HEAP=1MB
+    # The engines package.json promises, so the glue carries no fallbacks for older ones. The browser
+    # minimums go on the web glue alone below: the host glue is Node only and would warn about them.
+    -s MIN_NODE_VERSION=260000
     -s EXPORTED_FUNCTIONS="[
         '_malloc', \
         '_free', \
@@ -207,7 +215,15 @@ COMMON=(
         '_luaopen_debug', \
         '_luaopen_package', \
         '_luaL_openselectedlibs', \
-        '_lua_gc' \
+        '_lua_gc', \
+        '_wasmoon_isarray', \
+        '_wasmoon_pushinteger', \
+        '_wasmoon_geti', \
+        '_wasmoon_rawgeti', \
+        '_wasmoon_seti', \
+        '_wasmoon_rawseti', \
+        '_wasmoon_set_await_hook', \
+        '_wasmoon_push_jsfunction' \
     ]"
 )
 
@@ -217,6 +233,9 @@ COMMON=(
 emcc "${COMMON[@]}" \
     -lnodefs.js \
     -s ENVIRONMENT="web,worker,node" \
+    -s MIN_CHROME_VERSION=134 \
+    -s MIN_FIREFOX_VERSION=138 \
+    -s MIN_SAFARI_VERSION=260000 \
     -o ../build/glue.js \
     ${LUA_SRC}
 

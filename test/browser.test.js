@@ -134,6 +134,34 @@ describe('Browser environment', () => {
         }
     }
 
+    it('isolates async runs and lets timers run', async function () {
+        this.timeout(30_000)
+        const result = await runInBrowser(`
+            const runtime = await LuaRuntime.load({ wasmFile })
+            const state = runtime.createState()
+            try {
+                let fired = false
+                state.set('ready', Promise.resolve())
+                state.set('fired', () => fired)
+                setTimeout(() => { fired = true }, 0)
+                const fair = await state.doString('for i=1,10000 do ready:await() if fired() then return true end end return false')
+                let releaseFirst, releaseOther
+                state.set('first', new Promise((resolve) => { releaseFirst = resolve }))
+                state.set('other', new Promise((resolve) => { releaseOther = resolve }))
+                state.set('never', new Promise(() => {}))
+                const timed = state.doString('first:await() never:await()', { timeout: 30 }).catch((error) => error.name)
+                const other = state.doString('other:await() return 42')
+                releaseFirst()
+                const error = await timed
+                releaseOther()
+                return { fair, error, other: await other }
+            } finally {
+                state.close()
+            }
+        `)
+        expect(result).to.eql({ fair: true, error: 'LuaTimeoutError', other: 42 })
+    })
+
     it('load Lua engine in browser should succeed', async function () {
         this.timeout(30_000)
         const result = await runInBrowser(`
@@ -328,11 +356,29 @@ async function writeInlinedPage() {
         `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>
 <script type="module">
 ${bundle}
-window.__LuaRuntime = LuaRuntime
+window.__LuaRuntime = ${exportedBinding(bundle, 'LuaRuntime')}
 window.__ready = true
 </script>
 </body></html>`,
     )
 
     return { htmlFile, cleanup: () => rm(tempDir, { recursive: true, force: true }) }
+}
+
+/**
+ * The bundle's own name for one of its exports. Inlined into a page it cannot be imported from, and
+ * its top level names are minified, so the export clause is the only way to get hold of a binding.
+ */
+function exportedBinding(bundle, exported) {
+    const clause = /export\s*\{([^}]*)\}/.exec(bundle)
+    if (!clause) {
+        throw new Error('the bundle has no export clause')
+    }
+    for (const entry of clause[1].split(',')) {
+        const [local, name = local] = entry.trim().split(/\s+as\s+/)
+        if (name === exported) {
+            return local
+        }
+    }
+    throw new Error(`the bundle does not export ${exported}`)
 }

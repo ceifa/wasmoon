@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-import { LuaRuntime, LuaReturn, LuaType, LUA_MULTRET, LuaError } from '../dist/index.js'
+// Built into dist/ next to the library, which it reaches by the package's own name so the entry
+// point is whatever package.json exports rather than a path fixed here.
+import { LuaRuntime, LuaReturn, LuaType, LUA_MULTRET, LuaError } from 'wasmoon'
 import pkg from '../package.json' with { type: 'json' }
 import fs from 'node:fs'
 import readline from 'node:readline'

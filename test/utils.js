@@ -8,7 +8,7 @@ export const getLua = (options) => {
 }
 
 export const getState = async (config = {}) => {
-    const lua = await LuaRuntime.load()
+    const lua = await getLua()
     return lua.createState({
         inject: true,
         ...config,

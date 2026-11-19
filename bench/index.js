@@ -1,3 +1,4 @@
+import { runAsyncBench } from './async.js'
 import { runComparisonBench } from './comparisons.js'
 import { runInteropBench } from './interop.js'
 import { runStepBench } from './steps.js'
@@ -18,6 +19,10 @@ if (options.suite === 'all' || options.suite === 'steps') {
 
 if (options.suite === 'all' || options.suite === 'interop') {
     await runInteropBench(options)
+}
+
+if (options.suite === 'all' || options.suite === 'async') {
+    await runAsyncBench(options)
 }
 
 if (options.suite === 'all' || options.suite === 'comparisons') {

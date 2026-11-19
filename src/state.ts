@@ -3,7 +3,7 @@ import type LuaModule from './module'
 import Thread from './thread'
 import type LuaTypeExtension from './type-extension'
 import createErrorType from './type-extensions/error'
-import createFunctionType from './type-extensions/function'
+import createFunctionType, { type FunctionTypeExtension } from './type-extensions/function'
 import createNullType from './type-extensions/null'
 import createPromiseType from './type-extensions/promise'
 import createProxyType from './type-extensions/proxy'
@@ -14,6 +14,7 @@ import {
     LUA_REGISTRYINDEX,
     type LuaAddress,
     type LuaDoOptions,
+    type LuaInjectName,
     type LuaMemoryOptions,
     type LuaRunOptions,
     LuaType,
@@ -120,10 +121,11 @@ export default class LuaState extends Thread {
 
     private readonly allocatorFunctionPointer: number | undefined
     private readonly defaultMaxInstructions: number | undefined
-    private readonly closeListeners: (() => void)[] = []
+    private readonly functions: FunctionTypeExtension
 
     public constructor(cmodule: LuaModule, options: CreateStateOptions = {}) {
         const { libs = true, objects = 'proxy', errors = objects === 'copy', inject = false, memory, limits, gc, onWarn } = options
+        const injects = (name: LuaInjectName): boolean => inject === true || (inject !== false && inject.includes(name))
 
         const created = createAddress(cmodule, memory)
         super(cmodule, [], created.address)
@@ -140,17 +142,18 @@ export default class LuaState extends Thread {
 
         // Generic handlers - These may be required to be registered for additional types.
         this.registerTypeExtension(BUILT_IN_PRIORITY.table, createTableType(this))
-        this.registerTypeExtension(BUILT_IN_PRIORITY.function, createFunctionType(this, limits?.functionTimeout))
+        this.functions = createFunctionType(this, { ...limits, onAsyncError: options.onAsyncError })
+        this.registerTypeExtension(BUILT_IN_PRIORITY.function, this.functions)
 
         // Contains the :await functionality.
-        this.registerTypeExtension(BUILT_IN_PRIORITY.promise, createPromiseType(this, inject))
+        this.registerTypeExtension(BUILT_IN_PRIORITY.promise, createPromiseType(this, injects('Promise')))
 
-        if (inject) {
+        if (injects('null')) {
             this.registerTypeExtension(BUILT_IN_PRIORITY.null, createNullType(this))
         }
 
         if (errors) {
-            this.registerTypeExtension(BUILT_IN_PRIORITY.error, createErrorType(this, inject))
+            this.registerTypeExtension(BUILT_IN_PRIORITY.error, createErrorType(this, injects('Error')))
         }
 
         if (objects === 'proxy') {
@@ -168,6 +171,10 @@ export default class LuaState extends Thread {
         }
 
         this.defaultMaxInstructions = limits?.maxInstructions
+
+        if (injects('async')) {
+            this.functions.injectAsync()
+        }
     }
 
     /**
@@ -188,19 +195,42 @@ export default class LuaState extends Thread {
     }
 
     /**
-     * Executes Lua code from a string synchronously. The script cannot yield, so `:await()` and a
-     * top level `coroutine.yield` are errors here.
+     * Executes Lua code from a string synchronously. Nothing can suspend a synchronous run, so
+     * `:await()` and a top level `coroutine.yield` are errors here.
      */
     public doStringSync<T = any>(script: string, options?: LuaDoOptions): T {
         return this.callByteCodeSync((thread) => thread.loadString(script, options), this.runOptions(options))
     }
 
     /**
-     * Executes Lua code from a file synchronously. The script cannot yield, so `:await()` and a
-     * top level `coroutine.yield` are errors here.
+     * Executes Lua code from a file synchronously. Nothing can suspend a synchronous run, so
+     * `:await()` and a top level `coroutine.yield` are errors here.
      */
     public doFileSync<T = any>(filename: string, options?: LuaDoOptions): T {
         return this.callByteCodeSync((thread) => thread.loadFile(filename, options), this.runOptions(options))
+    }
+
+    /**
+     * The asynchronous counterpart of a Lua function obtained from this state, as `async function`
+     * is to `function`. Called directly a Lua function runs synchronously, and an `:await()` in it
+     * is an error; what this returns starts it as a run of its own instead, and gives back a
+     * promise of its first result.
+     *
+     * ```js
+     * emitter.on('request', state.async(handler))
+     * const body = await state.async(fetchPage, { timeout: 1000 })(url)
+     * ```
+     *
+     * Each call is a run like a `doString`, under the same limits, with `limits.functionTimeout`
+     * on top unless `options.timeout` replaces it.
+     */
+    public async<T = any>(fn: (...args: any[]) => any, options?: LuaRunOptions): (...args: any[]) => Promise<T> {
+        return this.functions.async(fn, options) as (...args: any[]) => Promise<T>
+    }
+
+    /** Whether `value` is a Lua function obtained from this state, the kind {@link async} takes. */
+    public isLuaFunction(value: unknown): value is (...args: any[]) => any {
+        return this.functions.isLuaFunction(value)
     }
 
     /**
@@ -259,11 +289,6 @@ export default class LuaState extends Thread {
         }
     }
 
-    /** Notified once when this state closes, so an owner can drop its reference. */
-    public onClose(listener: () => void): void {
-        this.closeListeners.push(listener)
-    }
-
     /** Closes the state and frees everything it owns. Safe to call more than once. */
     public override close(): void {
         if (this.isClosed()) {
@@ -285,11 +310,6 @@ export default class LuaState extends Thread {
         for (const wrapper of this.typeExtensions) {
             wrapper.extension.close()
         }
-
-        for (const listener of this.closeListeners) {
-            listener()
-        }
-        this.closeListeners.length = 0
     }
 
     /** Folds the state wide budget in, so run() does the save and restore in one place. */
@@ -327,8 +347,9 @@ export default class LuaState extends Thread {
         const { thread, reference } = this.newAnchoredThread()
         try {
             // Seeded from the state so a state wide setLimits reaches the async path too, which
-            // runs on a child thread rather than on the state itself.
-            thread.setLimits(this.getLimits())
+            // runs on a child thread rather than on the state itself. setLimits takes a snapshot,
+            // so going through getLimits first would copy the same configuration twice.
+            thread.setLimits(this.limits)
             loader(thread)
             return (await thread.run(0, options))[0]
         } finally {

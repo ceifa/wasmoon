@@ -1,16 +1,9 @@
 import { decorate, type Decoration } from '../decoration'
 import type LuaState from '../state'
-import MultiReturn from '../multireturn'
-import RawResult from '../raw-result'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
-import type { LuaAddress } from '../types'
 import { isPromise } from '../utils'
-
-/** The half of an in flight `:await()` the continuation needs once the promise has settled. */
-interface PendingAwait {
-    result: { status: 'fulfilled' | 'rejected'; value: any } | undefined
-}
+import { SUSPEND } from '../async'
 
 /**
  * A bare thenable reaches here too, and only `then` is guaranteed on one. Adopting it into a real
@@ -24,95 +17,38 @@ const asPromise = (self: unknown): Promise<any> => {
     return Promise.resolve(self)
 }
 
-class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
-    /**
-     * Keyed by the address of the thread parked in the await. A thread suspended in `lua_yieldk`
-     * cannot reach another `:await()`, so at most one is ever in flight per thread.
-     */
-    private readonly pendingAwaits = new Map<LuaAddress, PendingAwait>()
-    /**
-     * One continuation for every await on this state. Building one per await meant compiling and
-     * instantiating a wasm trampoline each time, and leaked the table slot whenever the coroutine
-     * was abandoned before the continuation ran -- a run cut short by a deadline, say.
-     */
-    private readonly continuancePointer: number
+/** What a promise calls once it settles: a callback from Lua or JS, or nothing. */
+type Reaction = ((...args: any[]) => unknown) | null | undefined
 
+/** Why an `:await()` reached outside a suspendable run fails, for a platform with JSPI and one without. */
+const SYNCHRONOUS_AWAIT =
+    'cannot await inside a synchronous call: run the script with doString, or make the function asynchronous with async(fn) in Lua or state.async(fn) in JS'
+const UNSUPPORTED_AWAIT =
+    'cannot await: this platform has no WebAssembly JSPI support (it needs Chrome 137, Firefox 153, Safari 27 or Node.js 25, or newer)'
+
+class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     public constructor(state: LuaState, injectObject: boolean) {
         super(state, 'js_promise')
 
-        this.continuancePointer = state.module.addFunction((continuanceState: LuaAddress): number => {
-            const pending = this.pendingAwaits.get(continuanceState)
-            if (!pending) {
-                // Nothing sensible is left to resume with, and returning would hand Lua a stack it
-                // does not expect.
-                throw new Error('a promise continuation ran without a pending await')
-            }
-
-            // If this yield has been called from within a coroutine and so manually resumed
-            // then there may not yet be any results. In that case yield again. The continuation
-            // runs on the thread that yielded, so this is the address the await parked on.
-            if (!pending.result) {
-                // 0 because this is called between resumes so the first one should've popped the
-                // promise before returning the result. This is true within Lua's coroutine.resume
-                // too.
-                return state.module.lua_yieldk(continuanceState, 0, 0, this.continuancePointer)
-            }
-
-            const { status, value } = pending.result
-            this.pendingAwaits.delete(continuanceState)
-            const continuanceThread = state.stateToThread(continuanceState)
-
-            if (status === 'rejected') {
-                continuanceThread.pushValue(value || new Error('promise rejected with no error'))
-                return state.module.lua_error(continuanceState)
-            }
-
-            if (value instanceof RawResult) {
-                return value.count
-            } else if (value instanceof MultiReturn) {
-                for (const arg of value) {
-                    continuanceThread.pushValue(arg)
-                }
-                return value.length
-            } else {
-                continuanceThread.pushValue(value)
-                return 1
-            }
-        }, 'iiii')
+        // A Lua function handed to a promise runs as a run of its own, so that it can await like the
+        // async function it stands in for. Anything else is passed through as it is.
+        const reaction = (callback: Reaction): Reaction => (state.isLuaFunction(callback) ? state.async(callback) : callback)
 
         this.defineMetatable({
             // A plain object, which the table extension (registered before this one) copies into a
             // Lua table of methods.
             __index: {
-                next: (self: unknown, ...args: Parameters<Promise<unknown>['then']>) => asPromise(self).then(...args),
-                catch: (self: unknown, ...args: Parameters<Promise<unknown>['catch']>) => asPromise(self).catch(...args),
-                finally: (self: unknown, ...args: Parameters<Promise<unknown>['finally']>) => asPromise(self).finally(...args),
+                next: (self: unknown, onFulfilled: Reaction, onRejected: Reaction) =>
+                    asPromise(self).then(reaction(onFulfilled), reaction(onRejected)),
+                catch: (self: unknown, onRejected: Reaction) => asPromise(self).catch(reaction(onRejected)),
+                finally: (self: unknown, onFinally: Reaction) => asPromise(self).finally(reaction(onFinally)),
                 await: decorate(
                     (functionThread: Thread, rawSelf: unknown) => {
                         const self = asPromise(rawSelf)
-
-                        // Asking Lua covers every non-resumable context, not just the main
-                        // thread: anything entered through lua_pcall cannot yield either.
-                        if (!state.module.lua_isyieldable(functionThread.address)) {
-                            throw new Error('cannot await in a thread that cannot yield, use doString instead of doStringSync')
+                        if (!state.module.stackCanSuspend) {
+                            throw new Error(state.module.jspiSupported ? SYNCHRONOUS_AWAIT : UNSUPPORTED_AWAIT)
                         }
-
-                        const pending: PendingAwait = { result: undefined }
-                        this.pendingAwaits.set(functionThread.address, pending)
-
-                        const awaitPromise = self
-                            .then((res) => {
-                                pending.result = { status: 'fulfilled', value: res }
-                                return res
-                            })
-                            .catch((err) => {
-                                pending.result = { status: 'rejected', value: err }
-                            })
-
-                        // 1 result, because the yield hands the promise reference back so the
-                        // resume that follows can wait on it.
-                        functionThread.pushValue(awaitPromise)
-                        return new RawResult(state.module.lua_yieldk(functionThread.address, 1, 0, this.continuancePointer))
+                        return this.suspend(functionThread, self)
                     },
                     { receiveThread: true },
                 ),
@@ -136,20 +72,42 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
         }
     }
 
-    public override close(): void {
-        super.close()
-        this.state.module.removeFunction(this.continuancePointer)
-        // A coroutine abandoned mid await never reaches its continuation, so its record is still
-        // here holding whatever the promise settled with. Nothing tells us when Lua's own GC took
-        // that coroutine, so these are bounded by the state's lifetime rather than the await's.
-        this.pendingAwaits.clear()
-    }
-
     public pushValue(thread: Thread, decoration: Decoration<unknown>): boolean {
         if (!isPromise(decoration.target)) {
             return false
         }
         return super.pushValue(thread, decoration)
+    }
+
+    /**
+     * Hands the promise and how to marshal its result to the module's await hook, then returns the
+     * sentinel that makes the C trampoline reach that hook and suspend the wasm stack.
+     */
+    private suspend(thread: Thread, promise: Promise<unknown>): typeof SUSPEND {
+        // Read from the run being resumed, not this thread, whose JS wrapper is often a fresh object
+        // without the run's limits on it.
+        const run = this.state.module.activeRun!
+        const { deadline, signal } = run.runLimits
+        this.state.module.pendingSuspend = {
+            run,
+            promise,
+            signal,
+            deadline,
+            resume: (outcome) => {
+                if (outcome.status === 'interrupted') {
+                    return thread.interruptWith(outcome.error)
+                }
+                return outcome.status === 'fulfilled'
+                    ? thread.pushReturnValues(outcome.value, true)
+                    : this.marshalRejected(thread, outcome.error)
+            },
+        }
+        return SUSPEND
+    }
+
+    private marshalRejected(thread: Thread, error: unknown): number {
+        thread.pushValue(error || new Error('promise rejected with no error'))
+        return this.state.module.lua_error(thread.address)
     }
 }
 

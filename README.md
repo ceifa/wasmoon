@@ -138,10 +138,10 @@ Wasmoon is **~10x faster** than fengari for pure Lua execution. If your use case
 Fengari is smaller than wasmoon, which can improve the user experience if in web environments.
 Both minified, and wasmoon counted as its JS plus `glue.wasm`:
 
-|             | wasmoon          | fengari |
-| ----------- | ---------------- | ------- |
-| **plain**   | 294kB (97 + 197) | 228kB   |
-| **gzipped** | 124kB (29 + 95)  | 74kB    |
+|             | wasmoon           | fengari |
+| ----------- | ----------------- | ------- |
+| **plain**   | 302kB (108 + 194) | 228kB   |
+| **gzipped** | 128kB (34 + 94)   | 74kB    |
 
 Almost all of wasmoon's weight is the wasm, which is a separate file: it is fetched in parallel
 with your JS rather than parsed as part of it, and it caches on its own across releases of your app.
@@ -224,11 +224,11 @@ build.
 
 ### Null
 
-`null` is injected as userdata type if `inject` is set to `true`. This works as expected except that it will evaluate to `true` in Lua.
+`null` is injected as userdata type if `inject` is `true` or names `'null'`. This works as expected except that it will evaluate to `true` in Lua.
 
 ### Promises
 
-Promises can be await'd from Lua with some caveats detailed in the below section. To await a Promise call `:await()` on it which will yield the Lua execution until the promise completes.
+Promises can be `await`'d from Lua by calling `:await()` on them, which parks the Lua execution until the promise settles and then returns its value (or raises its rejection as a Lua error).
 
 ```js
 import { LuaRuntime } from 'wasmoon'
@@ -246,60 +246,114 @@ try {
 }
 ```
 
-### Async/Await
+### Where `:await()` works
 
-It's not possible to await in a callback from JS into Lua. This is a limitation of Lua but there are some workarounds. It can also be encountered when yielding at the top-level of a file. An example where you might encounter this is a snippet like this:
+An `:await()` suspends the WebAssembly stack itself, through
+[JSPI](https://github.com/WebAssembly/js-promise-integration). That makes it work anywhere inside an
+asynchronous run (`doString`, `doFile`, `thread.run`, a function made asynchronous as below): at the
+top level, inside a `pcall`, across C-call boundaries such as a `table.sort` comparator or a
+`string.gsub` callback, and inside a coroutine that Lua code resumes, whose resumer simply waits.
+
+It needs a platform with JSPI: Chrome or Edge 137, Firefox 153, Safari 27, Node.js 25, or newer.
+Everything else works without it, and an `:await()` raises an error saying so; `LuaRuntime.canAwait`
+tells which one you are on.
+
+A synchronous call cannot be suspended, so an `:await()` reached through `doStringSync`,
+`doFileSync`, `call` or a Lua function called directly from JS is an error.
+
+#### Functions that await
+
+A Lua function handed to JS is called synchronously and returns its value directly. To let it
+await, make it asynchronous, the way `async function` does in JS. From JS that is `state.async`,
+which returns a function that starts the Lua one as a run of its own and gives back a promise of
+its first result:
 
 ```js
-local res = sleep(1):next(function ()
+state.set('sleep', (length) => new Promise((resolve) => setTimeout(resolve, length)))
+const handler = await state.doString('return function(x) sleep(10):await() return x + 1 end')
+
+handler(5) // throws: cannot await inside a synchronous call
+await state.async(handler)(5) // 6
+emitter.on('request', state.async(handler)) // or hand it to whatever takes a callback
+state.async(handler, { timeout: 1000 }) // takes the same options as a run
+```
+
+From Lua it is `async`, one of the globals `inject` defines. Wrap a callback in it before handing
+it to a JS API, and it can await whoever calls it:
+
+```lua
+-- setTimeout calls the function synchronously, which on its own could not await
+setTimeout(async(function()
+    sleep(10):await()
+    print("later")
+end), 100)
+
+-- and it is how to start work without waiting for it
+local fetchPage = async(function(url) return fetch(url):await() end)
+local pages = Promise.all({ fetchPage(a), fetchPage(b) }):await()
+```
+
+The Lua functions given to a promise's `next`, `catch` and `finally` are asynchronous already:
+
+```lua
+local res = sleep(1):next(function()
     sleep(10):await()
     return 15
 end)
 print("res", res:await())
 ```
 
-Which will throw an error like this:
+Each call of an asynchronous function is a run like a `doString`, under the same limits, with
+`limits.functionTimeout` on top.
 
-```
-Error: Lua Error(ErrorRun/2): cannot resume dead coroutine
-    at Thread.assertOk (/home/tstableford/projects/wasmoon/dist/index.js:409:23)
-    at Thread.<anonymous> (/home/tstableford/projects/wasmoon/dist/index.js:142:22)
-    at Generator.throw (<anonymous>)
-    at rejected (/home/tstableford/projects/wasmoon/dist/index.js:26:69)
-```
+As with an async function in JS, an error in one rejects the promise it returned. When a JS API
+called it and dropped that promise, the rejection is unhandled, which by default ends a Node
+process. Pass `onAsyncError` when creating the state to receive those errors instead:
 
-Or like this:
-
-```
-attempt to yield across a C-call boundary
+```js
+const state = lua.createState({ inject: true, onAsyncError: (error) => console.error(error) })
 ```
 
-You can workaround this by doing something like below:
+`inject: true` defines `Promise`, `async`, `Error` and `null`. That last one is a sentinel a JS
+`null` is marshalled as, and it is truthy in Lua; to leave it out, name the ones you want:
+`inject: ['Promise', 'async']`.
 
-```lua
-function async(callback)
-    return function(...)
-        local co = coroutine.create(callback)
-        local safe, result = coroutine.resume(co, ...)
+#### Interrupting a parked run
 
-        return Promise.create(function(resolve, reject)
-            local function step()
-                if coroutine.status(co) == "dead" then
-                    local send = safe and resolve or reject
-                    return send(result)
-                end
+A run parked on a promise is interrupted by its `timeout` or `AbortSignal` without waiting for the
+promise to settle, and so is one waiting on an `onYield` handler. Closing the state rejects its
+parked runs.
 
-                safe, result = coroutine.resume(co)
-
-                if safe and result == Promise.resolve(result) then
-                    result:finally(step)
-                else
-                    step()
-                end
-            end
-
-            result:finally(step)
-        end)
-    end
-end
+```js
+await state.doString('sleep(60000):await()', { timeout: 1000 }) // rejects after ~1s
 ```
+
+The interrupt is raised as an error at the `:await()`, so the scopes it unwinds close their
+to-be-closed variables. A `pcall` around the await catches it like any other error, but the run
+still rejects with it, and every `:await()` the script reaches afterwards is interrupted at once.
+
+Each run owns its limits and interrupt state, even when several runs or states share a runtime. A
+loop of awaits gives the event loop a turn every 256 of them, so timers can run without paying for a
+macrotask on every await.
+
+#### Handling a top-level `coroutine.yield`
+
+A top level `coroutine.yield` is a _host yield_. Pass `onYield` to receive its values and decide
+what the resume hands back; its return may be a promise, a `LuaMultiReturn` of several values, or a
+single value:
+
+```js
+const thread = state.newThread()
+thread.loadString('local reply = coroutine.yield("ping") return reply')
+const [result] = await thread.run(0, {
+    onYield: (values) => {
+        console.log(values[0]) // "ping"
+        return 'pong'
+    },
+})
+console.log(result) // "pong"
+```
+
+A promise passed to `coroutine.yield` is a host value like any other, which the handler receives
+unchanged. Without a handler the yielded values are discarded, the event loop gets a turn, and the
+coroutine resumes without arguments.

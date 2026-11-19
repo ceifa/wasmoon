@@ -1,3 +1,5 @@
+import type MultiReturn from './multireturn'
+
 /**
  * An address in the wasm heap: a `lua_State`, or the storage behind a Lua value. Emscripten
  * function pointers are table indices rather than addresses, so those stay plain numbers.
@@ -70,11 +72,20 @@ export interface LuaMemoryOptions {
 }
 
 export interface LuaLimitOptions {
-    /** Milliseconds a Lua function called from JS may run before being interrupted. */
+    /**
+     * Milliseconds a Lua function called from JS may run before being interrupted, whether it is
+     * called directly or as a run of its own through `state.async` or Lua's `async`.
+     */
     functionTimeout?: number | undefined
-    /** Instructions a single run may execute before being interrupted. */
+    /**
+     * Instructions a single run may execute before being interrupted. A run is a `doString` or
+     * `doFile`, or a function started through `state.async`, Lua's `async` or a promise reaction.
+     */
     maxInstructions?: number | undefined
 }
+
+/** A global that `CreateStateOptions.inject` can define. */
+export type LuaInjectName = 'Error' | 'Promise' | 'null' | 'async'
 
 /**
  * The tunables of `collectgarbage('param', ...)`. `pause`, `stepmul` and `stepsize` drive the
@@ -106,8 +117,24 @@ export interface CreateStateOptions {
      * because the proxy already covers errors when it is enabled.
      */
     errors?: boolean | undefined
-    /** Injects `Error`, `Promise` and `null` into the Lua globals. */
-    inject?: boolean | undefined
+    /**
+     * Which helpers to define as Lua globals. `true` defines all of them, or name them
+     * individually:
+     *
+     * - `Promise`: `Promise.create`, `Promise.all` and `Promise.resolve`.
+     * - `async`: `async(fn)` returns a function that runs `fn` as a run of its own and gives back
+     *   a promise of its first result, so that it can `:await()` whoever calls it.
+     * - `Error`: `Error.create`, where the error bridge is registered (see `errors`).
+     * - `null`: a sentinel that a JS `null` is marshalled as instead of `nil`. It is truthy in Lua.
+     */
+    inject?: LuaInjectName[] | boolean | undefined
+    /**
+     * Called with the error of a function started through Lua's `async` when nothing was waiting
+     * on the promise it returned: a callback a JS API called and forgot about, say. Without a
+     * handler such a failure is an unhandled promise rejection, which is the host's to deal with
+     * and by default ends a Node process.
+     */
+    onAsyncError?: ((error: unknown) => void) | undefined
     memory?: LuaMemoryOptions | undefined
     limits?: LuaLimitOptions | undefined
     gc?: LuaGcOptions | undefined
@@ -123,13 +150,19 @@ export interface LuaRunOptions {
     /**
      * Interrupts the run when the signal aborts.
      *
-     * The abort is observed at the debug hook and around every yield, which has two consequences.
-     * It cannot fire while the event loop is blocked, so a signal aborted from a timer will not
-     * interrupt a tight synchronous Lua loop; use `timeout` or `maxInstructions` for those, since
-     * the hook evaluates them on its own. And a run parked on a promise finishes awaiting that
-     * promise before the abort is seen, rather than abandoning it mid-flight.
+     * Interrupts parked awaits and onYield handlers without waiting for their promises to settle.
+     * A signal cannot fire while the event loop is blocked, so a timer cannot abort a tight Lua
+     * loop without async steps; use `timeout` or `maxInstructions` for those. Repeated awaits
+     * periodically give timers a turn, and a top level `coroutine.yield` without a handler always does.
      */
     signal?: AbortSignal | undefined
+    /**
+     * Called with the values of a top level `coroutine.yield`. Its return
+     * becomes the result of that yield when the run resumes; a returned promise is awaited first, a
+     * `LuaMultiReturn` becomes several values, and `undefined` resumes with none. Without a handler
+     * such a yield gives the event loop a turn and resumes with nothing.
+     */
+    onYield?: ((values: MultiReturn) => unknown | Promise<unknown>) | undefined
 }
 
 export interface LuaLoadOptions {

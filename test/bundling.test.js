@@ -76,7 +76,7 @@ describe('Bundling', () => {
         state.set('yield', () => new Promise((resolve) => emitter.once('resolve', resolve)))
         const resPromise = state.doString(`
             local res = yield():next(function ()
-                coroutine.yield()
+                ("x"):gsub(".", function() coroutine.yield() end)
                 return 15
             end)
             print("res", res:await())

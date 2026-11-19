@@ -148,6 +148,10 @@ describe('State', () => {
                 hole = { [2] = 'b' },
                 string_keys = { ['1'] = 'a', ['2'] = 'b' },
                 mixed = { 'a', 'b', name = 'c' },
+                numeric_string = { 'a', 'b', ['3'] = 'c' },
+                fractional = { 'a', [1.5] = 'b' },
+                zero = { 'a', [0] = 'b' },
+                negative = { 'a', [-1] = 'b' },
                 empty = {},
             }
         `)
@@ -158,6 +162,10 @@ describe('State', () => {
             hole: { 2: 'b' },
             string_keys: { 1: 'a', 2: 'b' },
             mixed: { 1: 'a', 2: 'b', name: 'c' },
+            numeric_string: { 1: 'a', 2: 'b', 3: 'c' },
+            fractional: { 1: 'a', 1.5: 'b' },
+            zero: { 0: 'b', 1: 'a' },
+            negative: { '1': 'a', '-1': 'b' },
             empty: {},
         })
         expect(Array.isArray(value.string_keys)).to.be.false
@@ -1023,6 +1031,15 @@ describe('State', () => {
         expect(await state.doString('return str')).to.be.equal('')
     })
 
+    it('short ASCII strings should retain every byte on first and repeated reads', async () => {
+        using state = await getState()
+        for (let length = 0; length <= 40; length++) {
+            const value = String.fromCharCode(...Array.from({ length }, (_, index) => (index * 19) % 128))
+            state.set('value', value)
+            for (let read = 0; read < 3; read++) expect(state.get('value')).to.equal(value)
+        }
+    })
+
     it('getStringBytes should expose bytes that are not valid UTF-8', async () => {
         using state = await getState()
         await state.doString('value = string.char(0, 255, 128, 65)')
@@ -1177,16 +1194,16 @@ describe('State', () => {
         expect(await state.doString('return value')).to.be.equal(1e300)
     })
 
-    it('yielding in a JS callback into Lua does not break lua state', async () => {
-        // When yielding within a callback the error 'attempt to yield across a C-call boundary'.
-        // This test just checks that throwing that error still allows the lua global to be
-        // re-used and doesn't cause JS to abort or some nonsense.
+    it('yielding across a C-call boundary in a JS callback into Lua does not break lua state', async () => {
+        // A callback may await, but a coroutine.yield across a C-call boundary (here gsub's) still
+        // raises 'attempt to yield across a C-call boundary'. This checks that surfacing that error
+        // still leaves the lua global re-usable and doesn't cause JS to abort or some nonsense.
         using state = await getState()
         const testEmitter = new EventEmitter()
         state.set('yield', () => new Promise((resolve) => testEmitter.once('resolve', resolve)))
         const resPromise = state.doString(`
         local res = yield():next(function ()
-            coroutine.yield()
+            ("x"):gsub(".", function() coroutine.yield() end)
             return 15
         end)
         print("res", res:await())

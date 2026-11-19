@@ -55,6 +55,90 @@ describe('RawResult', () => {
     })
 })
 
+describe('Reference bookkeeping', () => {
+    it('reuses holes below a live high index without exposing free-list links', async () => {
+        const { module } = await getLua()
+        const refs = Array.from({ length: 2048 }, () => module.ref({}))
+        const anchor = Symbol('anchor')
+        const high = module.ref(anchor)
+        for (const ref of refs) {
+            module.unref(ref)
+            expect(module.getRef(ref)).to.equal(undefined)
+        }
+        for (const index of [-1, 0, high + 1]) {
+            module.unref(index)
+            expect(module.getRef(index)).to.equal(undefined)
+        }
+        const value = {}
+        const reused = module.ref(value)
+        expect(refs).to.include(reused)
+        expect(module.getRef(high)).to.equal(anchor)
+        expect(module.getRefIndex(anchor)).to.equal(high)
+        module.unref(high)
+        expect(module.getRef(reused)).to.equal(value)
+        module.unref(reused)
+    })
+
+    it('preserves live indices and reuses released slots after a large batch', async () => {
+        const { module } = await getLua()
+        const values = Array.from({ length: 2048 }, () => ({}))
+        const refs = values.map((value) => module.ref(value))
+        // Keep several low indices alive, including a value held twice, while the tail shrinks.
+        module.ref(values[16])
+        for (let i = 0; i < refs.length; i++) {
+            if (i !== 0 && i !== 32) module.unref(refs[i])
+        }
+        for (const i of [0, 16, 32]) {
+            expect(module.getRef(refs[i])).to.equal(values[i])
+            expect(module.getRefIndex(values[i])).to.equal(refs[i])
+        }
+        const replacements = values.map(() => ({}))
+        const next = replacements.map((value) => module.ref(value))
+        expect(new Set(next).size).to.equal(next.length)
+        for (const i of [0, 16, 32]) expect(next).not.to.include(refs[i])
+        for (let i = 0; i < next.length; i++) expect(module.getRef(next[i])).to.equal(replacements[i])
+        // Descending release also exercises shrinking while the free list has holes.
+        for (let i = next.length - 1; i >= 0; i--) module.unref(next[i])
+        for (const i of [0, 16, 32]) module.unref(refs[i])
+        const remaining = []
+        module.printRefs((index) => remaining.push(index))
+        expect(remaining).to.deep.equal([])
+    })
+
+    it('failed registration leaves live references and reusable slots intact', async () => {
+        const { module } = await getLua()
+        const live = {}
+        const first = module.ref(live)
+        const reusable = module.ref({})
+        module.unref(reusable)
+
+        for (const value of [undefined, null, true, 1, 'not a weak key', Symbol.for('registered')]) {
+            expect(() => module.ref(value)).to.throw(TypeError)
+        }
+
+        const references = []
+        module.printRefs((index, value) => references.push([index, value]))
+        expect(references).to.deep.equal([[first, live]])
+        expect(module.ref({})).to.equal(reusable)
+        expect(module.getRef(first)).to.equal(live)
+    })
+
+    it('reuses a slot only after its final reference is released', async () => {
+        const { module } = await getLua()
+        const value = {}
+        const reference = module.ref(value)
+        expect(module.ref(value)).to.equal(reference)
+        module.unref(reference)
+        expect(module.getRef(reference)).to.equal(value)
+        module.unref(reference)
+        expect(module.getRefIndex(value)).to.equal(undefined)
+        module.unref(reference)
+        const reused = module.ref({})
+        expect(reused).to.equal(reference)
+        expect(module.ref({})).not.to.equal(reused)
+    })
+})
+
 describe('Decoration options', () => {
     it('self should bind the receiver and drop it from the arguments', async () => {
         using state = await getState()
