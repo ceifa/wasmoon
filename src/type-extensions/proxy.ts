@@ -3,6 +3,8 @@ import type LuaState from '../state'
 import MultiReturn from '../multireturn'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
+import { type LuaAddress, LuaType } from '../types'
+import { isEmscriptenUnwind } from '../utils'
 
 type AnyFunction = (...args: any[]) => any
 
@@ -29,25 +31,13 @@ const toJsKey = (target: unknown, key: unknown): string | number => {
 class ProxyTypeExtension extends TypeExtension<any> {
     private readonly boundMethods = new WeakMap<object, WeakMap<AnyFunction, BoundMethod>>()
     private readonly constructors = new WeakMap<AnyFunction, AnyFunction>()
+    private readonly functionMetamethods: number[] = []
 
     public constructor(state: LuaState) {
         super(state, 'js_proxy')
 
         this.deferMetatable(() => ({
-            __index: (self: any, key: unknown) => {
-                const jsKey = toJsKey(self, key)
-                const value = self[jsKey]
-                if (typeof value === 'function') {
-                    // A class the state knows crosses as that class, wherever it is found.
-                    return state.marshaller.hasClass(value) ? value : this.bindMethod(self, value as AnyFunction)
-                }
-                // Lua has no `new`, and whether a function wants one cannot be told from the
-                // outside, so constructing is spelled out: `Class.new(...)`.
-                if (value === undefined && jsKey === 'new' && typeof self === 'function') {
-                    return this.constructorOf(self as AnyFunction)
-                }
-                return value
-            },
+            __index: (self: any, key: unknown) => this.index(self, key),
             __newindex: (self: any, key: unknown, value: any) => {
                 self[toJsKey(self, key)] = value
             },
@@ -78,6 +68,97 @@ class ProxyTypeExtension extends TypeExtension<any> {
 
     public push(thread: Thread, target: unknown): void {
         this.pushReference(thread, target)
+    }
+
+    public override close(): void {
+        for (const pointer of this.functionMetamethods) {
+            this.state.module.removeFunction(pointer)
+        }
+    }
+
+    /**
+     * Lua has a single metatable for every function, and indexing one goes to it. Filled here, by
+     * the first proxy, so that a method read off a proxy stays a plain function -- called as fast
+     * as one, and taken by everything in Lua that wants one -- whose members are still reachable:
+     * `window.Date.now()`, `window.URL.new(href)`. Any other function indexes as Lua's do.
+     */
+    protected override defineMetatable(metamethods?: Record<string, unknown>): void {
+        super.defineMetatable(metamethods)
+        const { module, address: L } = this.state
+
+        // A function to set the metatable through, the __index itself.
+        const index = this.functionMetamethod((target, thread) => thread.pushReturnValues(this.index(target, thread.getValue(2))))
+        module.lua_pushnil(L)
+        module.wasmoon_push_jsfunction(L, index)
+        const created = !module.lua_getmetatable(L, -1)
+        if (created) {
+            module.lua_createtable(L, 0, 3)
+            module.lua_pushstring(L, 'protected metatable')
+            module.lua_setfield(L, -2, '__metatable')
+        }
+        // One someone set before is left alone, and only completed.
+        if (module.lua_getfield(L, -1, '__index') === LuaType.Nil) {
+            module.lua_pushvalue(L, -3)
+            module.lua_setfield(L, -3, '__index')
+        }
+        module.lua_pop(L, 1)
+        if (module.lua_getfield(L, -1, '__newindex') === LuaType.Nil) {
+            const newindex = this.functionMetamethod((target, thread) => {
+                target[toJsKey(target, thread.getValue(2))] = thread.getValue(3)
+                return 0
+            })
+            module.lua_pushnil(L)
+            module.wasmoon_push_jsfunction(L, newindex)
+            module.lua_setfield(L, -3, '__newindex')
+        }
+        module.lua_pop(L, 1)
+        module.lua_setmetatable(L, -2)
+        module.lua_pop(L, 1)
+    }
+
+    /**
+     * A C function for the function metatable, through the trampoline every JS function takes so a
+     * call can suspend, which calls `body` with the method being indexed. Not a JS function
+     * pushed like any other, which would be handed the method already read back as its function.
+     */
+    private functionMetamethod(body: (target: any, thread: Thread) => number): number {
+        const { module, marshaller } = this.state
+        const pointer = module.addFunction((L: LuaAddress) => {
+            const method = marshaller.functions.methodAt(L, 1)
+            if (method === undefined) {
+                module.luaL_where(L, 1)
+                module.lua_pushstring(L, 'attempt to index a function value')
+                module.lua_concat(L, 2)
+                return module.lua_error(L)
+            }
+            const thread = this.state.stateToThread(L)
+            try {
+                return body(method.target, thread)
+            } catch (err) {
+                if (isEmscriptenUnwind(err)) {
+                    throw err
+                }
+                thread.pushValue(err)
+            }
+            return module.lua_error(L)
+        }, 'ii')
+        this.functionMetamethods.push(pointer)
+        return pointer
+    }
+
+    private index(self: any, key: unknown): unknown {
+        const jsKey = toJsKey(self, key)
+        const value = self[jsKey]
+        if (typeof value === 'function') {
+            // A class the state knows crosses as that class, wherever it is found.
+            return this.state.marshaller.hasClass(value) ? value : this.bindMethod(self, value as AnyFunction)
+        }
+        // Lua has no `new`, and whether a function wants one cannot be told from the outside, so
+        // constructing is spelled out: `Class.new(...)`.
+        if (value === undefined && jsKey === 'new' && typeof self === 'function') {
+            return this.constructorOf(self as AnyFunction)
+        }
+        return value
     }
 
     private bindMethod(self: object, method: AnyFunction): BoundMethod {
