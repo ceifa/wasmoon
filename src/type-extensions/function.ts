@@ -1,4 +1,4 @@
-import { BoundMethod, LuaMarshalled, type LuaRawFunction, raw } from '../marshal'
+import { LuaMarshalled, type LuaRawFunction, raw } from '../marshal'
 import type LuaState from '../state'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
@@ -87,17 +87,6 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
                         args.push(calledThread.getValue(i))
                     }
                     result = (reference as FunctionType)(...args)
-                } else if (reference instanceof BoundMethod) {
-                    const { self } = reference
-                    const args = []
-                    for (let i = 1; i <= argsQuantity; i++) {
-                        const value = calledThread.getValue(i)
-                        // The receiver of a `:` call. The method is called on `self` either way.
-                        if (i !== 1 || value !== self) {
-                            args.push(value)
-                        }
-                    }
-                    result = reference.target.apply(self, args)
                 } else if (reference instanceof LuaMarshalled && reference.as === 'raw') {
                     const count = (reference.target as LuaRawFunction)(calledThread, argsQuantity) as unknown
                     if (count === SUSPEND) {

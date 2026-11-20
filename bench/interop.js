@@ -115,6 +115,27 @@ function createProxyAccessBenchmark(lua) {
     })
 }
 
+// `obj:method()` reads the method through the proxy and calls it, the hot path of DOM-style code.
+// Hoisted, only the call is left.
+function createProxyMethodCallBenchmark(lua, hoisted) {
+    const data = {
+        add(a, b) {
+            return a + b
+        },
+    }
+    return withState(lua, {}, (state) => {
+        state.set('data', data)
+        const call = hoisted ? 'add(data, i, 1)' : 'data:add(i, 1)'
+        const total = state.doStringSync(`
+            local add = data.add
+            local sum = 0
+            for i = 1, ${CALL_COUNT} do sum = sum + ${call} end
+            return sum
+        `)
+        assert.equal(total, (CALL_COUNT * (CALL_COUNT + 1)) / 2 + CALL_COUNT)
+    })
+}
+
 function createDoStringBenchmark(lua) {
     return withState(lua, {}, (state) => {
         for (let i = 0; i < 200; i++) {
@@ -139,6 +160,8 @@ export async function runInteropBench(options = {}) {
             { name: 'Push table into Lua', run: createPushTableBenchmark(lua) },
             { name: 'Push null into Lua', run: createPushNullBenchmark(lua) },
             { name: 'Proxy field access from Lua', run: createProxyAccessBenchmark(lua) },
+            { name: 'Proxy method call from Lua', run: createProxyMethodCallBenchmark(lua, false) },
+            { name: 'Proxy method call from Lua (hoisted)', run: createProxyMethodCallBenchmark(lua, true) },
             { name: 'doStringSync', run: createDoStringBenchmark(lua) },
         ],
         options,

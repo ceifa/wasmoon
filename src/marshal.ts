@@ -85,9 +85,10 @@ export function raw(fn: LuaRawFunction): LuaMarshalled<LuaRawFunction> {
 }
 
 /**
- * A function a proxy handed out for one of its target's members. It is called on that target
- * however Lua called it, so `obj.method(x)` and `obj:method(x)` both reach `obj.method(x)`: the
- * receiver a `:` call passes ahead of the arguments is dropped.
+ * A function a proxy handed out for one of its target's members, which crosses as a proxy of the
+ * function: its static members and `.new` are reachable like those of `proxy(fn)`. It is called on
+ * that target however Lua called it, so `obj.method(x)` and `obj:method(x)` both reach
+ * `obj.method(x)`: the receiver a `:` call passes ahead of the arguments is dropped.
  */
 export class BoundMethod extends LuaMarshalled<(...args: any[]) => unknown> {
     public constructor(

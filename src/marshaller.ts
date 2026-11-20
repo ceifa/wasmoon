@@ -201,8 +201,10 @@ export default class Marshaller {
                 this.proxies.push(thread, target)
                 break
             case 'raw':
-            case 'method':
                 this.functions.push(thread, wrapped as LuaMarshalled<(...args: any[]) => unknown>)
+                break
+            case 'method':
+                this.proxies.push(thread, wrapped)
                 break
             case 'copy':
                 if (typeof target === 'function') {

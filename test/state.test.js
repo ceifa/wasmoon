@@ -835,6 +835,29 @@ describe('State', () => {
         expect(await state.doString('return obj.TestClass.new("nested"):getName()')).to.be.equal('nested')
     })
 
+    it('a function found on a proxied object is a proxy of it, called on that object', async () => {
+        using state = await getState()
+        const counter = {
+            n: 0,
+            add(by) {
+                this.n += by
+                return this.n
+            },
+        }
+        state.set('page', { Date, counter })
+
+        expect(await state.doString('return type(page.Date)')).to.be.equal('userdata')
+        expect(await state.doString('return page.Date.UTC(2020, 0, 1)')).to.be.equal(1577836800000)
+        expect(await state.doString('return page.Date.new(0):getTime()')).to.be.equal(0)
+        expect(await state.doString('return page.Date')).to.be.equal(Date)
+
+        expect(await state.doString('return page.counter:add(1)')).to.be.equal(1)
+        expect(await state.doString('return page.counter.add(2)')).to.be.equal(3)
+        expect(await state.doString('local add = page.counter.add return add(page.counter, 3)')).to.be.equal(6)
+        expect(await state.doString('return page.counter.add == page.counter.add')).to.be.equal(true)
+        expect(await state.doString('return page.counter.add')).to.be.equal(counter.add)
+    })
+
     it('a number indexes an array from 1 and any other object by the property it names', async () => {
         using state = await getState()
         state.set('arr', ['a', 'b'])

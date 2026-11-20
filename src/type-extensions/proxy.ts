@@ -1,4 +1,4 @@
-import { BoundMethod } from '../marshal'
+import { BoundMethod, raw } from '../marshal'
 import type LuaState from '../state'
 import MultiReturn from '../multireturn'
 import type Thread from '../thread'
@@ -72,12 +72,33 @@ class ProxyTypeExtension extends TypeExtension<any> {
                 )
             },
             __eq: (self: any, other: any) => self === other,
-            __call: (self: any, ...args: any[]) => self(...args),
+            // Raw, because a method reads back as its function and the object it is bound to would
+            // be lost on the way.
+            __call: raw((thread, argCount) => {
+                const box = thread.module.getReferenceBox(thread.address, 1)
+                const method = box instanceof BoundMethod ? box : undefined
+                let first = 2
+                // The receiver of a `:` call. The method is called on its object either way.
+                if (method && argCount >= 2 && thread.getValue(2) === method.self) {
+                    first = 3
+                }
+                const args = []
+                for (let i = first; i <= argCount; i++) {
+                    args.push(thread.getValue(i))
+                }
+                return thread.pushReturnValues(Reflect.apply(method ? method.target : (box as AnyFunction), method?.self, args))
+            }),
         }))
     }
 
     public push(thread: Thread, target: unknown): void {
         this.pushReference(thread, target)
+    }
+
+    /** A method reads back as the function it is, without the object it was read from. */
+    public override getValue(thread: Thread, index: number): any {
+        const value = super.getValue(thread, index)
+        return value instanceof BoundMethod ? value.target : value
     }
 
     private bindMethod(self: object, method: AnyFunction): BoundMethod {
