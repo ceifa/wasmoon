@@ -2,7 +2,6 @@
 // lists "emscripten" in their own tsconfig `types`, so utils/reference-types.js puts a
 // `/// <reference types="emscripten" />` at the top of the emitted declarations to cover everyone
 // else. tsc drops the directive when it is written here, hence the build step.
-import initWasmModule from '../build/glue.js'
 import LuaBindings from './bindings.gen'
 import { canSuspend, limitError, type PendingSuspend, settleOrInterrupt, type SettleOutcome, yieldToEventLoop } from './async'
 import type Thread from './thread'
@@ -21,8 +20,11 @@ export type EnvironmentVariables = Record<string, string | undefined>
  * - `'host'`: the real filesystem, through Node. Paths, the working directory, symlinks and
  *   permissions are the host's own, because every operation goes straight to `node:fs`. Node only,
  *   and no sandbox: Lua can read and write anything the process can.
+ * - `'none'`: no filesystem at all, for a smaller download. Opening, removing or renaming a file
+ *   fails, so does `require` of anything but a preloaded module, and the runtime's file methods
+ *   throw. Stdio still works, through the stdin, stdout and stderr options.
  */
-export type LuaFileSystem = 'memory' | 'host'
+export type LuaFileSystem = 'memory' | 'host' | 'none'
 
 /** Emscripten's own path helpers, which work on the virtual filesystem rather than the host one. */
 export interface EmscriptenPath {
@@ -40,6 +42,7 @@ export interface LuaEmscriptenModule extends EmscriptenModule {
     removeFunction: typeof removeFunction
     setValue: typeof setValue
     getValue: typeof getValue
+    // FS, NODEFS and PATH are missing from the glue for `fs: 'none'`.
     FS: typeof FS
     // Exported by the build, since Emscripten 7 no longer hangs the backends off FS.filesystems.
     NODEFS: Emscripten.FileSystemType
@@ -185,7 +188,7 @@ interface ResolvedMount {
 
 // The only rule about `mounts` that is not about a single mount, so both the option and the method
 // report it with one voice.
-const MOUNTS_NEED_MEMORY_FS = `mounts belong to fs: 'memory'; with 'host' every host path is already reachable`
+const MOUNTS_NEED_MEMORY_FS = `mounts belong to fs: 'memory'; with 'host' every host path is already reachable, and 'none' has nothing to mount into`
 
 /**
  * Synchronous and lazy, which is what lets a mount be added after loading without the load path
@@ -193,6 +196,67 @@ const MOUNTS_NEED_MEMORY_FS = `mounts belong to fs: 'memory'; with 'host' every 
  */
 function nodeBuiltin<T>(name: string): T | null {
     return (globalThis.process?.getBuiltinModule?.(name) as T | undefined) ?? null
+}
+
+// Compiled once per URL and shared by every load from it, so another runtime skips both the download
+// and the compile. A failure leaves the cache, so a later load can try again.
+const compiledWasm = new Map<string, Promise<WebAssembly.Module>>()
+
+function compileWasm(url: string, isNode: boolean): Promise<WebAssembly.Module> {
+    let compiled = compiledWasm.get(url)
+    if (!compiled) {
+        compiled = fetchAndCompileWasm(url, isNode)
+        compiledWasm.set(url, compiled)
+        compiled.catch(() => compiledWasm.delete(url))
+    }
+    return compiled
+}
+
+async function fetchAndCompileWasm(url: string, isNode: boolean): Promise<WebAssembly.Module> {
+    // Node's fetch takes no file: URL, and a wasmFile there may be a plain path too.
+    if (isNode && !/^(https?|data|blob):/.test(url)) {
+        const { readFile } = nodeBuiltin<typeof import('node:fs/promises')>('node:fs/promises')!
+        return await WebAssembly.compile(await readFile(url.startsWith('file:') ? new URL(url) : url))
+    }
+
+    const response = await fetch(url)
+    if (!response.ok) {
+        throw new Error(`fetching ${url} failed with status ${response.status}`)
+    }
+    // Streaming compiles while the bytes are still arriving, but refuses a response that was not
+    // served as application/wasm.
+    if (response.headers.get('content-type')?.split(';')[0]?.trim() === 'application/wasm') {
+        return await WebAssembly.compileStreaming(response)
+    }
+    return await WebAssembly.compile(await response.arrayBuffer())
+}
+
+/** The wasm next to the bundle, or the published copy on unpkg when a browser cannot reach that. */
+async function compileDefaultWasm(isNode: boolean, warn: LuaWarnHandler): Promise<WebAssembly.Module> {
+    try {
+        // Written in the shape bundlers look for, so they emit or inline the asset.
+        return await compileWasm(new URL('glue.wasm', import.meta.url).href, isNode)
+    } catch (err) {
+        // A browser can recover: a page opened from file: cannot fetch a sibling at all, and a
+        // bundler that neither emits nor inlines the asset leaves nothing there either. In Node it
+        // is just a broken install.
+        if (isNode) {
+            throw err
+        }
+
+        // Pinned to this version, so it only covers a published release.
+        const remoteWasmFile = `https://unpkg.com/wasmoon@${version}/dist/glue.wasm`
+        warn(`could not load glue.wasm from next to the bundle, falling back to ${remoteWasmFile}`, err)
+        try {
+            return await compileWasm(remoteWasmFile, isNode)
+        } catch (remoteErr) {
+            throw new Error(
+                `failed to load the Lua wasm module, both from next to the bundle and from ${remoteWasmFile}. ` +
+                    `The fallback only covers published versions of wasmoon, so pass wasmFile to point at your own copy.`,
+                { cause: remoteErr },
+            )
+        }
+    }
 }
 
 /**
@@ -267,9 +331,9 @@ function mountHostDirectory(emscripten: LuaEmscriptenModule, { virtualPath, host
 interface PreRunConfig {
     env: EnvironmentVariables | undefined
     mounts: readonly ResolvedMount[]
-    stdin: LuaModuleOptions['stdin']
-    stdout: LuaModuleOptions['stdout']
-    stderr: LuaModuleOptions['stderr']
+    stdin?: LuaModuleOptions['stdin']
+    stdout?: LuaModuleOptions['stdout']
+    stderr?: LuaModuleOptions['stderr']
 }
 
 interface ReferenceEntry {
@@ -312,7 +376,7 @@ export default class LuaModule extends LuaBindings {
         if (fs === 'host' && !isNode) {
             throw new Error(`fs: 'host' is the real filesystem, which only Node has; elsewhere use the default 'memory' one`)
         }
-        if (fs === 'host' && mountEntries.length > 0) {
+        if (fs !== 'memory' && mountEntries.length > 0) {
             throw new Error(MOUNTS_NEED_MEMORY_FS)
         }
 
@@ -326,77 +390,58 @@ export default class LuaModule extends LuaBindings {
             mounts.push(mount)
         }
 
-        // Emscripten reports load failures itself, which is noise while one can still be recovered
-        // from below, so they are held until the outcome is known. Null once handed over.
-        let buffered: string[] | null = []
-        const printErr = (line: string): void => {
-            if (buffered) {
-                buffered.push(line)
-            } else {
-                warn(line)
-            }
-        }
+        // The wasm is fetched and compiled here rather than by the glue, so that it starts at once
+        // instead of after the glue chunk has arrived: the two downloads overlap, and the compile
+        // streams along with the wasm one.
+        const wasm = opts.wasmFile === undefined ? compileDefaultWasm(isNode, warn) : compileWasm(opts.wasmFile, isNode)
 
-        const preRun = createPreRun({ env: opts.env, mounts, stdin: opts.stdin, stdout: opts.stdout, stderr: opts.stderr })
+        // Three glues over the one wasm, differing only in their filesystem (see
+        // utils/build-wasm.sh). Each is a chunk of its own, imported on demand, so a load only
+        // downloads the one it asked for -- and a browser bundle never loads the host one, which
+        // throws outside Node.
+        const glue =
+            fs === 'host' ? import('../build/host/glue.js') : fs === 'none' ? import('../build/none/glue.js') : import('../build/glue.js')
 
-        // Two glues over the one wasm, differing only in their filesystem (see
-        // utils/build-wasm.sh). The host one is imported on demand, both because it throws outside
-        // Node and so that a browser bundle leaves it in a chunk it never loads.
-        const init = fs === 'host' ? (await import('../build/host/glue.js')).default : initWasmModule
+        const [{ default: init }, wasmModule] = await Promise.all([glue, wasm])
         if (typeof init !== 'function') {
             // The `browser` field points bundlers at a stub, since the glue only runs under Node.
             throw new Error(`fs: 'host' needs glue-host.js, which the bundle replaced with a stub because it targets the browser`)
         }
 
-        const load = async (wasmFile?: string): Promise<LuaModule> => {
-            return new LuaModule(
-                await init({ ...(wasmFile === undefined ? {} : { locateFile: () => wasmFile }), preRun, printErr }),
-                opts.onWarn,
-                fs,
-                mounts,
-            )
-        }
+        // Without a filesystem there is no FS.init to hand stdio to, so that glue takes it directly,
+        // with the defaults the other glues fall back to when given nothing.
+        const stdio =
+            fs === 'none'
+                ? {
+                      stdin: createInputReader(opts.stdin),
+                      stdout: createOutputWriter(opts.stdout ?? ((line) => console.log(line))),
+                      stderr: createOutputWriter(opts.stderr ?? warn),
+                  }
+                : {}
+        const preRun = createPreRun({
+            env: opts.env,
+            mounts,
+            ...(fs === 'none' ? {} : { stdin: opts.stdin, stdout: opts.stdout, stderr: opts.stderr }),
+        })
 
-        try {
-            if (opts.wasmFile !== undefined) {
-                return await load(opts.wasmFile)
-            }
-
-            try {
-                // Left to emscripten, which resolves it with `new URL('glue.wasm', import.meta.url)`
-                // -- the shape bundlers look for to emit or inline the asset, and one a locateFile
-                // of our own would hide from them.
-                return await load()
-            } catch (err) {
-                // A browser can recover: a page opened from file: cannot fetch a sibling at all, and
-                // a bundler that neither emits nor inlines the asset leaves nothing there either. In
-                // Node it is just a broken install.
-                if (isNode) {
-                    throw err
-                }
-
-                // Pinned to this version, so it only covers a published release.
-                const remoteWasmFile = `https://unpkg.com/wasmoon@${version}/dist/glue.wasm`
-                warn(`could not load glue.wasm from next to the bundle, falling back to ${remoteWasmFile}`, err)
-                buffered = []
-
+        // Emscripten waits on instantiateWasm without a way to fail it, so a failed instantiation
+        // settles the load through this instead.
+        let instantiationFailed!: (error: unknown) => void
+        const failure = new Promise<never>((_, reject) => {
+            instantiationFailed = reject
+        })
+        const instantiateWasm = (imports: WebAssembly.Imports, receive: (instance: WebAssembly.Instance) => void): void => {
+            void (async () => {
                 try {
-                    return await load(remoteWasmFile)
-                } catch (remoteErr) {
-                    throw new Error(
-                        `failed to load the Lua wasm module, both from next to the bundle and from ${remoteWasmFile}. ` +
-                            `The fallback only covers published versions of wasmoon, so pass wasmFile to point at your own copy.`,
-                        { cause: remoteErr },
-                    )
+                    receive(await WebAssembly.instantiate(wasmModule, imports))
+                } catch (error) {
+                    instantiationFailed(error)
                 }
-            }
-        } finally {
-            // What is left belongs to the attempt that decided the outcome.
-            for (const line of buffered ?? []) {
-                warn(line)
-            }
-            buffered = null
+            })()
         }
+
+        const emscripten = await Promise.race([init({ instantiateWasm, preRun, printErr: (line) => warn(line), ...stdio }), failure])
+        return new LuaModule(emscripten, opts.onWarn, fs, mounts)
     }
 
     /** The handler passed to {@link LuaModule.initialize}, which states created on it inherit. */
@@ -598,7 +643,7 @@ export default class LuaModule extends LuaBindings {
      * does at load time and with the same checks. Node only, and only with `fs: 'memory'`.
      */
     public mount(virtualPath: string, hostPath: string): void {
-        if (this.fs === 'host') {
+        if (this.fs !== 'memory') {
             throw new Error(MOUNTS_NEED_MEMORY_FS)
         }
 
@@ -608,9 +653,27 @@ export default class LuaModule extends LuaBindings {
         this.mounts.push(mount)
     }
 
+    /** The emscripten module's `FS`, which a module loaded with `fs: 'none'` does not have. */
+    public get filesystem(): EmscriptenFS {
+        this.assertFilesystem()
+        return this.emscripten.FS
+    }
+
+    /** The emscripten module's `PATH`, which comes and goes with the filesystem. */
+    public get path(): EmscriptenPath {
+        this.assertFilesystem()
+        return this.emscripten.PATH
+    }
+
+    private assertFilesystem(): void {
+        if (this.fs === 'none') {
+            throw new Error(`there is no filesystem with fs: 'none'; load with 'memory' (the default) or 'host' to have one`)
+        }
+    }
+
     /** Detaches a {@link LuaModule.mount}, leaving its mount point behind as an empty directory. */
     public unmount(virtualPath: string): void {
-        this.emscripten.FS.unmount(virtualPath)
+        this.filesystem.unmount(virtualPath)
         // Dropped only once Emscripten agrees it was a mount point, so a failed unmount leaves the
         // bookkeeping matching what is actually mounted.
         const index = this.mounts.findIndex((mount) => mount.virtualPath === virtualPath)

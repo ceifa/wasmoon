@@ -7,13 +7,21 @@ export default defineConfig({
     // than bundling a second copy of it, and is minified the same way.
     input: { index: './src/index.ts', cli: './src/cli.js' },
     output: {
-        // A directory rather than a single file, because the host filesystem glue that module.ts
-        // imports on demand has to stay a chunk of its own: a browser bundle then leaves it alone,
-        // and Node loads it only when someone asks for `fs: 'host'`.
+        // A directory rather than a single file, because each glue module.ts imports on demand has
+        // to stay a chunk of its own: a load fetches only the one its `fs` asks for, and a browser
+        // bundle leaves the Node only host one alone.
         dir: 'dist',
         entryFileNames: '[name].js',
-        // Named rather than hashed, so the `browser` field in package.json can point at it.
-        chunkFileNames: 'glue-host.js',
+        // Named rather than hashed, so the `browser` field in package.json can point at the host
+        // one. Nothing else is split off, and a chunk that is not a glue fails the build here
+        // rather than shipping under a glue's name.
+        chunkFileNames: ({ facadeModuleId }) => {
+            const glue = /\/build\/(?:(host|none)\/)?glue\.js$/.exec(facadeModuleId ?? '')
+            if (!glue) {
+                throw new Error(`unexpected chunk for ${facadeModuleId}: only the glues are split off`)
+            }
+            return `glue-${glue[1] ?? 'memory'}.js`
+        },
         format: 'esm',
         sourcemap: true,
         // The glue arrives from emcc already minified and rolldown would otherwise re-print it
@@ -77,8 +85,8 @@ export default defineConfig({
             generateBundle(_options, bundle) {
                 // Rewritten through the emitted files rather than the written ones, because
                 // `chunk.map` is a snapshot of the Rust side and mutating it does not carry over.
-                // Counted per sourcemap: there is one for each glue now, and a single flag would
-                // call it a success while the other still shipped its copy.
+                // Counted per sourcemap: there is one for each glue, and a single flag would call
+                // it a success while another still shipped its copy.
                 let trimmed = 0
                 for (const chunk of Object.values(bundle)) {
                     const map = bundle[`${chunk.fileName}.map`]
@@ -110,9 +118,9 @@ export default defineConfig({
                     map.source = JSON.stringify(parsed)
                     trimmed++
                 }
-                // One for the entry's inlined glue, one for the host glue chunk.
-                if (trimmed !== 2) {
-                    this.error(`expected to trim the glue out of 2 sourcemaps, trimmed ${trimmed}`)
+                // One for each glue chunk.
+                if (trimmed !== 3) {
+                    this.error(`expected to trim the glue out of 3 sourcemaps, trimmed ${trimmed}`)
                 }
             },
         },

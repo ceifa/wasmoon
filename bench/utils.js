@@ -72,6 +72,7 @@ Options:
 export function printArtifactSizes() {
     const artifacts = [
         { label: 'glue.js', path: path.resolve(import.meta.dirname, '../build/glue.js') },
+        { label: 'glue.js (fs: none)', path: path.resolve(import.meta.dirname, '../build/none/glue.js') },
         { label: 'glue.wasm', path: path.resolve(import.meta.dirname, '../build/glue.wasm') },
     ]
 
