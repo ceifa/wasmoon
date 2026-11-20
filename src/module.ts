@@ -3,6 +3,7 @@
 // `/// <reference types="emscripten" />` at the top of the emitted declarations to cover everyone
 // else. tsc drops the directive when it is written here, hence the build step.
 import initWasmModule from '../build/glue.js'
+import LuaBindings from './bindings.gen'
 import { canSuspend, limitError, type PendingSuspend, settleOrInterrupt, type SettleOutcome, yieldToEventLoop } from './async'
 import type Thread from './thread'
 import { defaultWarnHandler, LUA_REGISTRYINDEX, type LuaAddress, LuaReturn, LuaType, type LuaWarnHandler, PointerSize } from './types'
@@ -302,7 +303,7 @@ function createPreRun(config: PreRunConfig): (initializedModule: LuaEmscriptenMo
     }
 }
 
-export default class LuaModule {
+export default class LuaModule extends LuaBindings {
     public static async initialize(opts: Readonly<LuaModuleOptions> = {}): Promise<LuaModule> {
         const warn = opts.onWarn ?? defaultWarnHandler
         // Node rather than the browser, because the lookalikes (jsdom, an Electron renderer) are
@@ -402,171 +403,13 @@ export default class LuaModule {
         }
     }
 
-    public emscripten: LuaEmscriptenModule
     /** The handler passed to {@link LuaModule.initialize}, which states created on it inherit. */
     public readonly onWarn: LuaWarnHandler | undefined
     /** Which filesystem this module was loaded with, as {@link LuaModuleOptions.fs}. */
     public readonly fs: LuaFileSystem
 
-    declare public luaL_checkversion_: (L: LuaAddress, ver: number, sz: number) => void
-    declare public luaL_getmetafield: (L: LuaAddress, obj: number, e: string | null) => LuaType
-    declare public luaL_callmeta: (L: LuaAddress, obj: number, e: string | null) => number
-    declare public luaL_argerror: (L: LuaAddress, arg: number, extramsg: string | null) => number
-    declare public luaL_typeerror: (L: LuaAddress, arg: number, tname: string | null) => number
-    declare public luaL_checklstring: (L: LuaAddress, arg: number, l: number | null) => string
-    declare public luaL_optlstring: (L: LuaAddress, arg: number, def: string | null, l: number | null) => string
-    declare public luaL_checknumber: (L: LuaAddress, arg: number) => number
-    declare public luaL_optnumber: (L: LuaAddress, arg: number, def: number) => number
-    // lua_Integer is 64 bit, and the module is built with WASM_BIGINT, so these cross as BigInt.
-    declare public luaL_checkinteger: (L: LuaAddress, arg: number) => bigint
-    declare public luaL_optinteger: (L: LuaAddress, arg: number, def: bigint) => bigint
-    declare public luaL_checkstack: (L: LuaAddress, sz: number, msg: string | null) => void
-    declare public luaL_checktype: (L: LuaAddress, arg: number, t: number) => void
-    declare public luaL_checkany: (L: LuaAddress, arg: number) => void
-    declare public luaL_newmetatable: (L: LuaAddress, tname: string | null) => number
-    declare public luaL_setmetatable: (L: LuaAddress, tname: string | null) => void
-    declare public luaL_testudata: (L: LuaAddress, ud: number, tname: string | null) => LuaAddress
-    declare public luaL_checkudata: (L: LuaAddress, ud: number, tname: string | null) => LuaAddress
-    declare public luaL_where: (L: LuaAddress, lvl: number) => void
-    declare public luaL_fileresult: (L: LuaAddress, stat: number, fname: string | null) => number
-    declare public luaL_execresult: (L: LuaAddress, stat: number) => number
-    declare public luaL_ref: (L: LuaAddress, t: number) => number
-    declare public luaL_unref: (L: LuaAddress, t: number, ref: number) => void
-    declare public luaL_loadfilex: (L: LuaAddress, filename: string | null, mode: string | null) => LuaReturn
-    declare public luaL_loadbufferx: (
-        L: LuaAddress,
-        buff: string | number | null,
-        sz: number,
-        name: string | number | null,
-        mode: string | null,
-    ) => LuaReturn
-    declare public luaL_loadstring: (L: LuaAddress, s: string | null) => LuaReturn
-    declare public luaL_newstate: () => LuaAddress
-    declare public luaL_len: (L: LuaAddress, idx: number) => bigint
-    declare public luaL_addgsub: (b: number | null, s: string | null, p: string | null, r: string | null) => void
-    declare public luaL_gsub: (L: LuaAddress, s: string | null, p: string | null, r: string | null) => string
-    declare public luaL_setfuncs: (L: LuaAddress, l: number | null, nup: number) => void
-    declare public luaL_getsubtable: (L: LuaAddress, idx: number, fname: string | null) => number
-    declare public luaL_traceback: (L: LuaAddress, L1: LuaAddress, msg: string | null, level: number) => void
-    declare public luaL_requiref: (L: LuaAddress, modname: string | null, openf: number, glb: number) => void
-    declare public luaL_openselectedlibs: (L: LuaAddress, load: number, preload: number) => void
-    declare public luaL_buffinit: (L: LuaAddress, B: number | null) => void
-    declare public luaL_prepbuffsize: (B: number | null, sz: number) => string
-    declare public luaL_addlstring: (B: number | null, s: string | null, l: number) => void
-    declare public luaL_addstring: (B: number | null, s: string | null) => void
-    declare public luaL_addvalue: (B: number | null) => void
-    declare public luaL_pushresult: (B: number | null) => void
-    declare public luaL_pushresultsize: (B: number | null, sz: number) => void
-    declare public luaL_buffinitsize: (L: LuaAddress, B: number | null, sz: number) => string
-    declare public lua_newstate: (f: number | null, ud: number | null, seed: number) => LuaAddress
-    declare public lua_close: (L: LuaAddress) => void
-    declare public lua_newthread: (L: LuaAddress) => LuaAddress
-    declare public lua_closethread: (L: LuaAddress, from: LuaAddress | null) => LuaReturn
-    declare public lua_atpanic: (L: LuaAddress, panicf: number) => number
-    declare public lua_version: (L: LuaAddress) => number
-    declare public lua_absindex: (L: LuaAddress, idx: number) => number
-    declare public lua_gettop: (L: LuaAddress) => number
-    declare public lua_settop: (L: LuaAddress, idx: number) => void
-    declare public lua_pushvalue: (L: LuaAddress, idx: number) => void
-    declare public lua_rotate: (L: LuaAddress, idx: number, n: number) => void
-    declare public lua_copy: (L: LuaAddress, fromidx: number, toidx: number) => void
-    declare public lua_checkstack: (L: LuaAddress, n: number) => number
-    declare public lua_xmove: (from: LuaAddress, to: LuaAddress, n: number) => void
-    declare public lua_isnumber: (L: LuaAddress, idx: number) => number
-    declare public lua_isstring: (L: LuaAddress, idx: number) => number
-    declare public lua_iscfunction: (L: LuaAddress, idx: number) => number
-    declare public lua_isinteger: (L: LuaAddress, idx: number) => number
-    declare public lua_isuserdata: (L: LuaAddress, idx: number) => number
-    declare public lua_type: (L: LuaAddress, idx: number) => LuaType
-    declare public lua_typename: (L: LuaAddress, tp: number) => string
-    declare public lua_tonumberx: (L: LuaAddress, idx: number, isnum: number | null) => number
-    declare public lua_tointegerx: (L: LuaAddress, idx: number, isnum: number | null) => bigint
-    declare public lua_toboolean: (L: LuaAddress, idx: number) => number
-    declare public lua_rawlen: (L: LuaAddress, idx: number) => bigint
-    declare public lua_tocfunction: (L: LuaAddress, idx: number) => number
-    declare public lua_touserdata: (L: LuaAddress, idx: number) => LuaAddress
-    declare public lua_tothread: (L: LuaAddress, idx: number) => LuaAddress
-    declare public lua_topointer: (L: LuaAddress, idx: number) => LuaAddress
-    declare public lua_arith: (L: LuaAddress, op: number) => void
-    declare public lua_rawequal: (L: LuaAddress, idx1: number, idx2: number) => number
-    declare public lua_compare: (L: LuaAddress, idx1: number, idx2: number, op: number) => number
-    declare public lua_pushnil: (L: LuaAddress) => void
-    declare public lua_pushnumber: (L: LuaAddress, n: number) => void
-    declare public lua_pushinteger: (L: LuaAddress, n: number | bigint) => void
-    declare public lua_pushlstring: (L: LuaAddress, s: number, len: number) => void
-    declare public lua_pushcclosure: (L: LuaAddress, fn: number, n: number) => void
-    declare public lua_pushboolean: (L: LuaAddress, b: number) => void
-    declare public lua_pushlightuserdata: (L: LuaAddress, p: number | null) => void
-    declare public lua_pushthread: (L: LuaAddress) => number
-    declare public lua_getglobal: (L: LuaAddress, name: string | null) => LuaType
-    declare public lua_gettable: (L: LuaAddress, idx: number) => LuaType
-    declare public lua_getfield: (L: LuaAddress, idx: number, k: string | null) => LuaType
-    declare public lua_geti: (L: LuaAddress, idx: number, n: number | bigint) => LuaType
-    declare public lua_rawget: (L: LuaAddress, idx: number) => LuaType
-    declare public lua_rawgeti: (L: LuaAddress, idx: number, n: number | bigint) => LuaType
-    declare public lua_rawgetp: (L: LuaAddress, idx: number, p: number | null) => LuaType
-    declare public lua_createtable: (L: LuaAddress, narr: number, nrec: number) => void
-    declare public lua_newuserdatauv: (L: LuaAddress, sz: number, nuvalue: number) => LuaAddress
-    declare public lua_getmetatable: (L: LuaAddress, objindex: number) => number
-    declare public lua_getiuservalue: (L: LuaAddress, idx: number, n: number) => LuaType
-    declare public lua_setglobal: (L: LuaAddress, name: string | null) => void
-    declare public lua_settable: (L: LuaAddress, idx: number) => void
-    declare public lua_setfield: (L: LuaAddress, idx: number, k: string | null) => void
-    declare public lua_seti: (L: LuaAddress, idx: number, n: number | bigint) => void
-    declare public lua_rawset: (L: LuaAddress, idx: number) => void
-    declare public lua_rawseti: (L: LuaAddress, idx: number, n: number | bigint) => void
-    declare public lua_rawsetp: (L: LuaAddress, idx: number, p: number | null) => void
-    declare public lua_setmetatable: (L: LuaAddress, objindex: number) => number
-    declare public lua_setiuservalue: (L: LuaAddress, idx: number, n: number) => number
-    declare public lua_callk: (L: LuaAddress, nargs: number, nresults: number, ctx: number, k: number | null) => void
-    declare public lua_pcallk: (L: LuaAddress, nargs: number, nresults: number, errfunc: number, ctx: number, k: number | null) => LuaReturn
-    declare public lua_load: (
-        L: LuaAddress,
-        reader: number | null,
-        dt: number | null,
-        chunkname: string | null,
-        mode: string | null,
-    ) => LuaReturn
-    declare public lua_dump: (L: LuaAddress, writer: number | null, data: number | null, strip: number) => number
-    declare public lua_yieldk: (L: LuaAddress, nresults: number, ctx: number, k: number | null) => number
-    declare public lua_resume: (L: LuaAddress, from: LuaAddress | null, narg: number, nres: number | null) => LuaReturn
-    declare public lua_status: (L: LuaAddress) => LuaReturn
-    declare public lua_isyieldable: (L: LuaAddress) => number
-    declare public lua_setwarnf: (L: LuaAddress, f: number | null, ud: number | null) => void
-    declare public lua_warning: (L: LuaAddress, msg: string | null, tocont: number) => void
-    declare public lua_error: (L: LuaAddress) => number
-    declare public lua_next: (L: LuaAddress, idx: number) => number
-    declare public lua_concat: (L: LuaAddress, n: number) => void
-    declare public lua_len: (L: LuaAddress, idx: number) => void
-    declare public lua_stringtonumber: (L: LuaAddress, s: string | null) => number
-    declare public lua_getallocf: (L: LuaAddress, ud: number | null) => number
-    declare public lua_setallocf: (L: LuaAddress, f: number | null, ud: number | null) => void
-    declare public lua_toclose: (L: LuaAddress, idx: number) => void
-    declare public lua_closeslot: (L: LuaAddress, idx: number) => void
-    declare public lua_getstack: (L: LuaAddress, level: number, ar: number | null) => number
-    declare public lua_getinfo: (L: LuaAddress, what: string | null, ar: number | null) => number
-    declare public lua_getlocal: (L: LuaAddress, ar: number | null, n: number) => string
-    declare public lua_setlocal: (L: LuaAddress, ar: number | null, n: number) => string
-    declare public lua_getupvalue: (L: LuaAddress, funcindex: number, n: number) => string
-    declare public lua_setupvalue: (L: LuaAddress, funcindex: number, n: number) => string
-    declare public lua_upvalueid: (L: LuaAddress, fidx: number, n: number) => LuaAddress
-    declare public lua_upvaluejoin: (L: LuaAddress, fidx1: number, n1: number, fidx2: number, n2: number) => void
-    declare public lua_sethook: (L: LuaAddress, func: number | null, mask: number, count: number) => void
     declare public wasmoon_set_await_hook: (hook: number, resumeHook: number) => void
     declare public wasmoon_push_jsfunction: (L: LuaAddress, callHook: number) => void
-    declare public lua_gethook: (L: LuaAddress) => number
-    declare public lua_gethookmask: (L: LuaAddress) => number
-    declare public lua_gethookcount: (L: LuaAddress) => number
-    declare public luaopen_base: (L: LuaAddress) => number
-    declare public luaopen_coroutine: (L: LuaAddress) => number
-    declare public luaopen_table: (L: LuaAddress) => number
-    declare public luaopen_io: (L: LuaAddress) => number
-    declare public luaopen_os: (L: LuaAddress) => number
-    declare public luaopen_string: (L: LuaAddress) => number
-    declare public luaopen_utf8: (L: LuaAddress) => number
-    declare public luaopen_math: (L: LuaAddress) => number
-    declare public luaopen_debug: (L: LuaAddress) => number
-    declare public luaopen_package: (L: LuaAddress) => number
 
     /** The mounts that are live, so a later one can be checked against them. */
     private readonly mounts: ResolvedMount[]
@@ -660,167 +503,18 @@ export default class LuaModule {
         fs: LuaFileSystem = 'memory',
         mounts: readonly ResolvedMount[] = [],
     ) {
-        this.emscripten = module
+        // Binds the Lua C API, which is generated from the headers: see utils/create-bindings.js.
+        super(module)
         this.onWarn = onWarn
         this.fs = fs
         this.mounts = [...mounts]
-
-        // The bindings that marshal a string or take a lua_Integer are wrapped over the raw export.
-        // Every other binding crosses only numbers and is the export itself.
-        this.luaL_getmetafield = this.wrapWithStringArguments(this.exported('luaL_getmetafield'), 'nnns')
-        this.luaL_callmeta = this.wrapWithStringArguments(this.exported('luaL_callmeta'), 'nnns')
-        this.luaL_argerror = this.wrapWithStringArguments(this.exported('luaL_argerror'), 'nnns')
-        this.luaL_typeerror = this.wrapWithStringArguments(this.exported('luaL_typeerror'), 'nnns')
-        this.luaL_checklstring = this.wrapWithStringArguments(this.exported('luaL_checklstring'), 'snnn')
-        this.luaL_optlstring = this.wrapWithStringArguments(this.exported('luaL_optlstring'), 'snnsn')
-        this.luaL_checkstack = this.wrapWithStringArguments(this.exported('luaL_checkstack'), 'nnns')
-        this.luaL_newmetatable = this.wrapWithStringArguments(this.exported('luaL_newmetatable'), 'nns')
-        this.luaL_setmetatable = this.wrapWithStringArguments(this.exported('luaL_setmetatable'), 'nns')
-        this.luaL_testudata = this.wrapWithStringArguments(this.exported('luaL_testudata'), 'nnns')
-        this.luaL_checkudata = this.wrapWithStringArguments(this.exported('luaL_checkudata'), 'nnns')
-        this.luaL_fileresult = this.wrapWithStringArguments(this.exported('luaL_fileresult'), 'nnns')
-        this.luaL_loadfilex = this.wrapWithStringArguments(this.exported('luaL_loadfilex'), 'nnss')
-        this.luaL_loadbufferx = this.wrapWithStringArguments(this.exported('luaL_loadbufferx'), 'nnSnSs')
-        this.luaL_loadstring = this.wrapWithStringArguments(this.exported('luaL_loadstring'), 'nns')
-        this.luaL_addgsub = this.wrapWithStringArguments(this.exported('luaL_addgsub'), 'nnsss')
-        this.luaL_gsub = this.wrapWithStringArguments(this.exported('luaL_gsub'), 'snsss')
-        this.luaL_getsubtable = this.wrapWithStringArguments(this.exported('luaL_getsubtable'), 'nnns')
-        this.luaL_traceback = this.wrapWithStringArguments(this.exported('luaL_traceback'), 'nnnsn')
-        this.luaL_requiref = this.wrapWithStringArguments(this.exported('luaL_requiref'), 'nnsnn')
-        this.luaL_prepbuffsize = this.wrapWithStringArguments(this.exported('luaL_prepbuffsize'), 'snn')
-        this.luaL_addlstring = this.wrapWithStringArguments(this.exported('luaL_addlstring'), 'nnsn')
-        this.luaL_addstring = this.wrapWithStringArguments(this.exported('luaL_addstring'), 'nns')
-        this.luaL_buffinitsize = this.wrapWithStringArguments(this.exported('luaL_buffinitsize'), 'snnn')
-        this.lua_typename = this.wrapWithStringArguments(this.exported('lua_typename'), 'snn')
-        this.lua_getglobal = this.wrapWithStringArguments(this.exported('lua_getglobal'), 'nns')
-        this.lua_getfield = this.wrapWithStringArguments(this.exported('lua_getfield'), 'nnns')
-        this.lua_setglobal = this.wrapWithStringArguments(this.exported('lua_setglobal'), 'nns')
-        this.lua_setfield = this.wrapWithStringArguments(this.exported('lua_setfield'), 'nnns')
-        this.lua_load = this.wrapWithStringArguments(this.exported('lua_load'), 'nnnnss')
-        this.lua_warning = this.wrapWithStringArguments(this.exported('lua_warning'), 'nnsn')
-        this.lua_stringtonumber = this.wrapWithStringArguments(this.exported('lua_stringtonumber'), 'nns')
-        this.lua_getinfo = this.wrapWithStringArguments(this.exported('lua_getinfo'), 'nnsn')
-        this.lua_getlocal = this.wrapWithStringArguments(this.exported('lua_getlocal'), 'snnn')
-        this.lua_setlocal = this.wrapWithStringArguments(this.exported('lua_setlocal'), 'snnn')
-        this.lua_getupvalue = this.wrapWithStringArguments(this.exported('lua_getupvalue'), 'snnn')
-        this.lua_setupvalue = this.wrapWithStringArguments(this.exported('lua_setupvalue'), 'snnn')
-        this.lua_pushinteger = this.withIntegerArgument('lua_pushinteger', true)
-        this.lua_geti = this.withIntegerArgument('lua_geti')
-        this.lua_rawgeti = this.withIntegerArgument('lua_rawgeti')
-        this.lua_seti = this.withIntegerArgument('lua_seti')
-        this.lua_rawseti = this.withIntegerArgument('lua_rawseti')
 
         this.rawLuaGc = this.exported('lua_gc')
         this.rawLuaToLString = this.exported('lua_tolstring')
         this.rawLuaLToLString = this.exported('luaL_tolstring')
         this.rawLuaPushString = this.exported('lua_pushstring')
-
-        // Numeric bindings are the exports themselves. Named stores avoid enumerating every
-        // field and assigning bindings through computed property names on each construction.
-        this.luaL_checkversion_ = this.exported('luaL_checkversion_')
-        this.luaL_checknumber = this.exported('luaL_checknumber')
-        this.luaL_optnumber = this.exported('luaL_optnumber')
-        this.luaL_checkinteger = this.exported('luaL_checkinteger')
-        this.luaL_optinteger = this.exported('luaL_optinteger')
-        this.luaL_checktype = this.exported('luaL_checktype')
-        this.luaL_checkany = this.exported('luaL_checkany')
-        this.luaL_where = this.exported('luaL_where')
-        this.luaL_execresult = this.exported('luaL_execresult')
-        this.luaL_ref = this.exported('luaL_ref')
-        this.luaL_unref = this.exported('luaL_unref')
-        this.luaL_newstate = this.exported('luaL_newstate')
-        this.luaL_len = this.exported('luaL_len')
-        this.luaL_setfuncs = this.exported('luaL_setfuncs')
-        this.luaL_openselectedlibs = this.exported('luaL_openselectedlibs')
-        this.luaL_buffinit = this.exported('luaL_buffinit')
-        this.luaL_addvalue = this.exported('luaL_addvalue')
-        this.luaL_pushresult = this.exported('luaL_pushresult')
-        this.luaL_pushresultsize = this.exported('luaL_pushresultsize')
-        this.lua_newstate = this.exported('lua_newstate')
-        this.lua_close = this.exported('lua_close')
-        this.lua_newthread = this.exported('lua_newthread')
-        this.lua_closethread = this.exported('lua_closethread')
-        this.lua_atpanic = this.exported('lua_atpanic')
-        this.lua_version = this.exported('lua_version')
-        this.lua_absindex = this.exported('lua_absindex')
-        this.lua_gettop = this.exported('lua_gettop')
-        this.lua_settop = this.exported('lua_settop')
-        this.lua_pushvalue = this.exported('lua_pushvalue')
-        this.lua_rotate = this.exported('lua_rotate')
-        this.lua_copy = this.exported('lua_copy')
-        this.lua_checkstack = this.exported('lua_checkstack')
-        this.lua_xmove = this.exported('lua_xmove')
-        this.lua_isnumber = this.exported('lua_isnumber')
-        this.lua_isstring = this.exported('lua_isstring')
-        this.lua_iscfunction = this.exported('lua_iscfunction')
-        this.lua_isinteger = this.exported('lua_isinteger')
-        this.lua_isuserdata = this.exported('lua_isuserdata')
-        this.lua_type = this.exported('lua_type')
-        this.lua_tonumberx = this.exported('lua_tonumberx')
-        this.lua_tointegerx = this.exported('lua_tointegerx')
-        this.lua_toboolean = this.exported('lua_toboolean')
-        this.lua_rawlen = this.exported('lua_rawlen')
-        this.lua_tocfunction = this.exported('lua_tocfunction')
-        this.lua_touserdata = this.exported('lua_touserdata')
-        this.lua_tothread = this.exported('lua_tothread')
-        this.lua_topointer = this.exported('lua_topointer')
-        this.lua_arith = this.exported('lua_arith')
-        this.lua_rawequal = this.exported('lua_rawequal')
-        this.lua_compare = this.exported('lua_compare')
-        this.lua_pushnil = this.exported('lua_pushnil')
-        this.lua_pushnumber = this.exported('lua_pushnumber')
-        this.lua_pushlstring = this.exported('lua_pushlstring')
-        this.lua_pushcclosure = this.exported('lua_pushcclosure')
-        this.lua_pushboolean = this.exported('lua_pushboolean')
-        this.lua_pushlightuserdata = this.exported('lua_pushlightuserdata')
-        this.lua_pushthread = this.exported('lua_pushthread')
-        this.lua_gettable = this.exported('lua_gettable')
-        this.lua_rawget = this.exported('lua_rawget')
-        this.lua_rawgetp = this.exported('lua_rawgetp')
-        this.lua_createtable = this.exported('lua_createtable')
-        this.lua_newuserdatauv = this.exported('lua_newuserdatauv')
-        this.lua_getmetatable = this.exported('lua_getmetatable')
-        this.lua_getiuservalue = this.exported('lua_getiuservalue')
-        this.lua_settable = this.exported('lua_settable')
-        this.lua_rawset = this.exported('lua_rawset')
-        this.lua_rawsetp = this.exported('lua_rawsetp')
-        this.lua_setmetatable = this.exported('lua_setmetatable')
-        this.lua_setiuservalue = this.exported('lua_setiuservalue')
-        this.lua_callk = this.exported('lua_callk')
-        this.lua_pcallk = this.exported('lua_pcallk')
-        this.lua_dump = this.exported('lua_dump')
-        this.lua_yieldk = this.exported('lua_yieldk')
-        this.lua_resume = this.exported('lua_resume')
-        this.lua_status = this.exported('lua_status')
-        this.lua_isyieldable = this.exported('lua_isyieldable')
-        this.lua_setwarnf = this.exported('lua_setwarnf')
-        this.lua_error = this.exported('lua_error')
-        this.lua_next = this.exported('lua_next')
-        this.lua_concat = this.exported('lua_concat')
-        this.lua_len = this.exported('lua_len')
-        this.lua_getallocf = this.exported('lua_getallocf')
-        this.lua_setallocf = this.exported('lua_setallocf')
-        this.lua_toclose = this.exported('lua_toclose')
-        this.lua_closeslot = this.exported('lua_closeslot')
-        this.lua_getstack = this.exported('lua_getstack')
-        this.lua_upvalueid = this.exported('lua_upvalueid')
-        this.lua_upvaluejoin = this.exported('lua_upvaluejoin')
-        this.lua_sethook = this.exported('lua_sethook')
         this.wasmoon_set_await_hook = this.exported('wasmoon_set_await_hook')
         this.wasmoon_push_jsfunction = this.exported('wasmoon_push_jsfunction')
-        this.lua_gethook = this.exported('lua_gethook')
-        this.lua_gethookmask = this.exported('lua_gethookmask')
-        this.lua_gethookcount = this.exported('lua_gethookcount')
-        this.luaopen_base = this.exported('luaopen_base')
-        this.luaopen_coroutine = this.exported('luaopen_coroutine')
-        this.luaopen_table = this.exported('luaopen_table')
-        this.luaopen_io = this.exported('luaopen_io')
-        this.luaopen_os = this.exported('luaopen_os')
-        this.luaopen_string = this.exported('luaopen_string')
-        this.luaopen_utf8 = this.exported('luaopen_utf8')
-        this.luaopen_math = this.exported('luaopen_math')
-        this.luaopen_debug = this.exported('luaopen_debug')
-        this.luaopen_package = this.exported('luaopen_package')
 
         this.sizeScratch = module._malloc(PointerSize)
         this.resultCountScratch = module._malloc(PointerSize)
@@ -1355,7 +1049,7 @@ export default class LuaModule {
      * double taking twin of the same name in src/native/wasmoon.c, saving the BigInt conversion on
      * every call. The integer is the last argument of each of these.
      */
-    private withIntegerArgument(name: string, twoArguments = false): (...args: any[]) => any {
+    protected withIntegerArgument(name: string, twoArguments = false): (...args: any[]) => any {
         const bigintBinding = this.exported(name)
         const numberBinding = this.exported(name.replace('lua_', 'wasmoon_'))
 
@@ -1372,7 +1066,7 @@ export default class LuaModule {
     }
 
     /** The wasm export `name`, which for a function that crosses only numbers is the binding itself. */
-    private exported(name: string): (...args: any[]) => any {
+    protected exported(name: string): (...args: any[]) => any {
         const raw = (this.emscripten as unknown as Record<string, unknown>)[`_${name}`]
         if (typeof raw !== 'function') {
             throw new Error(`the wasm module does not export '${name}'`)
@@ -1389,7 +1083,7 @@ export default class LuaModule {
      * argument positions and the arity are unrolled. Which slots hold a C string is fixed when the
      * binding is wrapped, so it is not worked out per call.
      */
-    private wrapWithStringArguments(raw: (...args: any[]) => any, signature: string): (...args: any[]) => any {
+    protected wrapWithStringArguments(raw: (...args: any[]) => any, signature: string): (...args: any[]) => any {
         const emscripten = this.emscripten
         const arity = signature.length - 1
         if (arity < 2 || arity > 5) {

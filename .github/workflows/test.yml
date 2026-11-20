@@ -28,6 +28,9 @@ jobs:
             - run: npm ci
             - run: npm run lint:nofix
             - run: npm run build:wasm
+            # build:wasm regenerates the bindings from the Lua headers, so a difference here means the
+            # committed file was edited by hand or left behind by a change to the generator.
+            - run: git diff --exit-code src/bindings.gen.ts
             - run: npm run build
             - run: npx playwright install --with-deps chromium
             - run: npm test
