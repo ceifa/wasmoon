@@ -6,7 +6,7 @@ import pkg from './package.json' with { type: 'json' }
 export default defineConfig({
     // The CLI is an entry of its own: it imports the library by package name at run time rather
     // than bundling a second copy of it, and is minified the same way.
-    input: { index: './src/index.ts', cli: './src/cli.js' },
+    input: { index: './src/index.ts', web: './src/web.ts', cli: './src/cli.js' },
     output: {
         // A directory rather than a single file, because each glue module.ts imports on demand has
         // to stay a chunk of its own: a load fetches only the one its `fs` asks for, and a browser
@@ -35,8 +35,9 @@ export default defineConfig({
     },
     // Only the glue imports a node builtin now; the mounts reach node:fs through
     // process.getBuiltinModule, which a bundler never has to resolve. The rest is the CLI's: the
-    // builtins it uses, the library it runs, and the package.json it reads its version from.
-    external: ['node:module', 'node:fs', 'node:readline', 'wasmoon', '../package.json'],
+    // builtins it uses, the library it runs, and the package.json it reads its version from. The web
+    // entry imports the library beside it instead of carrying a copy, which a CDN page loads once.
+    external: ['node:module', 'node:fs', 'node:readline', 'wasmoon', '../package.json', './index.js'],
     plugins: [
         {
             name: 'package-version',

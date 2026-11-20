@@ -290,6 +290,93 @@ describe('Browser environment', () => {
         expect(result).to.be.equal(7)
     })
 
+    describe('wasmoon/web', () => {
+        /** Opens `body` under the web entry, with each of `files` served after its delay in ms. */
+        async function openWebPage(body, files = {}) {
+            const page = await context.newPage()
+            const errors = []
+            page.on('pageerror', (err) => errors.push(err.message))
+            for (const [name, [code, delay]] of Object.entries(files)) {
+                await page.route(`**/${name}`, async (route) => {
+                    await new Promise((resolve) => setTimeout(resolve, delay))
+                    await route.fulfill({ contentType: 'text/plain', body: code })
+                })
+            }
+            await page.route('**/web.html', (route) =>
+                route.fulfill({
+                    contentType: 'text/html',
+                    body: `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>
+<script>window.log = []</script>
+<script type="module" src="/web.js"></script>
+${body}
+</body></html>`,
+                }),
+            )
+            await page.goto(`http://127.0.0.1:${port}/web.html`)
+            return { page, errors }
+        }
+
+        it('runs Lua scripts in document order, and an async one when it arrives', async function () {
+            this.timeout(30_000)
+            const { page, errors } = await openWebPage(
+                `<script type="application/lua" src="/slow.lua"></script>
+<script type="application/lua">js.global.log:push("inline")</script>
+<script type="application/lua" src="/async.lua" async></script>
+<script type="text/lua; charset=utf-8">require("js").global.log:push("text/lua")</script>
+<script type="text/javascript-lua">js.global.log:push("not lua")</script>`,
+                { 'slow.lua': ['js.global.log:push("slow")', 500], 'async.lua': ['js.global.log:push("async")', 0] },
+            )
+
+            try {
+                await page.waitForFunction(() => window.log.length >= 4, null, { timeout: 15_000 })
+                expect(await page.evaluate(() => window.log)).to.eql(['async', 'slow', 'inline', 'text/lua'])
+                expect(errors).to.be.empty
+            } finally {
+                await page.close()
+            }
+        })
+
+        it('runs scripts inserted later, against the state the module exports', async function () {
+            this.timeout(30_000)
+            const { page, errors } = await openWebPage(`<script type="application/lua">
+local document = js.global.document
+local inserted = document:createElement("script")
+inserted.type = "application/lua"
+inserted.text = 'answer = 6 * 7 js.global.log:push("inserted")'
+document.body:appendChild(document:createElement("div")):appendChild(inserted)
+</script>`)
+
+            try {
+                await page.waitForFunction(() => window.log.length >= 1, null, { timeout: 15_000 })
+                const answer = await page.evaluate(async () => (await import('/web.js')).state.get('answer'))
+                expect(answer).to.equal(42)
+                expect(errors).to.be.empty
+            } finally {
+                await page.close()
+            }
+        })
+
+        it('reports an error the way a script does and carries on', async function () {
+            this.timeout(30_000)
+            const { page, errors } =
+                await openWebPage(`<script>addEventListener('error', (e) => e.error && log.push(e.error.message))</script>
+<script type="application/lua" src="/missing.lua" onerror="log.push('missing')"></script>
+<script type="application/lua" id="broken">error("boom")</script>
+<script type="application/lua">js.global.log:push(Promise.resolve(1):await() + 1)</script>`)
+
+            try {
+                await page.waitForFunction(() => window.log.length >= 3, null, { timeout: 15_000 })
+                const log = await page.evaluate(() => window.log)
+                expect(log[0]).to.equal('missing')
+                expect(log[1]).to.match(/^broken:1: boom/)
+                expect(log[2]).to.equal(2)
+                expect(errors).to.have.lengthOf(1)
+            } finally {
+                await page.close()
+            }
+        })
+    })
+
     // Every test above passes an explicit wasmFile, which a consumer does not. Without one, the
     // wrong default is a request to a CDN pinned to whatever version is in package.json.
     describe('default wasm resolution', () => {

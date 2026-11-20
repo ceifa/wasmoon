@@ -10,6 +10,10 @@
             "types": "./dist/index.d.ts",
             "default": "./dist/index.js"
         },
+        "./web": {
+            "types": "./dist/web.d.ts",
+            "default": "./dist/web.js"
+        },
         "./glue.wasm": "./dist/glue.wasm",
         "./dist/*": "./dist/*",
         "./package.json": "./package.json"
@@ -18,7 +22,9 @@
         "node:module": false,
         "./dist/glue-host.js": false
     },
-    "sideEffects": false,
+    "sideEffects": [
+        "./dist/web.js"
+    ],
     "scripts": {
         "build:wasm:dev": "node utils/build-wasm dev",
         "build:wasm": "node utils/build-wasm",
