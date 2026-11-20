@@ -10,20 +10,39 @@ jobs:
 
         strategy:
             matrix:
-                node-version: [18, 20, 22]
+                node-version: [26]
 
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v7
               with:
                   submodules: recursive
-            - uses: mymindstorm/setup-emsdk@v12
+            - uses: emscripten-core/setup-emsdk@v16
+              with:
+                  version: 7.0.0
+                  actions-cache-folder: emsdk-cache
             - name: Use Node.js ${{ matrix.node-version }}
-              uses: actions/setup-node@v4
+              uses: actions/setup-node@v7
               with:
                   node-version: ${{ matrix.node-version }}
+                  cache: npm
+            # The lua submodule follows release tags, never a commit in between them. Asked of the
+            # remote rather than the checkout, which fetches the submodule without its tags.
+            - name: Check the lua submodule is on a release tag
+              run: |
+                  commit=$(git -C lua rev-parse HEAD)
+                  tag=$(git ls-remote --tags https://github.com/lua/lua | awk -v c="$commit" '$1 == c { sub("refs/tags/", "", $2); sub(/\^\{\}$/, "", $2); print $2 }' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+                  if [ -z "$tag" ]; then
+                      echo "lua is at $commit, which is not a release tag of lua/lua" >&2
+                      exit 1
+                  fi
+                  echo "lua is at $tag"
             - run: npm ci
             - run: npm run lint:nofix
             - run: npm run build:wasm
+            # build:wasm regenerates the bindings from the Lua headers, so a difference here means the
+            # committed file was edited by hand or left behind by a change to the generator.
+            - run: git diff --exit-code src/bindings.gen.ts
             - run: npm run build
+            - run: npx playwright install --with-deps chromium
             - run: npm test
             - run: npm run luatests

@@ -1,0 +1,477 @@
+import { createServer } from 'node:http'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { expect } from 'chai'
+import { chromium } from 'playwright'
+import { rolldown } from 'rolldown'
+
+const DIST_DIR = fileURLToPath(new URL('../dist', import.meta.url))
+
+function startServer() {
+    const mimeTypes = {
+        '.html': 'text/html',
+        '.js': 'application/javascript',
+        '.wasm': 'application/wasm',
+        '.map': 'application/json',
+    }
+
+    const testPage = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head><body>
+<script type="module">
+const wasmFile = new URL('./glue.wasm', location.href).href
+window.__runTest = async (code) => {
+    const { default: LuaRuntime } = await import('./index.js')
+    const fn = new Function('LuaRuntime', 'wasmFile', 'return (async () => {' + code + '})()')
+    return await fn(LuaRuntime, wasmFile)
+}
+window.__ready = true
+</script>
+</body></html>`
+
+    // A module worker resolves the wasm the same way a page does, but with no `window` in scope.
+    const workerScript = `
+import LuaRuntime from './index.js'
+self.onmessage = async () => {
+    try {
+        const lua = await LuaRuntime.load()
+        const state = lua.createState()
+        self.postMessage({ ok: await state.doString('return 2 + 5') })
+    } catch (err) {
+        self.postMessage({ error: String(err) })
+    }
+}
+`
+
+    const server = createServer(async (req, res) => {
+        const url = new URL(req.url, `http://localhost`)
+
+        if (url.pathname === '/' || url.pathname === '/index.html') {
+            res.writeHead(200, { 'Content-Type': 'text/html' })
+            res.end(testPage)
+            return
+        }
+
+        if (url.pathname === '/worker.js') {
+            res.writeHead(200, { 'Content-Type': 'application/javascript' })
+            res.end(workerScript)
+            return
+        }
+
+        const filePath = join(DIST_DIR, url.pathname)
+
+        try {
+            const data = await readFile(filePath)
+            const ext = url.pathname.substring(url.pathname.lastIndexOf('.'))
+            res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream' })
+            res.end(data)
+        } catch {
+            res.writeHead(404)
+            res.end('Not found')
+        }
+    })
+
+    return new Promise((resolve) => {
+        server.listen(0, '127.0.0.1', () => {
+            const { port } = server.address()
+            resolve({ server, port })
+        })
+    })
+}
+
+describe('Browser environment', () => {
+    let port, server, browser, context
+
+    before(async function () {
+        this.timeout(30_000)
+        ;({ server, port } = await startServer())
+        browser = await chromium.launch()
+        context = await browser.newContext()
+    })
+
+    after(async () => {
+        await browser?.close()
+        server?.close()
+    })
+
+    /** Every URL the page asked for, so a test can tell where the wasm was fetched from. */
+    let requested = []
+
+    async function openPage() {
+        const page = await context.newPage()
+        requested = []
+        page.on('request', (req) => requested.push(req.url()))
+
+        const errors = []
+        page.on('pageerror', (err) => errors.push(err))
+        page.assertNoErrors = () => {
+            if (errors.length > 0) {
+                throw errors[0]
+            }
+        }
+
+        await page.goto(`http://127.0.0.1:${port}/`)
+        await page.waitForFunction(() => window.__ready === true, null, { timeout: 15_000 })
+        return page
+    }
+
+    function expectNoExternalRequests() {
+        expect(requested.filter((url) => !url.startsWith(`http://127.0.0.1:${port}/`))).to.be.empty
+    }
+
+    async function runInBrowser(code) {
+        const page = await openPage()
+
+        try {
+            const result = await page.evaluate(async (c) => {
+                return await window.__runTest(c)
+            }, code)
+
+            page.assertNoErrors()
+            return result
+        } finally {
+            await page.close()
+        }
+    }
+
+    it('isolates async runs and lets timers run', async function () {
+        this.timeout(30_000)
+        const result = await runInBrowser(`
+            const runtime = await LuaRuntime.load({ wasmFile })
+            const state = runtime.createState()
+            try {
+                let fired = false
+                state.set('ready', Promise.resolve())
+                state.set('fired', () => fired)
+                setTimeout(() => { fired = true }, 0)
+                const fair = await state.doString('for i=1,10000 do ready:await() if fired() then return true end end return false')
+                let releaseFirst, releaseOther
+                state.set('first', new Promise((resolve) => { releaseFirst = resolve }))
+                state.set('other', new Promise((resolve) => { releaseOther = resolve }))
+                state.set('never', new Promise(() => {}))
+                const timed = state.doString('first:await() never:await()', { timeout: 30 }).catch((error) => error.name)
+                const other = state.doString('other:await() return 42')
+                releaseFirst()
+                const error = await timed
+                releaseOther()
+                return { fair, error, other: await other }
+            } finally {
+                state.close()
+            }
+        `)
+        expect(result).to.eql({ fair: true, error: 'LuaTimeoutError', other: 42 })
+    })
+
+    it('fs: none downloads its own glue and not the default one', async function () {
+        this.timeout(30_000)
+        const result = await runInBrowser(`
+            const lua = await LuaRuntime.load({ fs: 'none' })
+            return await lua.createState().doString('return 6 * 7')
+        `)
+
+        expect(result).to.be.equal(42)
+        const glues = requested.filter((url) => /\/glue-\w+\.js$/.test(url)).map((url) => url.split('/').pop())
+        expect(glues).to.be.deep.equal(['glue-none.js'])
+        expectNoExternalRequests()
+    })
+
+    it('load Lua engine in browser should succeed', async function () {
+        this.timeout(30_000)
+        const result = await runInBrowser(`
+            const lua = await LuaRuntime.load({ wasmFile })
+            const state = lua.createState()
+            return state !== undefined
+        `)
+        expect(result).to.be.true
+    })
+
+    it('execute Lua code in browser should succeed', async function () {
+        this.timeout(30_000)
+        const result = await runInBrowser(`
+            const lua = await LuaRuntime.load({ wasmFile })
+            const state = lua.createState()
+            return await state.doString('return 2 + 2')
+        `)
+        expect(result).to.be.equal(4)
+    })
+
+    it('pass JS values to Lua and back in browser should succeed', async function () {
+        this.timeout(30_000)
+        const result = await runInBrowser(`
+            const lua = await LuaRuntime.load({ wasmFile })
+            const state = lua.createState({ inject: true })
+            state.set('name', 'wasmoon')
+            return await state.doString('return "hello " .. name')
+        `)
+        expect(result).to.be.equal('hello wasmoon')
+    })
+
+    it('call JS function from Lua in browser should succeed', async function () {
+        this.timeout(30_000)
+        const result = await runInBrowser(`
+            const lua = await LuaRuntime.load({ wasmFile })
+            const state = lua.createState({ inject: true })
+            state.set('add', (a, b) => a + b)
+            return await state.doString('return add(10, 20)')
+        `)
+        expect(result).to.be.equal(30)
+    })
+
+    it('mount and require a file in browser should succeed', async function () {
+        this.timeout(30_000)
+        const result = await runInBrowser(`
+            const lua = await LuaRuntime.load({ wasmFile })
+            lua.writeFile('mymodule.lua', 'return 42')
+            const state = lua.createState()
+            return await state.doString('return require("mymodule")')
+        `)
+        expect(result).to.be.equal(42)
+    })
+
+    it('handle Lua tables as JS objects in browser should succeed', async function () {
+        this.timeout(30_000)
+        const result = await runInBrowser(`
+            const lua = await LuaRuntime.load({ wasmFile })
+            const state = lua.createState({ inject: true })
+            const value = await state.doString('return { x = 10, y = 20 }')
+            return { x: value.x, y: value.y }
+        `)
+        expect(result).to.be.eql({ x: 10, y: 20 })
+    })
+
+    it('handle errors in browser should succeed', async function () {
+        this.timeout(30_000)
+        const result = await runInBrowser(`
+            const lua = await LuaRuntime.load({ wasmFile })
+            const state = lua.createState()
+            try {
+                await state.doString('error("test error")')
+                return false
+            } catch (e) {
+                return e.message.includes('test error')
+            }
+        `)
+        expect(result).to.be.true
+    })
+
+    it('use coroutines in browser should succeed', async function () {
+        this.timeout(30_000)
+        const result = await runInBrowser(`
+            const lua = await LuaRuntime.load({ wasmFile })
+            const state = lua.createState()
+            return await state.doString(\`
+                local co = coroutine.create(function()
+                    coroutine.yield(1)
+                    coroutine.yield(2)
+                    return 3
+                end)
+                local results = {}
+                while true do
+                    local ok, value = coroutine.resume(co)
+                    if not ok then break end
+                    results[#results + 1] = value
+                    if coroutine.status(co) == "dead" then break end
+                end
+                return results[1] + results[2] + results[3]
+            \`)
+        `)
+        expect(result).to.be.equal(6)
+    })
+
+    it('yielding at the top level in browser should succeed', async function () {
+        this.timeout(30_000)
+        // Browsers have no setImmediate, which the yield path used to depend on.
+        const result = await runInBrowser(`
+            const lua = await LuaRuntime.load({ wasmFile })
+            const state = lua.createState()
+            return await state.doString('coroutine.yield() return 7')
+        `)
+        expect(result).to.be.equal(7)
+    })
+
+    // Every test above passes an explicit wasmFile, which a consumer does not. Without one, the
+    // wrong default is a request to a CDN pinned to whatever version is in package.json.
+    describe('default wasm resolution', () => {
+        it('loads the wasm from the same origin when served over http', async function () {
+            this.timeout(30_000)
+            const result = await runInBrowser('await LuaRuntime.load(); return 1')
+
+            expect(result).to.be.equal(1)
+            expect(requested).to.include(`http://127.0.0.1:${port}/glue.wasm`)
+            expectNoExternalRequests()
+        })
+
+        it('fetches the wasm without waiting for the glue', async function () {
+            this.timeout(30_000)
+            await runInBrowser('await LuaRuntime.load(); return 1')
+
+            const wasm = requested.indexOf(`http://127.0.0.1:${port}/glue.wasm`)
+            const glue = requested.indexOf(`http://127.0.0.1:${port}/glue-memory.js`)
+            expect(wasm).to.be.at.least(0)
+            expect(glue).to.be.above(wasm)
+        })
+
+        it('compiles the wasm once for every runtime loaded from it', async function () {
+            this.timeout(30_000)
+            const result = await runInBrowser(`
+                const [first, second] = await Promise.all([LuaRuntime.load(), LuaRuntime.load()])
+                const third = await LuaRuntime.load()
+                return [first, second, third].map((lua) => lua.createState().doStringSync('return 1'))
+            `)
+
+            expect(result).to.be.deep.equal([1, 1, 1])
+            expect(requested.filter((url) => url.endsWith('/glue.wasm'))).to.have.lengthOf(1)
+        })
+
+        it('loads a wasm served without the wasm content type', async function () {
+            this.timeout(30_000)
+            const page = await openPage()
+
+            try {
+                await page.route('**/glue.wasm', async (route) => {
+                    await route.fulfill({ contentType: 'application/octet-stream', body: await readFile(join(DIST_DIR, 'glue.wasm')) })
+                })
+                const result = await page.evaluate(() =>
+                    window.__runTest('const lua = await LuaRuntime.load(); return lua.createState().doStringSync("return 5")'),
+                )
+
+                page.assertNoErrors()
+                expect(result).to.be.equal(5)
+                expectNoExternalRequests()
+            } finally {
+                await page.close()
+            }
+        })
+
+        it('loads the wasm from the same origin inside a module worker', async function () {
+            this.timeout(30_000)
+            const page = await openPage()
+
+            try {
+                const result = await page.evaluate(async () => {
+                    const worker = new Worker('/worker.js', { type: 'module' })
+                    const message = new Promise((resolve) => worker.addEventListener('message', (e) => resolve(e.data)))
+                    worker.postMessage('go')
+                    return await message
+                })
+
+                page.assertNoErrors()
+                expect(result).to.be.eql({ ok: 7 })
+                expect(requested).to.include(`http://127.0.0.1:${port}/glue.wasm`)
+                expectNoExternalRequests()
+            } finally {
+                await page.close()
+            }
+        })
+
+        /**
+         * Opens a self contained page from `file:`, where the only wasm to be had is the CDN's, and
+         * runs `code` on it. The CDN is served locally, to keep the suite offline and because the
+         * published wasm belongs to another version.
+         */
+        async function loadFromCdn(cdnWasm, code) {
+            const { htmlFile, cleanup } = await writeInlinedPage()
+            const page = await context.newPage()
+            const cdnRequests = []
+
+            try {
+                await page.route('https://**/glue.wasm', async (route) => {
+                    cdnRequests.push(route.request().url())
+                    await route.fulfill({
+                        contentType: 'application/wasm',
+                        headers: { 'access-control-allow-origin': '*' },
+                        body: cdnWasm,
+                    })
+                })
+
+                await page.goto(`file://${htmlFile}`)
+                await page.waitForFunction(() => window.__ready === true, null, { timeout: 15_000 })
+                const result = await page.evaluate(async (c) => {
+                    try {
+                        return { value: await new Function('LuaRuntime', `return (async () => {${c}})()`)(window.__LuaRuntime) }
+                    } catch (err) {
+                        return { error: String(err), cause: String(err.cause) }
+                    }
+                }, code)
+                return { result, cdnRequests }
+            } finally {
+                await page.close()
+                await cleanup()
+            }
+        }
+
+        it('falls back to jsDelivr for a page opened from file:', async function () {
+            this.timeout(60_000)
+            const { result, cdnRequests } = await loadFromCdn(
+                await readFile(join(DIST_DIR, 'glue.wasm')),
+                'const lua = await LuaRuntime.load(); return await lua.createState().doString("return 3 * 3")',
+            )
+
+            expect(result).to.be.eql({ value: 9 })
+            expect(cdnRequests).to.have.lengthOf(1)
+            expect(cdnRequests[0]).to.match(/^https:\/\/cdn\.jsdelivr\.net\/npm\/wasmoon@[^/]+\/dist\/glue\.wasm$/)
+        })
+
+        it('refuses a CDN wasm that is not byte for byte the one this build ships', async function () {
+            this.timeout(60_000)
+            // Still a valid module, with an empty custom section appended, so only the integrity
+            // check can tell it apart: what a CDN serves for a version published from other sources.
+            const wasm = await readFile(join(DIST_DIR, 'glue.wasm'))
+            const { result, cdnRequests } = await loadFromCdn(
+                Buffer.concat([wasm, Buffer.from([0x00, 0x02, 0x01, 0x78])]),
+                'await LuaRuntime.load(); return 1',
+            )
+
+            expect(cdnRequests).to.have.lengthOf(1)
+            expect(result.error).to.match(/failed to load the Lua wasm module/)
+            expect(result.cause).to.match(/Failed to fetch/)
+        })
+    })
+})
+
+/**
+ * A single self contained HTML file, the only shape that works from `file:`: Chromium refuses to
+ * load an ES module over that protocol, so the bundle is inlined. Rebundled into one chunk first,
+ * glues included, the way a consumer's bundler builds such a page; its exported bindings are then
+ * in scope of the inline module.
+ */
+async function writeInlinedPage() {
+    const tempDir = await mkdtemp(join(tmpdir(), 'wasmoon-file-'))
+    const build = await rolldown({ input: join(DIST_DIR, 'index.js'), platform: 'browser' })
+    const { output } = await build.generate({ format: 'esm', codeSplitting: false })
+    await build.close()
+    const bundle = output[0].code
+
+    const htmlFile = join(tempDir, 'page.html')
+    await writeFile(
+        htmlFile,
+        `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>
+<script type="module">
+${bundle}
+window.__LuaRuntime = ${exportedBinding(bundle, 'LuaRuntime')}
+window.__ready = true
+</script>
+</body></html>`,
+    )
+
+    return { htmlFile, cleanup: () => rm(tempDir, { recursive: true, force: true }) }
+}
+
+/**
+ * The bundle's own name for one of its exports. Inlined into a page it cannot be imported from, and
+ * its top level names are minified, so the export clause is the only way to get hold of a binding.
+ */
+function exportedBinding(bundle, exported) {
+    const clause = /export\s*\{([^}]*)\}/.exec(bundle)
+    if (!clause) {
+        throw new Error('the bundle has no export clause')
+    }
+    for (const entry of clause[1].split(',')) {
+        const [local, name = local] = entry.trim().split(/\s+as\s+/)
+        if (name === exported) {
+            return local
+        }
+    }
+    throw new Error(`the bundle does not export ${exported}`)
+}

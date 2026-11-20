@@ -1,12 +1,14 @@
 {
     "compilerOptions": {
         "incremental": false,
-        "moduleResolution": "node",
+        "module": "ES2022",
+        "moduleResolution": "Bundler",
         "inlineSources": false,
         "removeComments": false,
         "sourceMap": false,
-        "target": "ES2018",
+        "target": "ES2024",
         "skipLibCheck": true,
+        "types": ["emscripten", "node"],
         "lib": ["ESNEXT", "DOM"],
         "forceConsistentCasingInFileNames": true,
         "noImplicitReturns": true,
@@ -16,9 +18,11 @@
         "noUnusedLocals": true,
         "importHelpers": true,
         "strict": true,
-        "resolveJsonModule": true,
-
+        "exactOptionalPropertyTypes": true,
+        "verbatimModuleSyntax": true,
+        "resolveJsonModule": true
     },
-    "include": ["src/**/*", "test/**/*", "bench/**/*", "eslint.config.js"],
+    // test/ and bench/ are plain JS, so without allowJs they were only nominally covered.
+    "include": ["src/**/*"],
     "exclude": ["node_modules"]
 }

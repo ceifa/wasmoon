@@ -1,22 +1,42 @@
+import { createHash } from 'node:crypto'
+import { copyFile, readFile } from 'node:fs/promises'
 import { defineConfig } from 'rolldown'
-import copy from 'rollup-plugin-copy'
 import pkg from './package.json' with { type: 'json' }
 
-const production = !process.env.ROLLUP_WATCH
-
 export default defineConfig({
-    input: './src/index.ts',
+    // The CLI is an entry of its own: it imports the library by package name at run time rather
+    // than bundling a second copy of it, and is minified the same way.
+    input: { index: './src/index.ts', cli: './src/cli.js' },
     output: {
-        file: 'dist/index.js',
+        // A directory rather than a single file, because each glue module.ts imports on demand has
+        // to stay a chunk of its own: a load fetches only the one its `fs` asks for, and a browser
+        // bundle leaves the Node only host one alone.
+        dir: 'dist',
+        entryFileNames: '[name].js',
+        // Named rather than hashed, so the `browser` field in package.json can point at the host
+        // one. Nothing else is split off, and a chunk that is not a glue fails the build here
+        // rather than shipping under a glue's name.
+        chunkFileNames: ({ facadeModuleId }) => {
+            const glue = /\/build\/(?:(host|none)\/)?glue\.js$/.exec(facadeModuleId ?? '')
+            if (!glue) {
+                throw new Error(`unexpected chunk for ${facadeModuleId}: only the glues are split off`)
+            }
+            return `glue-${glue[1] ?? 'memory'}.js`
+        },
         format: 'esm',
         sourcemap: true,
-        minify: production,
+        // The glue arrives from emcc already minified and rolldown would otherwise re-print it
+        // several kilobytes larger than it started. Consumers minify us anyway -- which the
+        // Bundling suite covers -- so doing it here only decides what the package and a CDN
+        // consumer download. The sourcemap keeps our own frames readable. Module level names are
+        // mangled too, except that classes keep theirs: those are what a consumer sees, in a
+        // constructor's `name` and in the console, while the helpers between them are not.
+        minify: { mangle: { toplevel: true, keepNames: { function: false, class: true } } },
     },
-    external: ['module'],
-    define: {
-        // Webpack workaround: https://github.com/webpack/webpack/issues/16878
-        'import.meta': 'Object(import.meta)',
-    },
+    // Only the glue imports a node builtin now; the mounts reach node:fs through
+    // process.getBuiltinModule, which a bundler never has to resolve. The rest is the CLI's: the
+    // builtins it uses, the library it runs, and the package.json it reads its version from.
+    external: ['node:module', 'node:fs', 'node:readline', 'wasmoon', '../package.json'],
     plugins: [
         {
             name: 'package-version',
@@ -31,8 +51,104 @@ export default defineConfig({
                 }
             },
         },
-        copy({
-            targets: [{ src: 'build/glue.wasm', dest: 'dist' }],
-        }),
+        {
+            // The hash the CDN fallback holds the wasm it fetches to, so that a version published
+            // from other sources fails the fetch instead of instantiating against the wrong glue.
+            name: 'wasm-integrity',
+            resolveId(source) {
+                if (source === 'wasm-integrity') {
+                    return 'wasm-integrity'
+                }
+            },
+            async load(id) {
+                if (id === 'wasm-integrity') {
+                    this.addWatchFile('build/glue.wasm')
+                    const digest = createHash('sha256')
+                        .update(await readFile('build/glue.wasm'))
+                        .digest('base64')
+                    return `export default 'sha256-${digest}'`
+                }
+            },
+        },
+        {
+            // A node builtin is imported behind a runtime check for Node, which a bundler targeting
+            // the browser does not see, so it refuses to resolve it. webpack takes the comment; the
+            // others go by the `browser` field in package.json.
+            //
+            // In generateBundle rather than renderChunk because minification runs in between and
+            // strips comments: annotating earlier would leave the guard below passing while the
+            // published chunk had no annotation left in it. Column mappings on the one line this
+            // touches shift by the length of the comment, which only ever falls inside the glue --
+            // whose source the next plugin drops from the sourcemap anyway.
+            name: 'annotate-node-imports',
+            generateBundle(_options, bundle) {
+                for (const chunk of Object.values(bundle)) {
+                    if (chunk.type !== 'chunk') {
+                        continue
+                    }
+                    // Quotes of either kind, since a minifier picks its own, and the whitespace is
+                    // not optional to match: an import the output happens to wrap over several lines
+                    // is the same import, and skipping it would ship it unannotated.
+                    chunk.code = chunk.code.replace(/import\(\s*(['"`])(node:[^'"`]+)\1\s*\)/g, 'import(/* webpackIgnore: true */ $1$2$1)')
+                    const missed = /import\(\s*(?!\/\*)(['"`])node:/.exec(chunk.code)
+                    if (missed) {
+                        this.error(`${chunk.fileName} ships a node builtin import with no annotation: ${missed[0]}`)
+                    }
+                }
+            },
+        },
+        {
+            // The glue is generated and already minified onto one line, so its source is not worth
+            // publishing: carrying it costs a tenth of the package to map frames nobody reads. What
+            // is left of each sourcemap depends on whether anything else is in the chunk.
+            name: 'trim-glue-sourcemaps',
+            generateBundle(_options, bundle) {
+                // Rewritten through the emitted files rather than the written ones, because
+                // `chunk.map` is a snapshot of the Rust side and mutating it does not carry over.
+                // Counted per sourcemap: there is one for each glue, and a single flag would call
+                // it a success while another still shipped its copy.
+                let trimmed = 0
+                for (const chunk of Object.values(bundle)) {
+                    const map = bundle[`${chunk.fileName}.map`]
+                    if (chunk.type !== 'chunk' || map?.type !== 'asset') {
+                        continue
+                    }
+                    const parsed = JSON.parse(map.source as string)
+                    const index = parsed.sources.findIndex((source: string) => source?.endsWith('glue.js'))
+                    if (index < 0) {
+                        continue
+                    }
+
+                    if (parsed.sources.length === 1) {
+                        // Nothing but the glue in this chunk, so the mappings lead only to a file
+                        // that is not published and whose content is dropped below anyway. The whole
+                        // sourcemap goes, and with it the comment pointing at it.
+                        delete bundle[`${chunk.fileName}.map`]
+                        chunk.code = chunk.code.replace(/\n?\/\/# sourceMappingURL=.*$/, '\n')
+                        trimmed++
+                        continue
+                    }
+
+                    if (!parsed.sourcesContent?.[index]) {
+                        // A silent miss would quietly put the 85 KB back into every published package.
+                        this.error(`${map.fileName} maps a glue but carries no source to drop`)
+                    }
+                    // Our own sources are in here too, so only the glue's copy of itself goes.
+                    parsed.sourcesContent[index] = null
+                    map.source = JSON.stringify(parsed)
+                    trimmed++
+                }
+                // One for each glue chunk.
+                if (trimmed !== 3) {
+                    this.error(`expected to trim the glue out of 3 sourcemaps, trimmed ${trimmed}`)
+                }
+            },
+        },
+        {
+            name: 'copy-glue-wasm',
+            async writeBundle() {
+                await copyFile('build/glue.wasm', 'dist/glue.wasm')
+            },
+        },
     ],
 })

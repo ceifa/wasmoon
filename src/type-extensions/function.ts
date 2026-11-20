@@ -1,242 +1,379 @@
-import { BaseDecorationOptions, Decoration } from '../decoration'
-import Global from '../global'
-import MultiReturn from '../multireturn'
-import RawResult from '../raw-result'
-import Thread from '../thread'
+import { BoundMethod, LuaMarshalled, type LuaRawFunction, raw } from '../marshal'
+import type LuaState from '../state'
+import type Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LUA_REGISTRYINDEX, LuaReturn, LuaState, LuaType, PointerSize } from '../types'
-
-export interface FunctionDecoration extends BaseDecorationOptions {
-    receiveArgsQuantity?: boolean
-    receiveThread?: boolean
-    self?: any
-}
+import { LUA_REGISTRYINDEX, LuaReturn, type LuaAddress, type LuaRunOptions, LuaType } from '../types'
+import { isEmscriptenUnwind } from '../utils'
+import { reportIfUnobserved, SUSPEND } from '../async'
 
 export type FunctionType = (...args: any[]) => Promise<any> | any
 
-export function decorateFunction(target: FunctionType, options: FunctionDecoration): Decoration<FunctionType, FunctionDecoration> {
-    return new Decoration<FunctionType, FunctionDecoration>(target, options)
+/** A Lua function as JS sees it, carrying the registry reference of the function it calls. */
+type LuaFunction = FunctionType & Record<symbol, number | undefined>
+
+/** The parts of the state's options that bear on calling a Lua function. */
+export interface FunctionCallOptions {
+    onAsyncError?: ((error: unknown) => void) | undefined
 }
 
-export interface FunctionTypeExtensionOptions {
-    functionTimeout?: number
-}
+/**
+ * What `async(fn)` returns, as a chunk that takes the JS function starting the run and gives back
+ * the function doing the wrapping.
+ */
+const ASYNC_SOURCE = `local start = ...
+return function(fn)
+    return function(...) return start(fn, ...) end
+end`
 
-class FunctionTypeExtension extends TypeExtension<FunctionType, FunctionDecoration> {
-    private readonly functionRegistry =
-        typeof FinalizationRegistry !== 'undefined'
-            ? new FinalizationRegistry((func: number) => {
-                  if (!this.thread.isClosed()) {
-                      this.thread.lua.luaL_unref(this.thread.address, LUA_REGISTRYINDEX, func)
-                  }
-              })
-            : undefined
+export class FunctionTypeExtension extends TypeExtension<FunctionType> {
+    private readonly functionRegistry = new FinalizationRegistry((func: number) => {
+        if (!this.state.isClosed()) {
+            this.state.module.luaL_unref(this.state.address, LUA_REGISTRYINDEX, func)
+        }
+    })
+    /**
+     * Keys the registry reference on each Lua function handed to JS, which is how {@link async}
+     * finds the function to run. A symbol of this state's own, so another state's function does not
+     * answer to it, and a property rather than a WeakMap entry, which was slower to create.
+     */
+    private readonly luaFunction = Symbol('wasmoon.luaFunction')
 
-    private gcPointer: number
     private functionWrapper: number
     private callbackContext: Thread
-    private callbackContextIndex: number
-    private options?: FunctionTypeExtensionOptions
+    /**
+     * One call thread kept ready instead of a `lua_newthread` per call, which was most of the cost
+     * of calling a Lua function from JS. Anchored in the registry rather than on the callback
+     * context's stack, and handed out only when no other call is using it: a reentrant call (Lua →
+     * JS → Lua) falls back to a thread of its own.
+     */
+    private pooledCallThread: Thread
+    private pooledCallReference: number
+    private pooledCallThreadInUse = false
+    private readonly onAsyncError: ((error: unknown) => void) | undefined
 
-    public constructor(thread: Global, options?: FunctionTypeExtensionOptions) {
-        super(thread, 'js_function')
+    public constructor(state: LuaState, options: FunctionCallOptions = {}) {
+        super(state, 'js_function')
 
-        this.options = options
+        this.onAsyncError = options.onAsyncError
         // Create a thread off of the global thread to be used to create function call threads without
         // interfering with the global context. This creates a callback context that will always exist
-        // even if the thread that called getValue() has been destroyed.
-        this.callbackContext = thread.newThread()
-        // Pops it from the global stack but keeps it alive
-        this.callbackContextIndex = this.thread.lua.luaL_ref(thread.address, LUA_REGISTRYINDEX)
+        // even if the thread that called getValue() has been destroyed. Neither anchor is ever
+        // released, for the reason given on LuaTypeExtension.close.
+        this.callbackContext = state.newAnchoredThread().thread
+        const pooled = this.callbackContext.newAnchoredThread()
+        this.pooledCallThread = pooled.thread
+        this.pooledCallReference = pooled.reference
 
-        if (!this.functionRegistry) {
-            console.warn('FunctionTypeExtension: FinalizationRegistry not found. Memory leaks likely.')
-        }
+        // Nothing but the box's own __gc: the metatable goes on the upvalue, not on the closure
+        // Lua sees, so no metamethod on it could ever be reached.
+        this.defineMetatable()
 
-        this.gcPointer = thread.lua.module.addFunction((calledL: LuaState) => {
-            // Throws a lua error which does a jump if it does not match.
-            thread.lua.luaL_checkudata(calledL, 1, this.name)
+        this.functionWrapper = state.module.addFunction((calledL: LuaAddress) => {
+            const calledThread = state.stateToThread(calledL)
 
-            const userDataPointer = thread.lua.luaL_checkudata(calledL, 1, this.name)
-            const referencePointer = thread.lua.module.getValue(userDataPointer, '*')
-            thread.lua.unref(referencePointer)
-
-            return LuaReturn.Ok
-        }, 'ii')
-
-        // Creates metatable if it doesn't exist, always pushes it onto the stack.
-        if (thread.lua.luaL_newmetatable(thread.address, this.name)) {
-            thread.lua.lua_pushstring(thread.address, '__gc')
-            thread.lua.lua_pushcclosure(thread.address, this.gcPointer, 0)
-            thread.lua.lua_settable(thread.address, -3)
-
-            thread.lua.lua_pushstring(thread.address, '__metatable')
-            thread.lua.lua_pushstring(thread.address, 'protected metatable')
-            thread.lua.lua_settable(thread.address, -3)
-        }
-        // Pop the metatable from the stack.
-        thread.lua.lua_pop(thread.address, 1)
-
-        this.functionWrapper = thread.lua.module.addFunction((calledL: LuaState) => {
-            const calledThread = thread.stateToThread(calledL)
-
-            const refUserdata = thread.lua.luaL_checkudata(calledL, thread.lua.lua_upvalueindex(1), this.name)
-            const refPointer = thread.lua.module.getValue(refUserdata, '*')
-            const { target, options } = thread.lua.getRef(refPointer) as Decoration<FunctionType, FunctionDecoration>
-
+            // The upvalue is always the userdata a push closed this wrapper over, so the metatable
+            // check luaL_checkudata does (and the name it marshals) is saved on every call. Only a
+            // ref that resolves to nothing callable -- the upvalue replaced through the debug
+            // library -- falls back to it, for the error the C API would have raised.
+            const upvalueIndex = state.module.lua_upvalueindex(1)
+            const reference = state.module.getReferenceBox(calledL, upvalueIndex)
             const argsQuantity = calledThread.getTop()
-            const args = []
-
-            if (options.receiveThread) {
-                args.push(calledThread)
-            }
-
-            if (options.receiveArgsQuantity) {
-                args.push(argsQuantity)
-            } else {
-                for (let i = 1; i <= argsQuantity; i++) {
-                    const value = calledThread.getValue(i)
-                    if (i !== 1 || !options?.self || value !== options.self) {
-                        args.push(value)
-                    }
-                }
-            }
 
             try {
-                const result = target.apply(options?.self, args)
-
-                if (result === undefined) {
-                    return 0
-                } else if (result instanceof RawResult) {
-                    return result.count
-                } else if (result instanceof MultiReturn) {
-                    for (const item of result) {
-                        calledThread.pushValue(item)
+                let result: unknown
+                if (typeof reference === 'function') {
+                    const args = []
+                    for (let i = 1; i <= argsQuantity; i++) {
+                        args.push(calledThread.getValue(i))
                     }
-                    return result.length
+                    result = (reference as FunctionType)(...args)
+                } else if (reference instanceof BoundMethod) {
+                    const { self } = reference
+                    const args = []
+                    for (let i = 1; i <= argsQuantity; i++) {
+                        const value = calledThread.getValue(i)
+                        // The receiver of a `:` call. The method is called on `self` either way.
+                        if (i !== 1 || value !== self) {
+                            args.push(value)
+                        }
+                    }
+                    result = reference.target.apply(self, args)
+                } else if (reference instanceof LuaMarshalled && reference.as === 'raw') {
+                    const count = (reference.target as LuaRawFunction)(calledThread, argsQuantity) as unknown
+                    if (count === SUSPEND) {
+                        return -1
+                    }
+                    if (!Number.isInteger(count) || (count as number) < 0) {
+                        throw new TypeError('a raw function has to return the number of values it pushed')
+                    }
+                    return count as number
                 } else {
-                    calledThread.pushValue(result)
-                    return 1
+                    // Raises the error the C API would have; the throw below is unreachable.
+                    state.module.luaL_checkudata(calledL, upvalueIndex, this.name)
+                    throw new Error('a js_function upvalue does not hold a function reference')
                 }
+
+                return calledThread.pushReturnValues(result)
             } catch (err) {
-                // Performs a longjmp
-                if (err === Infinity) {
+                if (isEmscriptenUnwind(err)) {
                     throw err
                 }
                 calledThread.pushValue(err)
-                return calledThread.lua.lua_error(calledThread.address)
+                return calledThread.module.lua_error(calledThread.address)
             }
         }, 'ii')
     }
 
     public close(): void {
-        this.thread.lua.module.removeFunction(this.gcPointer)
-        this.thread.lua.module.removeFunction(this.functionWrapper)
-        // Doesn't destroy the Lua thread, just function pointers.
+        this.state.module.removeFunction(this.functionWrapper)
+        // Doesn't destroy the Lua threads, just function pointers. The threads themselves went
+        // with the state.
+        this.pooledCallThread.close()
         this.callbackContext.close()
-        // Destroy the Lua thread
-        this.callbackContext.lua.luaL_unref(this.callbackContext.address, LUA_REGISTRYINDEX, this.callbackContextIndex)
     }
 
-    public isType(_thread: Thread, _index: number, type: LuaType): boolean {
-        return type === LuaType.Function
-    }
-
-    public pushValue(thread: Thread, decoration: Decoration<FunctionType, FunctionDecoration>): boolean {
-        if (typeof decoration.target !== 'function') {
-            return false
+    private acquireCallThread(): Thread {
+        if (this.pooledCallThreadInUse) {
+            // Left on the callback context's stack, which synchronous calls unwind in order.
+            return this.callbackContext.newThread()
         }
 
-        // It's surprisingly inefficient to map JS functions to C functions so this creates a reference to the
-        // function which stays solely in JS. The cfunction called from Lua is created at the top of the class
-        // and it accesses the JS data through an upvalue.
+        this.pooledCallThreadInUse = true
+        return this.pooledCallThread
+    }
 
-        const pointer = thread.lua.ref(decoration)
-        // 4 = size of pointer in wasm.
-        const userDataPointer = thread.lua.lua_newuserdatauv(thread.address, PointerSize, 0)
-        thread.lua.module.setValue(userDataPointer, pointer, '*')
-
-        if (LuaType.Nil === thread.lua.luaL_getmetatable(thread.address, this.name)) {
-            // Pop the pushed userdata.
-            thread.pop(1)
-            thread.lua.unref(pointer)
-            throw new Error(`metatable not found: ${this.name}`)
+    private releaseCallThread(callThread: Thread, failed: boolean): void {
+        if (this.state.isClosed()) {
+            this.pooledCallThreadInUse = false
+            return
+        }
+        if (callThread !== this.pooledCallThread) {
+            callThread.close()
+            this.callbackContext.pop()
+            return
         }
 
-        // Set as the metatable for the function.
-        // -1 is the metatable, -2 is the userdata
-        thread.lua.lua_setmetatable(thread.address, -2)
-
-        // Pass 1 to associate the closure with the userdata, pops the userdata.
-        thread.lua.lua_pushcclosure(thread.address, this.functionWrapper, 1)
-
-        return true
+        if (failed) {
+            // A failed call can leave more behind than stack values: a suspended coroutine, or
+            // pending to-be-closed variables. Resetting closes those, so the thread is always
+            // reusable afterwards. Not on every release, because a reset also shrinks the stack
+            // just to regrow it on the next call; and not Thread.resetThread, whose status
+            // assertion would throw out of the finally this runs in while the call error is
+            // already propagating -- the setTop clears the error object a failed reset leaves
+            // behind instead.
+            this.state.module.lua_resetthread(callThread.address)
+            if (callThread.hookLost) {
+                this.replacePooledCallThread()
+                return
+            }
+        }
+        callThread.setTop(0)
+        this.pooledCallThreadInUse = false
     }
+
+    /**
+     * A limit that interrupts a call leaves the thread it ran on with its debug hook disabled for
+     * good (see {@link Thread.hookLost}), so reusing it would put every later call beyond the
+     * reach of any limit. That one is let go and the next call gets a thread of its own.
+     */
+    private replacePooledCallThread(): void {
+        const { module } = this.state
+        const retired = this.pooledCallThread
+        const retiredReference = this.pooledCallReference
+
+        const pooled = this.callbackContext.newAnchoredThread()
+        this.pooledCallThread = pooled.thread
+        this.pooledCallReference = pooled.reference
+        this.pooledCallThreadInUse = false
+
+        retired.close()
+        module.luaL_unref(this.callbackContext.address, LUA_REGISTRYINDEX, retiredReference)
+    }
+
+    /**
+     * Pushes a JS function as a Lua one. It's surprisingly inefficient to map JS functions to C
+     * functions, so what is pushed is a closure over a reference that stays solely in JS: the
+     * cfunction created at the top of the class reads it from an upvalue. Through the C trampoline
+     * rather than a bare closure, so an `:await()` inside the function can suspend the wasm stack.
+     *
+     * The reference is the function itself, or the wrapper that says how to call it (a proxy's
+     * bound method, a `raw` function), so that every push of the same one shares one reference
+     * and, through the push cache, one Lua closure.
+     */
+    public push(thread: Thread, referent: FunctionType | LuaMarshalled<FunctionType>): void {
+        this.pushReference(thread, referent, this.wrapClosure)
+    }
+
+    private readonly wrapClosure = (L: LuaAddress): void => this.state.module.wasmoon_push_jsfunction(L, this.functionWrapper)
 
     public getValue(thread: Thread, index: number): FunctionType {
         // Create a copy of the function
-        thread.lua.lua_pushvalue(thread.address, index)
+        thread.module.lua_pushvalue(thread.address, index)
         // Create a reference to the function which pops it from the stack
-        const func = thread.lua.luaL_ref(thread.address, LUA_REGISTRYINDEX)
+        const func = thread.module.luaL_ref(thread.address, LUA_REGISTRYINDEX)
 
         const jsFunc = (...args: any[]): any => {
-            // Calling a function would ideally be in the Lua context that's calling it. For example if the JS function
-            // setInterval were exposed to Lua then the calling thread would be created in that Lua context for executing
-            // the function call back to Lua through JS. However, if getValue were called in a thread, the thread then
-            // destroyed, and then this JS func were called it would be calling from a dead context. That means the safest
-            // thing to do is to have a thread you know will always exist.
-            if (this.callbackContext.isClosed()) {
-                console.warn('Tried to call a function after closing lua state')
-                return
-            }
+            this.assertCallable()
 
-            // Function calls back to value should always be within a new thread because
-            // they can be left in inconsistent states.
-            const callThread = this.callbackContext.newThread()
+            // A call can leave its thread in an inconsistent state, so each one gets a thread that
+            // is either fresh or has been reset since the last call.
+            const callThread = this.acquireCallThread()
+            // A call is a run: under the state's limits, and inside those of the run that made it.
+            const leaveRun = callThread.enterRun(undefined, true)
+            let result: unknown
             try {
-                const internalType = callThread.lua.lua_rawgeti(callThread.address, LUA_REGISTRYINDEX, BigInt(func))
+                // Spelled out rather than shared with async through a helper: this is the call
+                // the interop benchmarks measure, and the extra frame showed up in them.
+                const internalType = callThread.module.lua_rawgeti(callThread.address, LUA_REGISTRYINDEX, func)
                 if (internalType !== LuaType.Function) {
-                    const callMetafieldType = callThread.lua.luaL_getmetafield(callThread.address, -1, '__call')
-                    callThread.pop()
-                    if (callMetafieldType !== LuaType.Function) {
-                        throw new Error(`A value of type '${internalType}' was pushed but it is not callable`)
-                    }
+                    this.assertHasCallMetamethod(callThread, internalType)
                 }
 
                 for (const arg of args) {
                     callThread.pushValue(arg)
                 }
 
-                if (this.options?.functionTimeout) {
-                    callThread.setTimeout(Date.now() + this.options.functionTimeout)
+                // Resumed rather than pcalled, which costs the same and reports a yield as a status
+                // this can name, instead of as Lua's error about yielding outside a coroutine.
+                const resumed = callThread.resume(args.length)
+                if (resumed.result === LuaReturn.Yield) {
+                    throw new Error('cannot yield in a Lua function called synchronously from JS, wrap it with state.async to let it')
                 }
-
-                const status: LuaReturn = callThread.lua.lua_pcallk(callThread.address, args.length, 1, 0, 0, null)
-                if (status === LuaReturn.Yield) {
-                    throw new Error('cannot yield in callbacks from javascript')
-                }
-                callThread.assertOk(status)
-
-                if (callThread.getTop() > 0) {
-                    return callThread.getValue(-1)
-                }
-                return undefined
-            } finally {
-                callThread.close()
-                // Pop thread used for function call.
-                this.callbackContext.pop()
+                callThread.assertOk(resumed.result)
+                result = resumed.resultCount >= 1 ? callThread.getValue(1) : null
+            } catch (err) {
+                leaveRun()
+                this.releaseCallThread(callThread, true)
+                throw err
             }
+            leaveRun()
+            this.releaseCallThread(callThread, false)
+            return result
         }
 
-        this.functionRegistry?.register(jsFunc, func)
+        this.functionRegistry.register(jsFunc, func)
+        ;(jsFunc as LuaFunction)[this.luaFunction] = func
 
         return jsFunc
     }
+
+    public isLuaFunction(value: unknown): value is FunctionType {
+        return typeof value === 'function' && (value as LuaFunction)[this.luaFunction] !== undefined
+    }
+
+    public async(jsFunc: FunctionType, options?: LuaRunOptions): (...args: unknown[]) => Promise<unknown> {
+        if (!this.isLuaFunction(jsFunc)) {
+            throw new TypeError('async expects a Lua function obtained from this state')
+        }
+        return (...args) =>
+            this.runCall((thread) => {
+                // Read off the function on every call rather than once above: holding on to it is
+                // what keeps its registry reference from being released.
+                const func = (jsFunc as LuaFunction)[this.luaFunction]!
+                const internalType = thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, func)
+                if (internalType !== LuaType.Function) {
+                    this.assertHasCallMetamethod(thread, internalType)
+                }
+                for (const arg of args) {
+                    thread.pushValue(arg)
+                }
+                return args.length
+            }, options)
+    }
+
+    /**
+     * Defines the Lua global `async`. What `async(fn)` returns is a Lua closure over `fn`, built by
+     * {@link ASYNC_SOURCE}, rather than a JS function holding it: that way nothing has to be
+     * collected across the two heaps, and the arguments of a call move from one Lua stack to
+     * another without ever becoming JS values.
+     */
+    public injectAsync(): void {
+        const { state } = this
+        const module = state.module
+        const { onAsyncError } = this
+        // Called with the function and then its arguments, which are still on the caller's stack.
+        const start = raw((caller, valueCount) => {
+            const run = this.runCall((thread) => {
+                module.lua_xmove(caller.address, thread.address, valueCount)
+                return valueCount - 1
+            })
+            caller.pushValue(onAsyncError ? reportIfUnobserved(run, onAsyncError) : run)
+            return 1
+        })
+        // Compiled by the first call rather than for every state that injects it, most of which
+        // never make one: loading it up front cost a quarter of creating the state.
+        let wrap: number | undefined
+
+        state.set(
+            'async',
+            raw((thread) => {
+                const L = thread.address
+                const type = module.lua_type(L, 1)
+                if (type !== LuaType.Function) {
+                    throw new TypeError(`async expects a function, got ${module.lua_typename(L, type)}`)
+                }
+                if (wrap === undefined) {
+                    thread.loadString(ASYNC_SOURCE, { name: '=async' })
+                    thread.pushValue(start)
+                    module.lua_callk(L, 1, 1, 0, null)
+                    wrap = module.luaL_ref(L, LUA_REGISTRYINDEX)
+                }
+                module.lua_rawgeti(L, LUA_REGISTRYINDEX, wrap)
+                module.lua_pushvalue(L, 1)
+                module.lua_callk(L, 1, 1, 0, null)
+                return 1
+            }),
+        )
+    }
+
+    /**
+     * Runs what `prepare` leaves on a new thread -- a function, and as many arguments as it returns
+     * the count of -- as a run of its own, and resolves to its first result. A function that
+     * returned nil resolves to undefined like one that returned nothing, rather than to the null
+     * that `inject` marshals back into Lua as a sentinel, which is truthy there.
+     */
+    private async runCall(prepare: (thread: Thread) => number, options?: LuaRunOptions): Promise<unknown> {
+        this.assertCallable()
+
+        // A thread of its own rather than the pooled one, which a parked run would keep from every
+        // synchronous call made in the meantime.
+        const { thread, reference } = this.callbackContext.newAnchoredThread()
+        try {
+            const values = await thread.run(prepare(thread), options)
+            return values[0] ?? undefined
+        } finally {
+            // The same teardown as LuaState.callByteCode. Sharing it through a helper costs each
+            // parked doString a closure its suspended frame keeps alive.
+            thread.close()
+            if (!this.state.isClosed()) {
+                this.state.module.luaL_unref(this.callbackContext.address, LUA_REGISTRYINDEX, reference)
+            }
+        }
+    }
+
+    private assertCallable(): void {
+        // Calling a function would ideally be in the Lua context that's calling it. For example if the JS function
+        // setInterval were exposed to Lua then the calling thread would be created in that Lua context for executing
+        // the function call back to Lua through JS. However, if getValue were called in a thread, the thread then
+        // destroyed, and then this JS func were called it would be calling from a dead context. That means the safest
+        // thing to do is to have a thread you know will always exist.
+        if (this.callbackContext.isClosed()) {
+            // Returning undefined here surfaced the mistake several layers away from the
+            // call that actually used a dead state.
+            throw new Error('cannot call a Lua function after its state has been closed')
+        }
+    }
+
+    /** Throws unless the non-function on top of the stack, a value of `type`, can be called anyway. */
+    private assertHasCallMetamethod(thread: Thread, type: LuaType): void {
+        const callMetafieldType = thread.module.luaL_getmetafield(thread.address, -1, '__call')
+        thread.pop()
+        if (callMetafieldType !== LuaType.Function) {
+            throw new TypeError(`cannot call a value of type ${LuaType[type]}: it has no __call metamethod`)
+        }
+    }
 }
 
-export default function createTypeExtension(
-    thread: Global,
-    options?: FunctionTypeExtensionOptions,
-): TypeExtension<FunctionType, FunctionDecoration> {
-    return new FunctionTypeExtension(thread, options)
+export default function createTypeExtension(state: LuaState, options?: FunctionCallOptions): FunctionTypeExtension {
+    return new FunctionTypeExtension(state, options)
 }

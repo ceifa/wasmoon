@@ -1,30 +1,52 @@
-const { readFileSync } = require('fs')
-const path = require('path')
+import { LuaRuntime } from '../dist/index.js'
+import fengari from 'fengari'
+import { isMainModule, parseBenchOptions, readBenchAsset, runBenchmarks } from './utils.js'
 
-const fengari = require('fengari')
-const wasmoon = require('../dist/index')
+const heapsort = readBenchAsset('heapsort.lua')
 
-const heapsort = readFileSync(path.resolve(__dirname, 'heapsort.lua'), 'utf-8')
-
-const startFengari = () => {
+function runFengariIteration() {
     const state = fengari.lauxlib.luaL_newstate()
-    fengari.lualib.luaL_openlibs(state)
-
-    console.time('Fengari')
-    fengari.lauxlib.luaL_loadstring(state, fengari.to_luastring(heapsort))
-    fengari.lua.lua_callk(state, 0, 1, 0, null)
-    fengari.lua.lua_callk(state, 0, 0, 0, null)
-    console.timeEnd('Fengari')
+    try {
+        fengari.lualib.luaL_openlibs(state)
+        assertStatus(fengari.lauxlib.luaL_loadstring(state, fengari.to_luastring(heapsort)), 'Fengari load')
+        assertStatus(fengari.lua.lua_pcallk(state, 0, 1, 0, 0, null), 'Fengari compile')
+        assertStatus(fengari.lua.lua_pcallk(state, 0, 1, 0, 0, null), 'Fengari execute')
+    } finally {
+        fengari.lua.lua_close(state)
+    }
 }
 
-const startWasmoon = async () => {
-    const state = await new wasmoon.LuaFactory().createEngine()
-
-    console.time('Wasmoon')
-    state.global.lua.luaL_loadstring(state.global.address, heapsort)
-    state.global.lua.lua_callk(state.global.address, 0, 1, 0, null)
-    state.global.lua.lua_callk(state.global.address, 0, 0, 0, null)
-    console.timeEnd('Wasmoon')
+function createWasmoonIteration(lua) {
+    return function runWasmoonIteration() {
+        const state = lua.createState()
+        try {
+            assertStatus(state.module.luaL_loadstring(state.address, heapsort), 'Wasmoon load')
+            assertStatus(state.module.lua_pcallk(state.address, 0, 1, 0, 0, null), 'Wasmoon compile')
+            assertStatus(state.module.lua_pcallk(state.address, 0, 1, 0, 0, null), 'Wasmoon execute')
+        } finally {
+            state.close()
+        }
+    }
 }
 
-Promise.resolve().then(startFengari).then(startWasmoon).catch(console.error)
+function assertStatus(status, label) {
+    if (status !== 0) {
+        throw new Error(`${label} failed with status ${status}`)
+    }
+}
+
+export async function runComparisonBench(options = {}) {
+    const lua = await LuaRuntime.load()
+    return runBenchmarks({
+        title: 'Comparison benchmarks',
+        benches: [
+            { name: 'Fengari heapsort', run: runFengariIteration },
+            { name: 'Wasmoon heapsort', run: createWasmoonIteration(lua) },
+        ],
+        options,
+    })
+}
+
+if (isMainModule(import.meta.url)) {
+    await runComparisonBench(parseBenchOptions())
+}

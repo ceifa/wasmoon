@@ -1,36 +1,26 @@
-import { Decoration } from '../decoration'
-import Global from '../global'
-import Thread from '../thread'
+import type LuaState from '../state'
+import type Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { LUA_REGISTRYINDEX, LuaType } from '../types'
+import { LUA_REGISTRYINDEX, type LuaGetCache, type LuaPushCache, LuaType } from '../types'
 
 export type TableType = Record<any, any> | any[]
 
 class TableTypeExtension extends TypeExtension<TableType> {
-    public constructor(thread: Global) {
-        super(thread, 'js_table')
+    public constructor(state: LuaState) {
+        super(state, 'js_table')
     }
 
-    public close(): void {
-        // Nothing to do
-    }
-
-    public isType(_thread: Thread, _index: number, type: LuaType): boolean {
-        return type === LuaType.Table
-    }
-
-    public getValue(thread: Thread, index: number, userdata?: any): TableType {
+    public getValue(thread: Thread, index: number, cache?: LuaGetCache): TableType {
         // This is a map of Lua pointers to JS objects.
-        const seenMap: Map<number, TableType> = userdata || new Map()
-        const pointer = thread.lua.lua_topointer(thread.address, index)
+        const seenMap: LuaGetCache = cache ?? new Map()
+        const pointer = thread.module.lua_topointer(thread.address, index)
 
-        let table = seenMap.get(pointer)
+        let table = seenMap.get(pointer) as TableType | undefined
         if (!table) {
-            const keys = this.readTableKeys(thread, index)
+            table = thread.module.emscripten._wasmoon_isarray(thread.address, index) ? [] : {}
 
-            const isSequential = keys.length > 0 && keys.every((key, index) => key === String(index + 1))
-            table = isSequential ? [] : {}
-
+            // Registered before the values are read, so a table that contains itself resolves to
+            // this same object rather than to a second copy of it.
             seenMap.set(pointer, table)
             this.readTableValues(thread, index, seenMap, table)
         }
@@ -38,93 +28,87 @@ class TableTypeExtension extends TypeExtension<TableType> {
         return table
     }
 
-    public pushValue(thread: Thread, { target }: Decoration<TableType>, userdata?: Map<any, number>): boolean {
-        if (typeof target !== 'object' || target === null) {
-            return false
-        }
-
+    /**
+     * Copies an object or array into a new Lua table. Handing the cache on to the values inside is
+     * what makes the copy a deep one: a push that carries one copies the objects it meets, whatever
+     * the state would otherwise do with them.
+     */
+    public push(thread: Thread, target: object, cache?: LuaPushCache): void {
         // This is a map of JS objects to luaL references.
-        const seenMap = userdata || new Map<any, number>()
+        const seenMap: LuaPushCache = cache ?? new Map()
         const existingReference = seenMap.get(target)
         if (existingReference !== undefined) {
-            thread.lua.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(existingReference))
-            return true
+            thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, existingReference)
+            return
         }
 
         try {
             const tableIndex = thread.getTop() + 1
 
-            const createTable = (arrayCount: number, keyCount: number): void => {
-                thread.lua.lua_createtable(thread.address, arrayCount, keyCount)
-                const ref = thread.lua.luaL_ref(thread.address, LUA_REGISTRYINDEX)
-                seenMap.set(target, ref)
-                thread.lua.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, BigInt(ref))
-            }
+            // A for..in loop would also copy inherited members.
+            const keys = Array.isArray(target) ? undefined : Object.keys(target)
+            thread.module.lua_createtable(thread.address, keys ? 0 : (target as any[]).length, keys?.length ?? 0)
+            thread.module.lua_pushvalue(thread.address, tableIndex)
+            seenMap.set(target, thread.module.luaL_ref(thread.address, LUA_REGISTRYINDEX))
 
-            if (Array.isArray(target)) {
-                createTable(target.length, 0)
-
-                for (let i = 0; i < target.length; i++) {
-                    thread.pushValue(i + 1, seenMap)
-                    thread.pushValue(target[i], seenMap)
-
-                    thread.lua.lua_settable(thread.address, tableIndex)
+            if (!keys) {
+                const array = target as any[]
+                for (let i = 0; i < array.length; i++) {
+                    thread.pushValue(array[i], seenMap)
+                    // Raw, so the table being built cannot be observed through metamethods.
+                    thread.module.lua_rawseti(thread.address, tableIndex, i + 1)
                 }
             } else {
-                createTable(0, Object.getOwnPropertyNames(target).length)
-
-                for (const key in target) {
-                    thread.pushValue(key, seenMap)
+                for (const key of keys) {
+                    thread.module.lua_pushstring(thread.address, key)
                     thread.pushValue((target as Record<string, any>)[key], seenMap)
 
-                    thread.lua.lua_settable(thread.address, tableIndex)
+                    thread.module.lua_rawset(thread.address, tableIndex)
                 }
             }
         } finally {
-            if (userdata === undefined) {
+            // Only the outermost push owns the anchors it created for the values below it.
+            if (cache === undefined) {
                 for (const reference of seenMap.values()) {
-                    thread.lua.luaL_unref(thread.address, LUA_REGISTRYINDEX, reference)
+                    thread.module.luaL_unref(thread.address, LUA_REGISTRYINDEX, reference)
                 }
             }
         }
-
-        return true
     }
 
-    private readTableKeys(thread: Thread, index: number): string[] {
-        const keys = []
-
-        thread.lua.lua_pushnil(thread.address)
-        while (thread.lua.lua_next(thread.address, index)) {
-            // JS only supports string keys in objects.
-            const key = thread.indexToString(-2)
-            keys.push(key)
-            // Pop the value.
-            thread.pop()
-        }
-
-        return keys
-    }
-
-    private readTableValues(thread: Thread, index: number, seenMap: Map<number, TableType>, table: TableType): void {
+    private readTableValues(thread: Thread, index: number, seenMap: LuaGetCache, table: TableType): void {
         const isArray = Array.isArray(table)
+        // lua_next leaves each key and value in the same two slots, so the indexes are resolved
+        // once here rather than by a lua_absindex per entry.
+        const keyIndex = thread.getTop() + 1
+        const valueIndex = keyIndex + 1
 
-        thread.lua.lua_pushnil(thread.address)
-        while (thread.lua.lua_next(thread.address, index)) {
-            const key = thread.indexToString(-2)
-            const value = thread.getValue(-1, undefined, seenMap)
-
+        thread.module.lua_pushnil(thread.address)
+        while (thread.module.lua_next(thread.address, index)) {
             if (isArray) {
-                table.push(value)
+                // An array takes its order from the walk, so its keys are never converted.
+                table.push(thread.getValue(valueIndex, undefined, seenMap))
             } else {
-                table[key] = value
+                table[this.readKey(thread, keyIndex)] = thread.getValue(valueIndex, undefined, seenMap)
             }
 
             thread.pop()
         }
     }
+
+    /**
+     * A key as the JS property name, which is how Lua would print it. A string, the usual case, is
+     * read in place: luaL_tolstring would look for a __tostring on it, push a copy and need a pop.
+     */
+    private readKey(thread: Thread, index: number): string {
+        if (thread.module.lua_type(thread.address, index) === LuaType.String) {
+            return thread.module.lua_tolstring(thread.address, index, null)
+        }
+        return thread.indexToString(index)
+    }
 }
 
-export default function createTypeExtension(thread: Global): TypeExtension<any> {
-    return new TableTypeExtension(thread)
+export default function createTypeExtension(state: LuaState): TableTypeExtension {
+    return new TableTypeExtension(state)
 }
+export type { TableTypeExtension }
