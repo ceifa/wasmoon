@@ -1,8 +1,23 @@
-import type { Decoration } from './decoration'
+import { copy, LuaMarshalled } from './marshal'
 import type LuaState from './state'
 import type Thread from './thread'
-import { type LuaAddress, LUA_REGISTRYINDEX, type LuaGetCache, type LuaPushCache, LuaType } from './types'
+import { type LuaAddress, LUA_REGISTRYINDEX, type LuaGetCache, LuaType } from './types'
 
+export interface MetatableOptions {
+    /** Fail when the name is taken rather than leave the existing metatable alone. */
+    exclusive?: boolean
+    /**
+     * False for a metatable that goes on Lua tables rather than on reference boxes: it gets
+     * neither the `__gc` that releases a reference nor the protection from `getmetatable`.
+     */
+    boxed?: boolean
+}
+
+/**
+ * One way a kind of value crosses between JS and Lua, and the owner of the metatable that marks
+ * it on the Lua side. The state consults these in a fixed order (see `Marshaller`); what a caller
+ * adds goes through `LuaState.defineType` and `LuaState.defineClass`.
+ */
 export default abstract class LuaTypeExtension<T> {
     // Type name, for metatables and lookups.
     public readonly name: string
@@ -19,8 +34,17 @@ export default abstract class LuaTypeExtension<T> {
      * and states need not allocate caches for reference types they never push.
      */
     private cacheReference = 0
+    private deferredMetamethods: (() => Record<string, unknown>) | undefined
 
     public constructor(state: LuaState, name: string) {
+        // Ahead of the registry, which only learns of a name once its metatable exists.
+        const { names } = state.marshaller
+        if (names.has(name)) {
+            throw new Error(`the name '${name}' is already taken in this state`)
+        }
+        names.add(name)
+        state.marshaller.track(this as LuaTypeExtension<unknown>)
+
         this.state = state
         this.name = name
     }
@@ -36,10 +60,6 @@ export default abstract class LuaTypeExtension<T> {
             this.cacheReference = module.luaL_ref(address, LUA_REGISTRYINDEX)
         }
         return this.cacheReference
-    }
-
-    public isType(_thread: Thread, _index: number, type: LuaType, name?: string): boolean {
-        return type === LuaType.Userdata && name === this.name
     }
 
     /**
@@ -58,53 +78,60 @@ export default abstract class LuaTypeExtension<T> {
     }
 
     /**
-     * Creates the metatable named after this extension: protected from `getmetatable` and
-     * `setmetatable` in Lua, with the `__gc` that releases the reference a box pushed by
-     * {@link pushReference} holds, and with each of `metamethods` set on it. A metamethod is pushed
-     * the way any value is, so a function becomes a Lua function and a plain object a table -- by
-     * way of the extensions registered so far, which is why the built-ins register in dependency
-     * order.
+     * Creates the metatable named after this extension and records this extension as its owner,
+     * which is what a read recognises a value of this type by. A boxed one (the default) is
+     * protected from `getmetatable` and `setmetatable` in Lua and carries the `__gc` that releases
+     * the reference a box pushed by {@link pushReference} holds. Each of `metamethods` is set on it,
+     * pushed the way any value is, except that a plain object is copied into a table whatever the
+     * state's `objects` option says.
      *
-     * Only fills a metatable it created. A second extension registered under the same name on the
-     * same state finds the first one's and leaves it alone.
+     * Only fills a metatable it created. A second extension under the same name on the same state
+     * finds the first one's and leaves it alone, unless it asked to be `exclusive`.
      */
-    protected defineMetatable(metamethods: Record<string, unknown> = {}): void {
+    protected defineMetatable(metamethods: Record<string, unknown> = {}, { exclusive = false, boxed = true }: MetatableOptions = {}): void {
         const state = this.state
         const module = state.module
         const L = state.address
 
         if (module.luaL_newmetatable(L, this.name)) {
             const metatableIndex = module.lua_gettop(L)
+            state.marshaller.owners.set(module.lua_topointer(L, metatableIndex), this)
 
-            module.lua_pushstring(L, 'protected metatable')
-            module.lua_setfield(L, metatableIndex, '__metatable')
+            if (boxed) {
+                module.lua_pushstring(L, 'protected metatable')
+                module.lua_setfield(L, metatableIndex, '__metatable')
 
-            module.lua_pushcclosure(L, module.referenceGcFunction(), 0)
-            module.lua_setfield(L, metatableIndex, '__gc')
+                module.lua_pushcclosure(L, module.referenceGcFunction(), 0)
+                module.lua_setfield(L, metatableIndex, '__gc')
+            }
 
             for (const key in metamethods) {
-                state.pushValue(metamethods[key])
+                const value = metamethods[key]
+                state.pushValue(typeof value === 'object' && value !== null && !(value instanceof LuaMarshalled) ? copy(value) : value)
                 module.lua_setfield(L, metatableIndex, key)
             }
+        } else if (exclusive) {
+            module.lua_pop(L, 1)
+            throw new Error(`the name '${this.name}' is already taken in this state`)
         }
         // Whether created here or found, the metatable is on the stack.
         module.lua_pop(L, 1)
     }
 
-    // A base implementation that assumes user data serialisation
-    public getValue(thread: Thread, index: number, _cache?: LuaGetCache): T {
-        const value = thread.module.getReferenceBox(thread.address, index, this.name)
-        if (value === undefined) {
-            throw new Error(`data does not have the expected metatable: ${this.name}`)
-        }
-        return value as T
+    /**
+     * {@link defineMetatable}, put off until the first value of this type is pushed: building a
+     * metatable is most of what an extension costs, and a state pays it for every one it creates.
+     */
+    protected deferMetatable(metamethods: () => Record<string, unknown>): void {
+        this.deferredMetamethods = metamethods
     }
 
-    // Return false if type not matched, otherwise true. This base method does not
-    // check the type. That must be done by the class extending this.
-    public pushValue(thread: Thread, decoratedValue: Decoration<unknown>, _cache?: LuaPushCache): boolean {
-        this.pushReference(thread, decoratedValue.target)
-        return true
+    /**
+     * The JS value of the Lua value at `index`, which the caller has already established to carry
+     * this extension's metatable. This base reads a reference box.
+     */
+    public getValue(thread: Thread, index: number, _cache?: LuaGetCache): T {
+        return thread.module.getReferenceBox(thread.address, index) as T
     }
 
     /**
@@ -114,6 +141,12 @@ export default abstract class LuaTypeExtension<T> {
      * over the box, which it sees as its first upvalue.
      */
     protected pushReference(thread: Thread, referent: unknown, wrapClosure?: (L: LuaAddress) => void): void {
+        if (this.deferredMetamethods !== undefined) {
+            const metamethods = this.deferredMetamethods
+            this.deferredMetamethods = undefined
+            this.defineMetatable(metamethods())
+        }
+
         const module = thread.module
         const L = thread.address
         const cachedType = wrapClosure === undefined ? LuaType.Userdata : LuaType.Function

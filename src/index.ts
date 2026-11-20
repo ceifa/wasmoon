@@ -1,10 +1,9 @@
 export { default as LuaRuntime } from './runtime'
 export { default as LuaState, type LuaMemory } from './state'
 export type { default as LuaGarbageCollector } from './gc'
-export { default as LuaThread, type OrderedExtension } from './thread'
+export { default as LuaThread } from './thread'
 export { default as LuaMultiReturn } from './multireturn'
-export { default as LuaRawResult } from './raw-result'
-export { decorate, Decoration, type DecorationOptions, type DecorationTarget, type LuaMetatable } from './decoration'
+export { copy, proxy, opaque, raw, LuaMarshalled, type LuaCopyOptions, type LuaMarshalMode, type LuaRawFunction } from './marshal'
 // Export the underlying bindings to allow users to just
 // use the bindings rather than the wrappers.
 export {
@@ -16,9 +15,6 @@ export {
     type LuaFileSystem,
     type LuaModuleOptions,
 } from './module'
-export { default as LuaTypeExtension } from './type-extension'
-// The built in extensions are not exported, but the value types they marshal are, so a custom
-// extension can describe what it handles.
 export type { FunctionType } from './type-extensions/function'
 export type { TableType } from './type-extensions/table'
 // Named rather than `export *`, so the library bitmask helpers and the warn default stay internal.
@@ -44,14 +40,16 @@ export {
     type LuaWarnHandler,
     type CreateStateOptions,
     type LuaMemoryOptions,
-    type LuaLimitOptions,
+    type LuaLimits,
+    type LuaClass,
+    type LuaClassOptions,
+    type LuaTypeDefinition,
     type LuaGcOptions,
     type LuaGcMode,
     type LuaGcParam,
     type LuaRunOptions,
     type LuaLoadOptions,
     type LuaDoOptions,
-    type LuaThreadLimits,
     type LuaResumeResult,
     type LuaGetCache,
     type LuaPushCache,

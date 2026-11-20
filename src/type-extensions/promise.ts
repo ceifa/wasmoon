@@ -1,4 +1,4 @@
-import { decorate, type Decoration } from '../decoration'
+import { copy, type LuaRawFunction, raw } from '../marshal'
 import type LuaState from '../state'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
@@ -34,49 +34,46 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
         // async function it stands in for. Anything else is passed through as it is.
         const reaction = (callback: Reaction): Reaction => (state.isLuaFunction(callback) ? state.async(callback) : callback)
 
-        this.defineMetatable({
-            // A plain object, which the table extension (registered before this one) copies into a
-            // Lua table of methods.
+        this.deferMetatable(() => ({
+            // A plain object, which a metatable copies into a Lua table of methods.
             __index: {
                 next: (self: unknown, onFulfilled: Reaction, onRejected: Reaction) =>
                     asPromise(self).then(reaction(onFulfilled), reaction(onRejected)),
                 catch: (self: unknown, onRejected: Reaction) => asPromise(self).catch(reaction(onRejected)),
                 finally: (self: unknown, onFinally: Reaction) => asPromise(self).finally(reaction(onFinally)),
-                await: decorate(
-                    (functionThread: Thread, rawSelf: unknown) => {
-                        const self = asPromise(rawSelf)
-                        if (!state.module.stackCanSuspend) {
-                            throw new Error(state.module.jspiSupported ? SYNCHRONOUS_AWAIT : UNSUPPORTED_AWAIT)
-                        }
-                        return this.suspend(functionThread, self)
-                    },
-                    { receiveThread: true },
-                ),
+                // Raw for the thread it is called on, which is where the settled value has to go.
+                await: raw(((functionThread: Thread) => {
+                    const self = asPromise(functionThread.getValue(1))
+                    if (!state.module.stackCanSuspend) {
+                        throw new Error(state.module.jspiSupported ? SYNCHRONOUS_AWAIT : UNSUPPORTED_AWAIT)
+                    }
+                    return this.suspend(functionThread, self)
+                }) as unknown as LuaRawFunction),
             },
             __eq: (self: Promise<unknown>, other: Promise<unknown>) => self === other,
-        })
+        }))
 
         if (injectObject) {
             // Lastly create a static Promise constructor.
-            state.set('Promise', {
-                create: (callback: ConstructorParameters<PromiseConstructor>[0]) => new Promise(callback),
-                all: (promiseArray: any) => {
-                    if (!Array.isArray(promiseArray)) {
-                        throw new Error('argument must be an array of promises')
-                    }
+            state.set(
+                'Promise',
+                copy({
+                    create: (callback: ConstructorParameters<PromiseConstructor>[0]) => new Promise(callback),
+                    all: (promiseArray: any) => {
+                        if (!Array.isArray(promiseArray)) {
+                            throw new Error('argument must be an array of promises')
+                        }
 
-                    return Promise.all(promiseArray.map((potentialPromise) => Promise.resolve(potentialPromise)))
-                },
-                resolve: (value: any) => Promise.resolve(value),
-            })
+                        return Promise.all(promiseArray.map((potentialPromise) => Promise.resolve(potentialPromise)))
+                    },
+                    resolve: (value: any) => Promise.resolve(value),
+                }),
+            )
         }
     }
 
-    public pushValue(thread: Thread, decoration: Decoration<unknown>): boolean {
-        if (!isPromise(decoration.target)) {
-            return false
-        }
-        return super.pushValue(thread, decoration)
+    public push(thread: Thread, promise: PromiseLike<unknown>): void {
+        this.pushReference(thread, promise)
     }
 
     /**
@@ -111,6 +108,7 @@ class PromiseTypeExtension<T = unknown> extends TypeExtension<Promise<T>> {
     }
 }
 
-export default function createTypeExtension<T = unknown>(state: LuaState, injectObject: boolean): TypeExtension<Promise<T>> {
-    return new PromiseTypeExtension<T>(state, injectObject)
+export default function createTypeExtension(state: LuaState, injectObject: boolean): PromiseTypeExtension {
+    return new PromiseTypeExtension(state, injectObject)
 }
+export type { PromiseTypeExtension }

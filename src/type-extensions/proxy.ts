@@ -1,29 +1,20 @@
-import { decorate, Decoration } from '../decoration'
+import { BoundMethod } from '../marshal'
 import type LuaState from '../state'
 import MultiReturn from '../multireturn'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
-import { isPromise } from '../utils'
 
-const isClass = (target: unknown): target is new (...args: any[]) => any =>
-    target === Date || (typeof target === 'function' && target.prototype?.constructor === target && target.toString().startsWith('class '))
-
-const isClassLike = (target: unknown): boolean => {
-    if (typeof target !== 'function' || !target.prototype || target.prototype.constructor !== target) {
-        return false
-    }
-    return isClass(target) || Object.getOwnPropertyNames(target.prototype).length > 1
-}
+type AnyFunction = (...args: any[]) => any
 
 /**
- * Lua indexes js objects with the key as given, except that a number is mapped from Lua's 1 based
- * indexing to JS's 0 -- which matters most for ipairs, which calls __index with 1, 2, 3... until
- * it gets nil.
+ * Lua indexes a JS value with the key as given, except that an array is indexed from 1 the way a
+ * Lua sequence is -- which matters most for ipairs, which calls __index with 1, 2, 3... until it
+ * gets nil. Only an array: on any other object a number is the property it names.
  */
-const toJsKey = (key: unknown): string | number => {
+const toJsKey = (target: unknown, key: unknown): string | number => {
     switch (typeof key) {
         case 'number':
-            return key - 1
+            return Array.isArray(target) ? key - 1 : key
         case 'string':
             return key
         default:
@@ -31,22 +22,34 @@ const toJsKey = (key: unknown): string | number => {
     }
 }
 
+/**
+ * What an object is pushed as when the state's `objects` is `'proxy'`, and anything wrapped in
+ * `proxy(value)`: a userdata that forwards to the JS value.
+ */
 class ProxyTypeExtension extends TypeExtension<any> {
-    private readonly boundMethods = new WeakMap<object, WeakMap<(...args: any[]) => any, Decoration<(...args: any[]) => any>>>()
+    private readonly boundMethods = new WeakMap<object, WeakMap<AnyFunction, BoundMethod>>()
+    private readonly constructors = new WeakMap<AnyFunction, AnyFunction>()
 
     public constructor(state: LuaState) {
         super(state, 'js_proxy')
 
-        this.defineMetatable({
+        this.deferMetatable(() => ({
             __index: (self: any, key: unknown) => {
-                const value = self[toJsKey(key)]
+                const jsKey = toJsKey(self, key)
+                const value = self[jsKey]
                 if (typeof value === 'function') {
-                    return this.bindMethod(self, value as (...args: any[]) => any)
+                    // A class the state knows crosses as that class, wherever it is found.
+                    return state.marshaller.hasClass(value) ? value : this.bindMethod(self, value as AnyFunction)
+                }
+                // Lua has no `new`, and whether a function wants one cannot be told from the
+                // outside, so constructing is spelled out: `Class.new(...)`.
+                if (value === undefined && jsKey === 'new' && typeof self === 'function') {
+                    return this.constructorOf(self as AnyFunction)
                 }
                 return value
             },
             __newindex: (self: any, key: unknown, value: any) => {
-                self[toJsKey(key)] = value
+                self[toJsKey(self, key)] = value
             },
             __tostring: (self: any) => self.toString?.() ?? typeof self,
             __len: (self: any) => self.length || 0,
@@ -69,16 +72,15 @@ class ProxyTypeExtension extends TypeExtension<any> {
                 )
             },
             __eq: (self: any, other: any) => self === other,
-            __call: (self: any, ...args: any[]) => {
-                if (args[0] === self) {
-                    args.shift()
-                }
-                return isClass(self) ? new self(...args) : self(...args)
-            },
-        })
+            __call: (self: any, ...args: any[]) => self(...args),
+        }))
     }
 
-    private bindMethod(self: object, method: (...args: any[]) => any): Decoration<(...args: any[]) => any> {
+    public push(thread: Thread, target: unknown): void {
+        this.pushReference(thread, target)
+    }
+
+    private bindMethod(self: object, method: AnyFunction): BoundMethod {
         let methods = this.boundMethods.get(self)
         if (!methods) {
             methods = new WeakMap()
@@ -86,47 +88,24 @@ class ProxyTypeExtension extends TypeExtension<any> {
         }
         let bound = methods.get(method)
         if (!bound) {
-            bound = decorate(method, { self })
+            bound = new BoundMethod(method, self)
             methods.set(method, bound)
         }
         return bound
     }
 
-    public getValue(thread: Thread, index: number): any {
-        // isType has already matched the metatable, so the check is not paid for again here.
-        return thread.module.getReferenceBox(thread.address, index)
-    }
-
-    public pushValue(thread: Thread, decoratedValue: Decoration<unknown>): boolean {
-        const { target, options } = decoratedValue
-        if (options.as === undefined) {
-            if (target === null || target === undefined) {
-                return false
-            }
-
-            if (typeof target !== 'object' && !isClassLike(target)) {
-                return false
-            }
-
-            if (isPromise(target)) {
-                return false
-            }
-        } else if (options.as !== 'proxy') {
-            // Both 'userdata' and 'value' mean "do not go through the proxy layer".
-            return false
+    /** One per function, so `Class.new == Class.new` in Lua. */
+    private constructorOf(target: AnyFunction): AnyFunction {
+        let construct = this.constructors.get(target)
+        if (!construct) {
+            construct = (...args: any[]) => Reflect.construct(target, args)
+            this.constructors.set(target, construct)
         }
-
-        if (options.metatable && !(options.metatable instanceof Decoration)) {
-            // Otherwise the metatable will get converted into a JS ref rather than being set as a standard
-            // table. This forces it to use the standard table type.
-            decoratedValue.options.metatable = decorate(options.metatable, { as: 'value' })
-            return false
-        }
-
-        return super.pushValue(thread, decoratedValue)
+        return construct
     }
 }
 
-export default function createTypeExtension(state: LuaState): TypeExtension<any> {
+export default function createTypeExtension(state: LuaState): ProxyTypeExtension {
     return new ProxyTypeExtension(state)
 }
+export type { ProxyTypeExtension }

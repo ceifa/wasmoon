@@ -201,7 +201,7 @@ describe('Promises', () => {
 
         asyncThread.loadString(`
             local succeed, err = pcall(function() throw():await() end)
-            assert(tostring(err) == "Error: expected test error")
+            assert(tostring(err) == "expected test error")
             return succeed
         `)
 

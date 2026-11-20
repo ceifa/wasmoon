@@ -71,17 +71,32 @@ export interface LuaMemoryOptions {
     max?: number | undefined
 }
 
-export interface LuaLimitOptions {
-    /**
-     * Milliseconds a Lua function called from JS may run before being interrupted, whether it is
-     * called directly or as a run of its own through `state.async` or Lua's `async`.
-     */
-    functionTimeout?: number | undefined
-    /**
-     * Instructions a single run may execute before being interrupted. A run is a `doString` or
-     * `doFile`, or a function started through `state.async`, Lua's `async` or a promise reaction.
-     */
+/**
+ * What a run may use before it is interrupted. A run is each entry from JS into Lua: a `doString`
+ * or `doFile`, a call of a Lua function, and the runs that `state.async`, Lua's `async` and a
+ * promise reaction start.
+ *
+ * The same three fields everywhere a limit can be given: as `limits` when creating a state and as
+ * `state.limits` afterwards, where they are what every run starts under, and in the options of a
+ * single run, where each one given replaces the state's -- `Infinity` to lift it.
+ *
+ * A run made from inside another, by a JS function that Lua called calling back into Lua, stays
+ * within the outer one's limits as well as its own.
+ */
+export interface LuaLimits {
+    /** Milliseconds the run may take, awaits included. */
+    timeout?: number | undefined
+    /** Instructions the run may execute. */
     maxInstructions?: number | undefined
+    /**
+     * Interrupts the run when the signal aborts.
+     *
+     * Interrupts parked awaits and onYield handlers without waiting for their promises to settle.
+     * A signal cannot fire while the event loop is blocked, so a timer cannot abort a tight Lua
+     * loop without async steps; use `timeout` or `maxInstructions` for those. Repeated awaits
+     * periodically give timers a turn, and a top level `coroutine.yield` without a handler always does.
+     */
+    signal?: AbortSignal | undefined
 }
 
 /** A global that `CreateStateOptions.inject` can define. */
@@ -108,15 +123,14 @@ export interface CreateStateOptions {
      */
     libs?: LuaLibName[] | boolean | undefined
     /**
-     * How plain JS objects and class instances cross into Lua. `'proxy'` keeps their identity and
-     * exposes their members, `'copy'` marshals them into plain Lua tables.
+     * How an object crosses into Lua when nothing says otherwise: `'proxy'` (the default) keeps
+     * its identity and exposes its members, `'copy'` marshals it into a plain Lua table.
+     *
+     * `copy(value)`, `proxy(value)` and `opaque(value)` say otherwise for one value, and
+     * `defineClass` and `defineType` for every value of a kind. With `'copy'` those are the only
+     * ways Lua gets to reach into a JS object, which is what a state running untrusted code wants.
      */
     objects?: 'proxy' | 'copy' | undefined
-    /**
-     * Registers the JS `Error` to Lua error bridge. Defaults to true when `objects` is `'copy'`,
-     * because the proxy already covers errors when it is enabled.
-     */
-    errors?: boolean | undefined
     /**
      * Which helpers to define as Lua globals. `true` defines all of them, or name them
      * individually:
@@ -124,7 +138,7 @@ export interface CreateStateOptions {
      * - `Promise`: `Promise.create`, `Promise.all` and `Promise.resolve`.
      * - `async`: `async(fn)` returns a function that runs `fn` as a run of its own and gives back
      *   a promise of its first result, so that it can `:await()` whoever calls it.
-     * - `Error`: `Error.create`, where the error bridge is registered (see `errors`).
+     * - `Error`: `Error.create`.
      * - `null`: a sentinel that a JS `null` is marshalled as instead of `nil`. It is truthy in Lua.
      */
     inject?: LuaInjectName[] | boolean | undefined
@@ -136,26 +150,15 @@ export interface CreateStateOptions {
      */
     onAsyncError?: ((error: unknown) => void) | undefined
     memory?: LuaMemoryOptions | undefined
-    limits?: LuaLimitOptions | undefined
+    /** What every run on the state starts under, also reachable afterwards as `state.limits`. */
+    limits?: LuaLimits | undefined
     gc?: LuaGcOptions | undefined
     /** Where diagnostics go. Defaults to the runtime's handler, and then to `console.warn`. */
     onWarn?: LuaWarnHandler | undefined
 }
 
-export interface LuaRunOptions {
-    /** Milliseconds before the run is interrupted. */
-    timeout?: number | undefined
-    /** Instructions the run may execute before being interrupted. */
-    maxInstructions?: number | undefined
-    /**
-     * Interrupts the run when the signal aborts.
-     *
-     * Interrupts parked awaits and onYield handlers without waiting for their promises to settle.
-     * A signal cannot fire while the event loop is blocked, so a timer cannot abort a tight Lua
-     * loop without async steps; use `timeout` or `maxInstructions` for those. Repeated awaits
-     * periodically give timers a turn, and a top level `coroutine.yield` without a handler always does.
-     */
-    signal?: AbortSignal | undefined
+/** The limits of one run, each replacing the state's, and what to do when it yields. */
+export interface LuaRunOptions extends LuaLimits {
     /**
      * Called with the values of a top level `coroutine.yield`. Its return
      * becomes the result of that yield when the run resumes; a returned promise is awaited first, a
@@ -178,15 +181,61 @@ export interface LuaLoadOptions {
 
 export type LuaDoOptions = LuaRunOptions & LuaLoadOptions
 
-/**
- * Deadline and budget enforced by the debug hook while a thread runs. Every field accepts an
- * explicit undefined, which clears that one limit.
- */
-export interface LuaThreadLimits {
-    /** Absolute timestamp, as returned by `Date.now()`. */
-    deadline?: number | undefined
-    maxInstructions?: number | undefined
-    signal?: AbortSignal | undefined
+/** A class, abstract or not, as `defineClass` takes it. */
+export type LuaClass<T = any> = abstract new (...args: any[]) => T
+
+export interface LuaClassOptions<T = any> {
+    /**
+     * Names the metatable: what `tostring` and Lua's error messages call an instance. Defaults to
+     * the class's own name, and has to be unique in the state.
+     */
+    name?: string | undefined
+    /**
+     * The only members Lua can reach on an instance -- methods, fields and accessors alike, with
+     * everything else reading as nil and refusing assignment. Without it every member is
+     * reachable, inherited ones included.
+     */
+    members?: readonly (keyof T & string)[] | undefined
+    /**
+     * The only static members Lua can reach on the class. Without it, the ones the class and the
+     * classes it extends declare.
+     */
+    statics?: readonly string[] | undefined
+    /**
+     * Metamethods for the instances, each called with the instance first: `__tostring`, `__eq`,
+     * `__len`, `__add`, `__close` and the rest. `__index` or `__newindex` replace the member
+     * lookup altogether.
+     */
+    metamethods?: Record<string, (self: T, ...args: any[]) => unknown> | undefined
+}
+
+export interface LuaTypeDefinition<T = any> {
+    /**
+     * Names the type's metatable: what `tostring` and Lua's error messages call a value of it. Has
+     * to be unique in the state.
+     */
+    name: string
+    /** Whether a JS value about to cross into Lua is of this type. */
+    match: (value: unknown) => boolean
+    /**
+     * Metamethods for the type's metatable. A function among them is called with JS values, the
+     * value of this type first.
+     */
+    metatable?: Record<string, unknown> | undefined
+    /**
+     * What to push in place of the value: anything that can cross into Lua, wrapped in `copy` and
+     * the like if need be. Returning the value itself declines it, leaving it to whatever would
+     * have handled it otherwise.
+     *
+     * Without this the value crosses by reference, as a userdata that reads back as itself.
+     */
+    toLua?: ((value: T) => unknown) | undefined
+    /**
+     * Turns a Lua table of this type back into a JS value, given the object or array the table
+     * reads as. A table is of this type when `toLua` produced it, or when Lua code gave it a
+     * metatable whose `__name` is this type's name.
+     */
+    fromLua?: ((value: any) => T) | undefined
 }
 
 export enum LuaReturn {

@@ -83,13 +83,13 @@ describe('Bundling', () => {
         `)
 
         emitter.emit('resolve')
-        await expect(resPromise).to.eventually.be.rejectedWith('Error: attempt to yield across a C-call boundary')
+        await expect(resPromise).to.eventually.be.rejectedWith('attempt to yield across a C-call boundary')
 
         expect(await state.doString('return 42')).to.equal(42)
     })
 
     it('a thread timeout inside a JS callback still surfaces as an error when minified', async () => {
-        const state = await getMinifiedState({ limits: { functionTimeout: 10 } })
+        const state = await getMinifiedState({ limits: { timeout: 10 } })
         state.set('promise', Promise.resolve())
         const thread = state.newThread()
         thread.loadString(`
