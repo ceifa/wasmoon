@@ -96,9 +96,10 @@ They work anywhere a value crosses, a return value or a field of a copied object
 `objects: 'copy'` they, and the two below, are the only ways Lua gets to reach into a JS object.
 
 A function crosses as a function: nothing guesses whether it is a class. Wrap one in `proxy` to
-reach its static members and construct it with `.new`, or define it. A function read off a proxy is
-already one, called on the object it was read from (`window.Date.now()`, `window.URL.new(href)`),
-and reads back in JS as the function itself.
+reach its static members and construct it with `.new`, or define it. A function read off a proxy
+needs neither: it stays a function, called on the object it was read from, whose static members and
+`.new` are reachable too (`window.Date.now()`, `window.URL.new(href)`). It reads back in JS as the
+function itself.
 
 ### A class: `defineClass`
 

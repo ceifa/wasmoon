@@ -1,4 +1,4 @@
-import { LuaMarshalled, type LuaRawFunction, raw } from '../marshal'
+import { BoundMethod, LuaMarshalled, type LuaRawFunction, raw } from '../marshal'
 import type LuaState from '../state'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
@@ -39,6 +39,7 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
     private readonly luaFunction = Symbol('wasmoon.luaFunction')
 
     private functionWrapper: number
+    private readonly trampoline: number
     private callbackContext: Thread
     /**
      * One call thread kept ready instead of a `lua_newthread` per call, which was most of the cost
@@ -87,6 +88,17 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
                         args.push(calledThread.getValue(i))
                     }
                     result = (reference as FunctionType)(...args)
+                } else if (reference instanceof BoundMethod) {
+                    const { self } = reference
+                    const args = []
+                    for (let i = 1; i <= argsQuantity; i++) {
+                        const value = calledThread.getValue(i)
+                        // The receiver of a `:` call. The method is called on `self` either way.
+                        if (i !== 1 || value !== self) {
+                            args.push(value)
+                        }
+                    }
+                    result = reference.target.apply(self, args)
                 } else if (reference instanceof LuaMarshalled && reference.as === 'raw') {
                     const count = (reference.target as LuaRawFunction)(calledThread, argsQuantity) as unknown
                     if (count === SUSPEND) {
@@ -111,6 +123,26 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
                 return calledThread.module.lua_error(calledThread.address)
             }
         }, 'ii')
+
+        // The C function every closure push makes shares, which is how a closure over a box is told
+        // apart from any other function.
+        const { module, address: L } = state
+        module.lua_pushnil(L)
+        module.wasmoon_push_jsfunction(L, this.functionWrapper)
+        this.trampoline = module.lua_tocfunction(L, -1)
+        module.lua_pop(L, 1)
+    }
+
+    /** The proxy method the function at `index` was pushed for, if it was pushed for one. */
+    public methodAt(L: LuaAddress, index: number): BoundMethod | undefined {
+        const module = this.state.module
+        if (module.lua_tocfunction(L, index) !== this.trampoline) {
+            return undefined
+        }
+        module.lua_getupvalue(L, index, 1)
+        const reference = module.getReferenceBox(L, -1)
+        module.lua_pop(L, 1)
+        return reference instanceof BoundMethod ? reference : undefined
     }
 
     public close(): void {
@@ -196,6 +228,11 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
     private readonly wrapClosure = (L: LuaAddress): void => this.state.module.wasmoon_push_jsfunction(L, this.functionWrapper)
 
     public getValue(thread: Thread, index: number): FunctionType {
+        // A method a proxy handed out is the function it was read off as, which JS can construct.
+        const method = this.methodAt(thread.address, index)
+        if (method !== undefined) {
+            return method.target as FunctionType
+        }
         // Create a copy of the function
         thread.module.lua_pushvalue(thread.address, index)
         // Create a reference to the function which pops it from the stack

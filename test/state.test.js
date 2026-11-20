@@ -844,9 +844,9 @@ describe('State', () => {
                 return this.n
             },
         }
-        state.set('page', { Date, counter })
+        state.set('page', { Date, String, counter })
 
-        expect(await state.doString('return type(page.Date)')).to.be.equal('userdata')
+        expect(await state.doString('return type(page.Date)')).to.be.equal('function')
         expect(await state.doString('return page.Date.UTC(2020, 0, 1)')).to.be.equal(1577836800000)
         expect(await state.doString('return page.Date.new(0):getTime()')).to.be.equal(0)
         expect(await state.doString('return page.Date')).to.be.equal(Date)
@@ -856,6 +856,21 @@ describe('State', () => {
         expect(await state.doString('local add = page.counter.add return add(page.counter, 3)')).to.be.equal(6)
         expect(await state.doString('return page.counter.add == page.counter.add')).to.be.equal(true)
         expect(await state.doString('return page.counter.add')).to.be.equal(counter.add)
+        // Still a function to everything in Lua that wants one.
+        expect(await state.doString('return (string.gsub("a", "a", page.String))')).to.be.equal('a')
+        expect(await state.doString('return coroutine.wrap(page.counter.add)(4)')).to.be.equal(10)
+    })
+
+    it('a function that is not a proxied method still cannot be indexed', async () => {
+        using state = await getState()
+        state.set('page', { Date })
+        state.set('fn', () => 1)
+
+        expect(await state.doString('return page.Date.UTC(2020, 0, 1)')).to.be.equal(1577836800000)
+        await expect(state.doString('return fn.x')).to.eventually.be.rejectedWith(/:1: attempt to index a function value$/)
+        await expect(state.doString('return print.x')).to.eventually.be.rejectedWith(/:1: attempt to index a function value$/)
+        await expect(state.doString('print.x = 1')).to.eventually.be.rejectedWith(/:1: attempt to index a function value$/)
+        expect(await state.doString('return getmetatable(print)')).to.be.equal('protected metatable')
     })
 
     it('a number indexes an array from 1 and any other object by the property it names', async () => {
