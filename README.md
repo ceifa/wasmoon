@@ -6,7 +6,7 @@
 
 This package aims to provide a way to:
 
-- Embed Lua to any Node.js, Deno or Web Application.
+- Embed Lua to any Node.js or Web Application.
 - Run lua code in any operational system
 - Interop Lua and JS without memory leaks (including the DOM)
 
