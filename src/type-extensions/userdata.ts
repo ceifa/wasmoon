@@ -1,29 +1,21 @@
-import type { Decoration } from '../decoration'
 import type LuaState from '../state'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
 
+/** What `opaque(value)` is pushed as: a reference Lua can hold and hand back, with no members. */
 class UserdataTypeExtension extends TypeExtension<any> {
     public constructor(state: LuaState) {
         super(state, 'js_userdata')
         // Opaque: nothing but the box's own __gc.
-        this.defineMetatable()
+        this.deferMetatable(() => ({}))
     }
 
-    public getValue(thread: Thread, index: number): any {
-        // isType has already matched the metatable, so the check is not paid for again here.
-        return thread.module.getReferenceBox(thread.address, index)
-    }
-
-    public pushValue(thread: Thread, decoratedValue: Decoration<unknown>): boolean {
-        if (decoratedValue.options.as !== 'userdata') {
-            return false
-        }
-
-        return super.pushValue(thread, decoratedValue)
+    public push(thread: Thread, target: unknown): void {
+        this.pushReference(thread, target)
     }
 }
 
-export default function createTypeExtension(state: LuaState): TypeExtension<any> {
+export default function createTypeExtension(state: LuaState): UserdataTypeExtension {
     return new UserdataTypeExtension(state)
 }
+export type { UserdataTypeExtension }

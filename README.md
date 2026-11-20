@@ -48,6 +48,151 @@ sandbox. `lua.close()` closes every state created from it, and both types suppor
 await using lua = await LuaRuntime.load()
 ```
 
+## Passing values
+
+A value crosses into Lua by what it is, unless you say otherwise:
+
+| JS value                          | in Lua                                                                    |
+| --------------------------------- | ------------------------------------------------------------------------- |
+| number, bigint, string, boolean   | the same value                                                            |
+| `undefined`, `null`               | `nil` (see [Null](#null))                                                 |
+| function                          | a function                                                                |
+| promise                           | a userdata with `:await()`, `:next()`, `:catch()` and `:finally()`        |
+| `Error`                           | a read-only userdata that renders as its message                          |
+| any other object, arrays included | a proxy: a userdata that forwards to the object, which keeps its identity |
+
+A proxy exposes the object's members, so `obj.field`, `obj:method()`, `#arr`, `pairs(obj)` and
+`arr[1]` (an array is indexed from 1, anything else by the key given) all reach the JS object.
+Create the state with `objects: 'copy'` and an object is copied into a plain Lua table instead.
+
+An error exposes its `message`, `name`, `stack` and whatever it carries as own properties (`code`,
+`cause`, ...), and nothing inherited.
+
+Coming back, a Lua table is copied into an object or an array, a Lua function becomes a JS
+function, and a userdata that came from JS is the JS value it was.
+
+### One value: `copy`, `proxy`, `opaque`, `raw`
+
+```js
+import { copy, proxy, opaque, raw } from 'wasmoon'
+
+// Plain Lua data, all the way down, whatever the state's `objects` says
+state.set('config', copy({ retries: 3, hosts: ['a', 'b'] }))
+// By reference. On a function it makes the function indexable, and `.new(...)` constructs
+state.set('Date', proxy(Date)) // Date.now(), Date.new(0):toISOString()
+// By reference with nothing reachable: Lua can hold it and hand it back
+state.set('session', opaque(session))
+// A function that works on the Lua stack itself and returns how many values it pushed
+state.set(
+    'swap',
+    raw((thread) => {
+        thread.module.lua_rotate(thread.address, 1, 1)
+        return 2
+    }),
+)
+```
+
+They work anywhere a value crosses, a return value or a field of a copied object included. With
+`objects: 'copy'` they, and the two below, are the only ways Lua gets to reach into a JS object.
+
+A function is always a function: nothing guesses whether it is a class. Wrap one in `proxy` to
+reach its static members and construct it with `.new`, or define it.
+
+### A class: `defineClass`
+
+```js
+class Vector {
+    static zero = () => new Vector(0, 0)
+
+    constructor(x, y) {
+        this.x = x
+        this.y = y
+    }
+
+    get length() {
+        return Math.hypot(this.x, this.y)
+    }
+
+    add(other) {
+        return new Vector(this.x + other.x, this.y + other.y)
+    }
+}
+
+state.defineClass(Vector, {
+    // Optional: the only members Lua can reach. Without it, all of them.
+    members: ['x', 'y', 'length', 'add'],
+    // Optional: metamethods, called with the instance first
+    metamethods: { __tostring: (v) => `(${v.x}, ${v.y})`, __add: (a, b) => a.add(b) },
+})
+state.set('Vector', Vector)
+
+await state.doString(`
+    local v = Vector(3, 4) + Vector.zero()  -- or Vector.new(3, 4)
+    print(v, v.length, v:add(v).x)          -- (3, 4)  5  6
+`)
+```
+
+Every instance, wherever it comes from, then crosses by reference as a userdata named after the
+class, and reads back as itself. Methods follow Lua's convention and nothing else: the receiver is
+the first argument, which `v:add(w)` passes and `v.add(w)` does not. An instance of a subclass uses
+the nearest class that was defined.
+
+### A kind of value: `defineType`
+
+```js
+// By reference, with a metatable of its own
+state.defineType({
+    name: 'Point',
+    match: (value) => value instanceof Point,
+    metatable: { __tostring: (point) => `Point(${point.x}, ${point.y})` },
+})
+
+// Or converted on the way in, and back on the way out
+state.defineType({
+    name: 'Map',
+    match: (value) => value instanceof Map,
+    toLua: (map) => copy(Object.fromEntries(map)),
+    fromLua: (table) => new Map(Object.entries(table)),
+})
+```
+
+`fromLua` is given what the table reads as, for a table `toLua` produced and for one Lua code gave
+a metatable whose `__name` is the type's name.
+
+The order is the whole rule: a wrapped value crosses the way its wrapper says; then the types take
+what they match, the most recently defined first; then the classes take their instances, the most
+derived first; and everything else goes by the table above.
+
+## Limits
+
+A run is each entry from JS into Lua: a `doString` or `doFile`, a call of a Lua function, and the
+runs that `state.async`, Lua's `async` and a promise reaction start. What a run may use is said
+with the same three fields everywhere:
+
+```js
+// What every run on the state starts under
+const state = lua.createState({ limits: { timeout: 1000, maxInstructions: 10_000_000 } })
+
+// One run, where each field given replaces the state's, and Infinity lifts it
+await state.doString(script, { timeout: 50, signal: controller.signal })
+await state.async(handler, { timeout: Infinity })(request)
+
+// Later runs, leaving the ones under way alone
+state.limits.timeout = 200
+```
+
+- `timeout`: milliseconds the run may take, awaits included. Raises `LuaTimeoutError`.
+- `maxInstructions`: instructions it may execute. Raises `LuaInstructionLimitError`.
+- `signal`: an `AbortSignal` that interrupts it. Raises `LuaAbortError`.
+
+All three extend `LuaInterruptError`. A run made from inside another, by a JS function that Lua
+called calling back into Lua, stays within the outer one's limits as well as its own: it cannot
+outlast its deadline, it spends from its budget (counted in steps of a thousand instructions), and
+its signal aborts it. A run that goes on after its caller returns, as every asynchronous one does,
+is on its own.
+
+`createState({ memory: { max } })` caps what a state may allocate, and `state.memory.max` changes it.
+
 ## Filesystem
 
 Every state on a runtime shares one filesystem. By default it is in memory: the same in Node, the
@@ -303,8 +448,8 @@ end)
 print("res", res:await())
 ```
 
-Each call of an asynchronous function is a run like a `doString`, under the same limits, with
-`limits.functionTimeout` on top.
+Each call of an asynchronous function is a run like a `doString`, under the same
+[limits](#limits).
 
 As with an async function in JS, an error in one rejects the promise it returned. When a JS API
 called it and dropped that promise, the rejection is unhandled, which by default ends a Node

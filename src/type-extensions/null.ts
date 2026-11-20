@@ -1,10 +1,9 @@
-import type { Decoration } from '../decoration'
 import type LuaState from '../state'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
 import { LUA_REGISTRYINDEX } from '../types'
 
-class NullTypeExtension extends TypeExtension<unknown> {
+class NullTypeExtension extends TypeExtension<null> {
     private nullReference: number
 
     public constructor(state: LuaState) {
@@ -28,23 +27,16 @@ class NullTypeExtension extends TypeExtension<unknown> {
         state.module.lua_setglobal(state.address, 'null')
     }
 
-    public getValue(thread: Thread, index: number): null {
-        const refUserData = thread.module.luaL_testudata(thread.address, index, this.name)
-        if (!refUserData) {
-            throw new Error(`data does not have the expected metatable: ${this.name}`)
-        }
+    public getValue(): null {
         return null
     }
 
-    public pushValue(thread: Thread, decoration: Decoration<unknown>): boolean {
-        if (decoration.target !== null) {
-            return false
-        }
+    public push(thread: Thread): void {
         thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, this.nullReference)
-        return true
     }
 }
 
-export default function createTypeExtension(state: LuaState): TypeExtension<unknown> {
+export default function createTypeExtension(state: LuaState): NullTypeExtension {
     return new NullTypeExtension(state)
 }
+export type { NullTypeExtension }

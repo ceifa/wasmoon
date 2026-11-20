@@ -1,4 +1,3 @@
-import { Decoration } from '../decoration'
 import type LuaState from '../state'
 import type Thread from '../thread'
 import TypeExtension from '../type-extension'
@@ -9,10 +8,6 @@ export type TableType = Record<any, any> | any[]
 class TableTypeExtension extends TypeExtension<TableType> {
     public constructor(state: LuaState) {
         super(state, 'js_table')
-    }
-
-    public isType(_thread: Thread, _index: number, type: LuaType): boolean {
-        return type === LuaType.Table
     }
 
     public getValue(thread: Thread, index: number, cache?: LuaGetCache): TableType {
@@ -33,17 +28,18 @@ class TableTypeExtension extends TypeExtension<TableType> {
         return table
     }
 
-    public pushValue(thread: Thread, { target }: Decoration<unknown>, cache?: LuaPushCache): boolean {
-        if (typeof target !== 'object' || target === null) {
-            return false
-        }
-
+    /**
+     * Copies an object or array into a new Lua table. Handing the cache on to the values inside is
+     * what makes the copy a deep one: a push that carries one copies the objects it meets, whatever
+     * the state would otherwise do with them.
+     */
+    public push(thread: Thread, target: object, cache?: LuaPushCache): void {
         // This is a map of JS objects to luaL references.
         const seenMap: LuaPushCache = cache ?? new Map()
         const existingReference = seenMap.get(target)
         if (existingReference !== undefined) {
             thread.module.lua_rawgeti(thread.address, LUA_REGISTRYINDEX, existingReference)
-            return true
+            return
         }
 
         try {
@@ -78,8 +74,6 @@ class TableTypeExtension extends TypeExtension<TableType> {
                 }
             }
         }
-
-        return true
     }
 
     private readTableValues(thread: Thread, index: number, seenMap: LuaGetCache, table: TableType): void {
@@ -114,6 +108,7 @@ class TableTypeExtension extends TypeExtension<TableType> {
     }
 }
 
-export default function createTypeExtension(state: LuaState): TypeExtension<TableType> {
+export default function createTypeExtension(state: LuaState): TableTypeExtension {
     return new TableTypeExtension(state)
 }
+export type { TableTypeExtension }

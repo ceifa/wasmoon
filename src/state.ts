@@ -1,9 +1,11 @@
 import LuaGarbageCollector from './gc'
+import Marshaller from './marshaller'
 import type LuaModule from './module'
 import Thread from './thread'
-import type LuaTypeExtension from './type-extension'
+import ClassTypeExtension from './type-extensions/class'
+import DefinedTypeExtension from './type-extensions/defined'
 import createErrorType from './type-extensions/error'
-import createFunctionType, { type FunctionTypeExtension } from './type-extensions/function'
+import createFunctionType from './type-extensions/function'
 import createNullType from './type-extensions/null'
 import createPromiseType from './type-extensions/promise'
 import createProxyType from './type-extensions/proxy'
@@ -13,11 +15,15 @@ import {
     type CreateStateOptions,
     LUA_REGISTRYINDEX,
     type LuaAddress,
+    type LuaClass,
+    type LuaClassOptions,
     type LuaDoOptions,
     type LuaInjectName,
+    type LuaLimits,
     type LuaMemoryOptions,
     type LuaRunOptions,
     LuaType,
+    type LuaTypeDefinition,
     resolveLibraryMask,
 } from './types'
 
@@ -31,23 +37,6 @@ export interface LuaMemory {
     /** Allocation ceiling in bytes, or undefined for unlimited. */
     max: number | undefined
 }
-
-/**
- * A more specific handler has to be consulted before a more general one. The values themselves
- * cannot be renumbered: they are the scale {@link LuaState.registerTypeExtension} exposes, so
- * anything a user registered against them would move too.
- */
-const BUILT_IN_PRIORITY = {
-    table: 0,
-    function: 0,
-    promise: 1,
-    proxy: 3,
-    /** Beats proxy, which would otherwise claim every Error before this one is consulted. */
-    error: 3.5,
-    /** Lets a custom userdata be exposed without its methods coming along. */
-    userdata: 4,
-    null: 5,
-} as const
 
 interface CreatedState {
     address: LuaAddress
@@ -120,19 +109,23 @@ export default class LuaState extends Thread {
     public readonly gc: LuaGarbageCollector
 
     private readonly allocatorFunctionPointer: number | undefined
-    private readonly defaultMaxInstructions: number | undefined
-    private readonly functions: FunctionTypeExtension
 
     public constructor(cmodule: LuaModule, options: CreateStateOptions = {}) {
-        const { libs = true, objects = 'proxy', errors = objects === 'copy', inject = false, memory, limits, gc, onWarn } = options
+        const { libs = true, objects = 'proxy', inject = false, memory, limits, gc, onWarn } = options
         const injects = (name: LuaInjectName): boolean => inject === true || (inject !== false && inject.includes(name))
+        if (objects !== 'proxy' && objects !== 'copy') {
+            throw new TypeError(`unknown objects option '${String(objects)}', expected proxy or copy`)
+        }
 
         const created = createAddress(cmodule, memory)
-        super(cmodule, [], created.address)
+        const marshaller = new Marshaller()
+        super(cmodule, marshaller, created.address)
 
         this.memory = created.memory
         this.allocatorFunctionPointer = created.allocatorFunctionPointer
         this.onWarn = onWarn
+        // A copy, so that the caller's object and `state.limits` can change independently.
+        this.defaultLimits = { ...limits }
 
         if (this.isClosed()) {
             throw new Error('Lua state could not be created (probably due to lack of memory)')
@@ -140,41 +133,44 @@ export default class LuaState extends Thread {
 
         this.gc = new LuaGarbageCollector(this, gc)
 
-        // Generic handlers - These may be required to be registered for additional types.
-        this.registerTypeExtension(BUILT_IN_PRIORITY.table, createTableType(this))
-        this.functions = createFunctionType(this, { ...limits, onAsyncError: options.onAsyncError })
-        this.registerTypeExtension(BUILT_IN_PRIORITY.function, this.functions)
-
+        // Each takes what it needs from the ones before it: a metatable's functions are pushed
+        // through the function extension, and its tables through the table one.
+        marshaller.objects = objects
+        marshaller.tables = createTableType(this)
+        marshaller.functions = createFunctionType(this, { onAsyncError: options.onAsyncError })
+        marshaller.opaques = createUserdataType(this)
+        marshaller.proxies = createProxyType(this)
         // Contains the :await functionality.
-        this.registerTypeExtension(BUILT_IN_PRIORITY.promise, createPromiseType(this, injects('Promise')))
-
+        marshaller.promises = createPromiseType(this, injects('Promise'))
+        marshaller.errors = createErrorType(this, injects('Error'))
         if (injects('null')) {
-            this.registerTypeExtension(BUILT_IN_PRIORITY.null, createNullType(this))
+            marshaller.nulls = createNullType(this)
         }
-
-        if (errors) {
-            this.registerTypeExtension(BUILT_IN_PRIORITY.error, createErrorType(this, injects('Error')))
-        }
-
-        if (objects === 'proxy') {
-            // This extension only really overrides tables and arrays.
-            // When a function is looked up in one of it's tables it's bound and then
-            // handled by the function type extension.
-            this.registerTypeExtension(BUILT_IN_PRIORITY.proxy, createProxyType(this))
-        }
-
-        this.registerTypeExtension(BUILT_IN_PRIORITY.userdata, createUserdataType(this))
 
         const libraryMask = resolveLibraryMask(libs)
         if (libraryMask !== 0) {
             this.module.luaL_openselectedlibs(this.address, libraryMask, 0)
         }
 
-        this.defaultMaxInstructions = limits?.maxInstructions
-
         if (injects('async')) {
-            this.functions.injectAsync()
+            marshaller.functions.injectAsync()
         }
+    }
+
+    /**
+     * The limits every run on this state starts under: a `doString` or `doFile`, a call of a Lua
+     * function from JS, and the runs `state.async`, Lua's `async` and a promise reaction start.
+     * What a run is given itself (`doString(code, { timeout })`) goes over these field by field.
+     *
+     * Read when a run starts, so assigning it, or a field of it, changes the runs that start
+     * afterwards and leaves the ones under way alone.
+     */
+    public get limits(): LuaLimits {
+        return this.defaultLimits
+    }
+
+    public set limits(limits: LuaLimits | undefined) {
+        this.defaultLimits = { ...limits }
     }
 
     /**
@@ -183,7 +179,7 @@ export default class LuaState extends Thread {
      * checks it against `T`, which only saves the caller a cast.
      */
     public doString<T = any>(script: string, options?: LuaDoOptions): Promise<T> {
-        return this.callByteCode((thread) => thread.loadString(script, options), this.runOptions(options))
+        return this.callByteCode((thread) => thread.loadString(script, options), options)
     }
 
     /**
@@ -191,7 +187,7 @@ export default class LuaState extends Thread {
      * @returns A Promise that resolves to the result returned by the Lua script execution.
      */
     public doFile<T = any>(filename: string, options?: LuaDoOptions): Promise<T> {
-        return this.callByteCode((thread) => thread.loadFile(filename, options), this.runOptions(options))
+        return this.callByteCode((thread) => thread.loadFile(filename, options), options)
     }
 
     /**
@@ -199,7 +195,7 @@ export default class LuaState extends Thread {
      * `:await()` and a top level `coroutine.yield` are errors here.
      */
     public doStringSync<T = any>(script: string, options?: LuaDoOptions): T {
-        return this.callByteCodeSync((thread) => thread.loadString(script, options), this.runOptions(options))
+        return this.callByteCodeSync((thread) => thread.loadString(script, options), options)
     }
 
     /**
@@ -207,7 +203,7 @@ export default class LuaState extends Thread {
      * `:await()` and a top level `coroutine.yield` are errors here.
      */
     public doFileSync<T = any>(filename: string, options?: LuaDoOptions): T {
-        return this.callByteCodeSync((thread) => thread.loadFile(filename, options), this.runOptions(options))
+        return this.callByteCodeSync((thread) => thread.loadFile(filename, options), options)
     }
 
     /**
@@ -221,33 +217,72 @@ export default class LuaState extends Thread {
      * const body = await state.async(fetchPage, { timeout: 1000 })(url)
      * ```
      *
-     * Each call is a run like a `doString`, under the same limits, with `limits.functionTimeout`
-     * on top unless `options.timeout` replaces it.
+     * Each call is a run like a `doString`, under the state's {@link limits} with `options` over
+     * them.
      */
     public async<T = any>(fn: (...args: any[]) => any, options?: LuaRunOptions): (...args: any[]) => Promise<T> {
-        return this.functions.async(fn, options) as (...args: any[]) => Promise<T>
+        return this.marshaller.functions.async(fn, options) as (...args: any[]) => Promise<T>
     }
 
     /** Whether `value` is a Lua function obtained from this state, the kind {@link async} takes. */
     public isLuaFunction(value: unknown): value is (...args: any[]) => any {
-        return this.functions.isLuaFunction(value)
+        return this.marshaller.functions.isLuaFunction(value)
     }
 
     /**
-     * Registers a type extension for Lua objects.
-     * Higher priority is more important and will be evaluated first.
-     * Allows library users to specify custom types
+     * Defines how a kind of JS value crosses into Lua, ahead of how it otherwise would.
+     *
+     * Without `toLua` the value crosses by reference: a userdata with a metatable named after the
+     * type, carrying the metamethods given, which reads back as the same JS value.
+     *
+     * ```js
+     * state.defineType({
+     *     name: 'Point',
+     *     match: (value) => value instanceof Point,
+     *     metatable: { __tostring: (point) => `Point(${point.x}, ${point.y})` },
+     * })
+     * ```
+     *
+     * With `toLua` it is converted instead, and `fromLua` converts back what Lua returns:
+     *
+     * ```js
+     * state.defineType({
+     *     name: 'Map',
+     *     match: (value) => value instanceof Map,
+     *     toLua: (map) => copy(Object.fromEntries(map)),
+     *     fromLua: (table) => new Map(Object.entries(table)),
+     * })
+     * ```
+     *
+     * Types are consulted before classes and before the built in handling, the most recently
+     * defined first. See {@link LuaTypeDefinition}.
      */
-    public registerTypeExtension(priority: number, extension: LuaTypeExtension<unknown>): void {
-        this.typeExtensions.push({ extension, priority })
-        this.typeExtensions.sort((a, b) => b.priority - a.priority)
+    public defineType<T = any>(definition: LuaTypeDefinition<T>): void {
+        this.assertNotClosed()
+        this.marshaller.addType(new DefinedTypeExtension<T>(this, definition) as DefinedTypeExtension)
+    }
 
-        // The extension's metatable is registry anchored for the life of the state, so from here
-        // on its address alone identifies its name -- getMetatableName's fast path.
-        if (this.module.luaL_getmetatable(this.address, extension.name) !== LuaType.Nil) {
-            this.metatableNames.set(this.getPointer(-1), extension.name)
+    /**
+     * Gives a class a metatable of its own in Lua. Its instances then cross by reference as
+     * userdata named after the class, whose methods are called the way Lua calls methods, with
+     * `:`, and the class itself crosses as a value that constructs when called and exposes its
+     * static members.
+     *
+     * ```js
+     * state.defineClass(Vector, { members: ['x', 'y', 'length', 'add'] })
+     * state.set('Vector', Vector)
+     * await state.doString('local v = Vector(3, 4) return v:add(v):length()')
+     * ```
+     *
+     * An instance of a subclass uses the nearest class that was defined. See
+     * {@link LuaClassOptions}.
+     */
+    public defineClass<T extends object>(ctor: LuaClass<T>, options?: LuaClassOptions<T>): void {
+        this.assertNotClosed()
+        if (this.marshaller.hasClass(ctor)) {
+            throw new Error(`the class '${ctor.name}' is already defined in this state`)
         }
-        this.pop(1)
+        this.marshaller.addClass(new ClassTypeExtension<T>(this, ctor, options) as unknown as ClassTypeExtension)
     }
 
     /** Retrieves the value of a global variable. */
@@ -307,17 +342,7 @@ export default class LuaState extends Thread {
             this.module.removeFunction(this.allocatorFunctionPointer)
         }
 
-        for (const wrapper of this.typeExtensions) {
-            wrapper.extension.close()
-        }
-    }
-
-    /** Folds the state wide budget in, so run() does the save and restore in one place. */
-    private runOptions(options?: LuaDoOptions): LuaRunOptions | undefined {
-        if (this.defaultMaxInstructions === undefined) {
-            return options
-        }
-        return { maxInstructions: this.defaultMaxInstructions, ...options }
+        this.marshaller.close()
     }
 
     private callByteCodeSync(loader: (thread: Thread) => void, options?: LuaRunOptions): any {
@@ -346,10 +371,6 @@ export default class LuaState extends Thread {
         // Anchored so the run doesn't pile threads up on the global stack.
         const { thread, reference } = this.newAnchoredThread()
         try {
-            // Seeded from the state so a state wide setLimits reaches the async path too, which
-            // runs on a child thread rather than on the state itself. setLimits takes a snapshot,
-            // so going through getLimits first would copy the same configuration twice.
-            thread.setLimits(this.limits)
             loader(thread)
             return (await thread.run(0, options))[0]
         } finally {

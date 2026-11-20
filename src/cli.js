@@ -377,7 +377,6 @@ async function run({ argv, actions, forceInteractive, showVersion, ignoreEnv, sc
         const stackTop = state.getTop()
         const thread = state.newThread()
         try {
-            thread.setLimits(state.getLimits())
             load(thread)
             for (const scriptArg of scriptArgs) {
                 thread.pushValue(scriptArg)

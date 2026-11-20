@@ -1,7 +1,7 @@
-import { Decoration, type DecorationOptions, type LuaMetatable } from './decoration'
+import { copy, LuaMarshalled } from './marshal'
+import type Marshaller from './marshaller'
 import type LuaModule from './module'
 import MultiReturn from './multireturn'
-import type LuaTypeExtension from './type-extension'
 import {
     defaultWarnHandler,
     LUA_MULTRET,
@@ -12,24 +12,28 @@ import {
     type LuaGetCache,
     LuaInstructionLimitError,
     LuaInterruptError,
+    type LuaLimits,
     type LuaLoadOptions,
     type LuaPushCache,
     type LuaResumeResult,
     LuaReturn,
     type LuaRunOptions,
-    type LuaThreadLimits,
     LuaType,
     type LuaWarnHandler,
     PointerSize,
 } from './types'
 import { isEmscriptenUnwind } from './utils'
 import { limitError, settleOrInterrupt, yieldToEventLoop } from './async'
-import RawResult from './raw-result'
 
-export interface OrderedExtension {
-    // Bigger is more important
-    priority: number
-    extension: LuaTypeExtension<unknown>
+/**
+ * What the debug hook enforces while a run is on a thread: a run's {@link LuaLimits} once it has
+ * started, with the timeout turned into the moment it runs out.
+ */
+export interface ActiveLimits {
+    /** Absolute timestamp, as returned by `Date.now()`. */
+    deadline?: number | undefined
+    maxInstructions?: number | undefined
+    signal?: AbortSignal | undefined
 }
 
 // When the debug count hook is set, call it every X instructions.
@@ -38,12 +42,12 @@ const INSTRUCTION_HOOK_COUNT = 1000
 const LUA_INTEGER_BITS = 64
 
 const NO_RESTORE = (): void => undefined
-const NO_OPTIONS: Readonly<DecorationOptions> = Object.freeze({})
 /**
- * The limits of a thread nothing has been set on, shared because a JS callback made from a
- * coroutine gets a thread wrapper of its own each time. Frozen, so a write to it fails loudly.
+ * The limits of a thread no run is on, shared because a JS callback made from a coroutine gets a
+ * thread wrapper of its own each time. Frozen, so a write to it fails loudly.
  */
-const NO_LIMITS: Readonly<LuaThreadLimits> = Object.freeze({})
+const NO_LIMITS: Readonly<ActiveLimits> = Object.freeze({})
+const NO_DEFAULT_LIMITS: Readonly<LuaLimits> = Object.freeze({})
 
 export default class Thread {
     public readonly address: LuaAddress
@@ -51,7 +55,8 @@ export default class Thread {
     public readonly module: LuaModule
     /** Set on the root state; threads created from it delegate here, as does {@link warn}. */
     public onWarn: LuaWarnHandler | undefined
-    protected readonly typeExtensions: OrderedExtension[]
+    /** How values cross between JS and Lua, shared by every thread on the same state. */
+    public readonly marshaller: Marshaller
     protected readonly parent: Thread | undefined
     /**
      * The state this thread belongs to, or itself when it is the state. Resolved once here rather
@@ -60,19 +65,18 @@ export default class Thread {
      */
     protected readonly rootThread: Thread
     /**
-     * The address of each registered extension's metatable, mapped to the extension's name.
-     * Populated by `LuaState.registerTypeExtension` and shared with every thread on the same
-     * state: those metatables are registry anchored for the state's whole life, so an address in
-     * here can never be reused by anything else while the map exists.
+     * The limits a run starts under unless its own options say otherwise, as `state.limits`. Held
+     * by the state and read from there, so it means nothing on any other thread.
      */
-    protected readonly metatableNames: Map<LuaAddress, string>
+    protected defaultLimits: LuaLimits = NO_DEFAULT_LIMITS
     private closed = false
     private running = false
     private rejectRun: (() => void) | undefined
     private removeCloseListener: (() => void) | undefined
     private hookFunctionPointer: number | undefined
     private hookCount = INSTRUCTION_HOOK_COUNT
-    protected limits: LuaThreadLimits = NO_LIMITS
+    /** The limits of the run this thread is on. Installed when it starts, removed when it ends. */
+    private active: ActiveLimits = NO_LIMITS
     private instructionsUsed = 0
     /**
      * The error the debug hook unwound the current run with. See {@link LuaModule.interruptToken}
@@ -80,20 +84,27 @@ export default class Thread {
      * coroutine, so it writes to the active driver, which also owns its limits and lifecycle.
      */
     private pendingInterrupt: LuaInterruptError | undefined
+    /**
+     * Whether Lua has stopped calling the debug hook on this thread. It disables the hook while
+     * one runs and enables it again once that returns, which a hook that raises never does: a
+     * `pcall` on the way out restores the flag, and without one the thread dies with its hook off.
+     * Resetting such a thread brings it back to life without a hook that works, so it must not be
+     * run again under a limit.
+     */
+    public hookLost = false
     private closeListeners: (() => void)[] | undefined
 
     /** The limits of the run this thread is driving, as an `:await()` reads them when it parks. */
-    public get runLimits(): Readonly<LuaThreadLimits> {
-        return this.limits
+    public get runLimits(): Readonly<ActiveLimits> {
+        return this.active
     }
 
-    public constructor(cmodule: LuaModule, typeExtensions: OrderedExtension[], address: number, parent?: Thread) {
+    public constructor(cmodule: LuaModule, marshaller: Marshaller, address: number, parent?: Thread) {
         this.module = cmodule
-        this.typeExtensions = typeExtensions
+        this.marshaller = marshaller
         this.address = address
         this.parent = parent
         this.rootThread = parent ?? this
-        this.metatableNames = parent ? parent.metatableNames : new Map()
     }
 
     public newThread(): Thread {
@@ -102,7 +113,7 @@ export default class Thread {
         if (!address) {
             throw new Error('lua_newthread returned a null pointer')
         }
-        return new Thread(this.module, this.typeExtensions, address, this.rootThread)
+        return new Thread(this.module, this.marshaller, address, this.rootThread)
     }
 
     /**
@@ -119,7 +130,14 @@ export default class Thread {
 
     public resetThread(): void {
         this.assertNotClosed()
-        this.assertOk(this.module.lua_resetthread(this.address))
+        const status = this.module.lua_resetthread(this.address)
+        if (this.hookLost) {
+            this.setTop(0)
+            throw new Error(
+                'a thread that a limit interrupted cannot be reset, because no limit could be enforced on it again: use a new one',
+            )
+        }
+        this.assertOk(status)
     }
 
     /** @param options.mode defaults to `'t'`. See {@link LuaLoadOptions.mode}. */
@@ -171,6 +189,10 @@ export default class Thread {
             module.activeRun = previousRun
             module.stackCanSuspend = previousCanSuspend
         }
+        if (result <= LuaReturn.Yield) {
+            // Alive, so whatever interrupt the hook raised was caught by a pcall on the way.
+            this.hookLost = false
+        }
         return { result, resultCount: module.readPointer(dataPointer) }
     }
 
@@ -192,11 +214,15 @@ export default class Thread {
         this.module.lua_setfield(this.address, index, name)
     }
 
+    /**
+     * Runs the function and arguments on this thread's stack to completion, as a run that an
+     * `:await()` can suspend. Under the state's limits, with `options` over them.
+     */
     public async run(argCount = 0, options?: LuaRunOptions): Promise<MultiReturn> {
         this.startRun()
         let restore = NO_RESTORE
         try {
-            restore = this.applyRunOptions(options)
+            restore = this.enterRun(options, false)
             return await this.watchRun(this.drive(argCount, options))
         } finally {
             this.finishRun()
@@ -250,7 +276,7 @@ export default class Thread {
         }
         const values = this.getStackValues(this.getTop() - resumeResult.resultCount)
         this.dropResults(resumeResult)
-        const outcome = await settleOrInterrupt(options.onYield(values), this.limits.signal, this.limits.deadline)
+        const outcome = await settleOrInterrupt(options.onYield(values), this.active.signal, this.active.deadline)
         this.assertNotClosed()
         this.assertLimits()
         if (outcome.status !== 'fulfilled') {
@@ -332,6 +358,9 @@ export default class Thread {
         try {
             const result = await pending
             this.assertNotClosed()
+            if (result <= LuaReturn.Yield) {
+                this.hookLost = false
+            }
             return { result, resultCount: module.readPointer(nresPointer) }
         } finally {
             if (module.activeRun === this) {
@@ -347,16 +376,12 @@ export default class Thread {
 
     /**
      * Pushes a JS value onto the stack as Lua results and returns how many: nothing for `undefined`,
-     * `count` for a {@link RawResult}, one per element for a {@link MultiReturn}, else the single
-     * value.
+     * one per element for a {@link MultiReturn}, else the single value.
      * @param nilOnUndefined Preserve undefined as one Lua nil, as `:await()` requires.
      */
     public pushReturnValues(value: unknown, nilOnUndefined = false): number {
         if (value === undefined && !nilOnUndefined) {
             return 0
-        }
-        if (value instanceof RawResult) {
-            return value.count
         }
         if (value instanceof MultiReturn) {
             for (const item of value) {
@@ -368,9 +393,13 @@ export default class Thread {
         return 1
     }
 
+    /**
+     * The synchronous counterpart of {@link run}, which nothing can suspend. Started from inside
+     * another run it stays within that one's limits too.
+     */
     public runSync(argCount = 0, options?: LuaRunOptions): MultiReturn {
         this.assertNotClosed()
-        const restore = this.applyRunOptions(options)
+        const restore = this.enterRun(options, true)
         try {
             const base = this.getTop() - argCount - 1 // The 1 is for the function to run
             this.pcall(argCount)
@@ -396,8 +425,13 @@ export default class Thread {
         }
 
         const base = this.getTop() - args.length - 1 // The 1 is for the function to run
-        this.pcall(args.length)
-        return this.getStackValues(base)
+        const restore = this.enterRun(undefined, true)
+        try {
+            this.pcall(args.length)
+            return this.getStackValues(base)
+        } finally {
+            restore()
+        }
     }
 
     /** A synchronous call, which nothing can suspend: an `:await()` reached through it is an error. */
@@ -415,6 +449,8 @@ export default class Thread {
             module.activeRun = previousRun
             module.stackCanSuspend = previousCanSuspend
         }
+        // lua_pcall puts the flag back itself, which lua_resume does not.
+        this.hookLost = false
         this.assertOk(result)
     }
 
@@ -437,100 +473,83 @@ export default class Thread {
         if (L === this.address) {
             return this
         }
-        return L === this.parent?.address ? this.parent : new Thread(this.module, this.typeExtensions, L, this.rootThread)
+        return L === this.parent?.address ? this.parent : new Thread(this.module, this.marshaller, L, this.rootThread)
     }
 
-    public pushValue(rawValue: unknown, cache?: LuaPushCache): void {
-        // Only the type extensions take a decoration, so pushing a plain primitive never has to
-        // allocate one. The default branch below synthesises one for the values that do need it.
-        const decoration = rawValue instanceof Decoration ? rawValue : undefined
-        const target = decoration ? decoration.target : rawValue
-
-        if (target instanceof Thread) {
-            this.module.lua_pushthread(target.address)
-            if (target.address !== this.address) {
-                this.module.lua_xmove(target.address, this.address, 1)
-            }
-            return
-        }
-
-        // Handle primitive types
-        switch (typeof target) {
+    /**
+     * Pushes a JS value onto the stack as one Lua value. A primitive has one way to cross; anything
+     * else crosses the way the state's {@link Marshaller} decides, which is where the order of
+     * `copy`, `proxy`, `opaque`, defined types and classes is spelled out.
+     */
+    public pushValue(value: unknown, cache?: LuaPushCache): void {
+        switch (typeof value) {
             case 'undefined':
                 this.module.lua_pushnil(this.address)
                 break
             case 'number':
                 // Only integers JS can represent exactly become Lua integers. Values like 1e300
                 // are integral but far outside int64, and would wrap silently if pushed as one.
-                if (Number.isSafeInteger(target)) {
-                    this.module.lua_pushinteger(this.address, target)
+                if (Number.isSafeInteger(value)) {
+                    this.module.lua_pushinteger(this.address, value)
                 } else {
-                    this.module.lua_pushnumber(this.address, target)
+                    this.module.lua_pushnumber(this.address, value)
                 }
                 break
             case 'bigint':
-                if (BigInt.asIntN(LUA_INTEGER_BITS, target) !== target) {
-                    throw new RangeError(`bigint ${target} does not fit in a 64 bit Lua integer`)
+                if (BigInt.asIntN(LUA_INTEGER_BITS, value) !== value) {
+                    throw new RangeError(`bigint ${value} does not fit in a 64 bit Lua integer`)
                 }
-                this.module.lua_pushinteger(this.address, target)
+                this.module.lua_pushinteger(this.address, value)
                 break
             case 'string':
-                this.module.lua_pushstring(this.address, target)
+                this.module.lua_pushstring(this.address, value)
                 break
             case 'boolean':
-                this.module.lua_pushboolean(this.address, target ? 1 : 0)
+                this.module.lua_pushboolean(this.address, value ? 1 : 0)
                 break
-            default: {
-                // A type extension can be supplied by the caller, so unlike the pushes above it is
-                // not guaranteed to leave exactly one value behind. That is worth the two
-                // lua_gettop calls here, and not worth them on every primitive push.
-                const startTop = this.getTop()
-                if (this.pushWithExtension(decoration ?? new Decoration(target, NO_OPTIONS), cache)) {
-                    const endTop = this.getTop()
-                    if (endTop !== startTop + 1) {
-                        throw new Error(`pushValue expected stack size ${startTop + 1}, got ${endTop}`)
+            default:
+                if (value instanceof Thread) {
+                    this.module.lua_pushthread(value.address)
+                    if (value.address !== this.address) {
+                        this.module.lua_xmove(value.address, this.address, 1)
                     }
-                } else if (target === null) {
-                    this.module.lua_pushnil(this.address)
                 } else {
-                    throw new Error(`The type '${typeof target}' is not supported by Lua`)
+                    this.marshaller.push(this, value, cache)
                 }
                 break
-            }
-        }
-
-        // A synthesised decoration always has empty options, so this only ever acts on one the
-        // caller supplied.
-        const metatable = decoration?.options.metatable
-        if (metatable) {
-            this.setMetatable(-1, metatable)
         }
     }
 
-    public setMetatable(index: number, metatable: LuaMetatable): void {
+    /**
+     * Gives the Lua table at `index` a metatable, copied into a table of its own unless it is
+     * wrapped to cross some other way.
+     */
+    public setMetatable(index: number, metatable: object): void {
         index = this.absIndex(index)
 
+        // Lua has one metatable for all functions, all strings and so on: setting it through one
+        // value would change every other, so only what owns its metatable can be given one.
+        if (this.module.lua_type(this.address, index) !== LuaType.Table) {
+            throw new TypeError('only a value copied into a Lua table can be given a metatable')
+        }
         if (this.module.lua_getmetatable(this.address, index)) {
             this.pop(1)
             const name = this.getMetatableName(index)
             throw new Error(`data already has associated metatable: ${name || 'unknown name'}`)
         }
 
-        this.pushValue(metatable)
+        this.pushValue(metatable instanceof LuaMarshalled ? metatable : copy(metatable))
         this.module.lua_setmetatable(this.address, index)
     }
 
+    /** The name of the metatable of the value at `index`: its `__name`, or undefined without one. */
     public getMetatableName(index: number): string | undefined {
-        // Resolving __name on every table and userdata read is most of what getValue spends on its
-        // dispatch, and it is nearly always one of the extension metatables that registration
-        // already recorded in metatableNames -- so the common case is these three raw calls and a
-        // map hit, with no string crossing the boundary in either direction.
         if (!this.module.lua_getmetatable(this.address, index)) {
             return undefined
         }
-        const pointer = this.module.lua_topointer(this.address, -1)
 
-        let name = this.metatableNames.get(pointer)
+        // One this state created is known by its address, with no string crossing the boundary.
+        let name = this.marshaller.owners.get(this.module.lua_topointer(this.address, -1))?.name
         if (name !== undefined) {
             this.pop(1)
             return name
@@ -567,31 +586,8 @@ export default class Thread {
                 return Boolean(this.module.lua_toboolean(this.address, index))
             case LuaType.Thread:
                 return this.stateToThread(this.module.lua_tothread(this.address, index))
-            default: {
-                index = this.absIndex(index)
-
-                let metatableName: string | undefined
-                if (type === LuaType.Table || type === LuaType.Userdata) {
-                    metatableName = this.getMetatableName(index)
-                }
-
-                const extensions = this.typeExtensions
-                for (let i = 0; i < extensions.length; i++) {
-                    const extension = extensions[i].extension
-                    if (extension.isType(this, index, type, metatableName)) {
-                        return extension.getValue(this, index, cache)
-                    }
-                }
-
-                // Handing back an opaque Pointer hid the failure until the value was used, and
-                // it could not be pushed back into Lua anyway.
-                const typeName = this.module.lua_typename(this.address, type)
-                const withMetatable = metatableName ? ` with metatable '${metatableName}'` : ''
-                throw new TypeError(
-                    `the Lua type '${typeName}'${withMetatable} has no JS representation; register a type ` +
-                        `extension to handle it, or read the address with getPointer`,
-                )
-            }
+            default:
+                return this.marshaller.get(this, this.absIndex(index), type, cache)
         }
     }
 
@@ -632,40 +628,6 @@ export default class Thread {
 
     public [Symbol.dispose](): void {
         this.close()
-    }
-
-    /**
-     * Installs the deadline, instruction budget and abort signal enforced while this thread runs.
-     * They share a single debug hook, because Lua only allows one hook per thread.
-     */
-    public setLimits(limits: LuaThreadLimits | undefined): void {
-        this.assertNotClosed()
-        this.limits = { ...limits }
-        this.instructionsUsed = 0
-        this.applyHook()
-    }
-
-    public getLimits(): LuaThreadLimits {
-        return { ...this.limits }
-    }
-
-    /**
-     * Shorthand for the deadline in {@link setLimits}. The argument is an absolute timestamp as
-     * returned by `Date.now()`, not a duration — pass `Date.now() + ms`, or undefined to disable.
-     * `LuaRunOptions.timeout` is the per-run equivalent that does take a duration.
-     */
-    public setDeadline(deadline: number | undefined): void {
-        this.assertNotClosed()
-        // In place rather than by copy, since a function timeout sets one on every call.
-        if (this.limits === NO_LIMITS) {
-            this.limits = {}
-        }
-        this.limits.deadline = deadline && deadline > 0 ? deadline : undefined
-        this.applyHook()
-    }
-
-    public getDeadline(): number | undefined {
-        return this.limits.deadline
     }
 
     /**
@@ -825,40 +787,86 @@ export default class Thread {
         return interrupt
     }
 
-    private applyRunOptions(options: LuaRunOptions | undefined): () => void {
-        const overrides =
-            options !== undefined &&
-            (options.timeout !== undefined || options.maxInstructions !== undefined || options.signal !== undefined)
-
-        if (!overrides) {
+    /**
+     * Puts this thread under the limits of a run that is about to start on it: the state's, with
+     * `options` over them field by field, where `Infinity` lifts one the state set. Returns what
+     * ends the run, which puts back whatever the thread was under before.
+     *
+     * A `nested` run is one started while another is on the JS stack -- a synchronous call back
+     * into Lua from a function Lua called -- and it runs inside that one: it cannot outlast its
+     * deadline, spends from its instruction budget, and is aborted by its signal. A run that goes
+     * on after its caller returns, as every asynchronous one does, is on its own.
+     *
+     * The budget is shared to the hook's granularity and no finer: instructions are counted a
+     * hook period at a time, so a nested run shorter than one period ends before any of it is
+     * counted. The deadline has no such gap.
+     */
+    public enterRun(options: LuaLimits | undefined, nested: boolean): () => void {
+        const outer = nested ? this.module.activeRun : undefined
+        const limits = this.resolveLimits(options, outer)
+        const previous = this.active
+        // Nothing to install and nothing installed, which is every run of a state without limits.
+        if (limits === undefined && previous === NO_LIMITS) {
             return NO_RESTORE
         }
 
-        const previousLimits = this.limits
         const previousUsed = this.instructionsUsed
-
-        this.setLimits({
-            deadline: options.timeout !== undefined ? Date.now() + options.timeout : previousLimits.deadline,
-            maxInstructions: options.maxInstructions ?? previousLimits.maxInstructions,
-            signal: options.signal ?? previousLimits.signal,
-        })
+        this.active = limits ?? NO_LIMITS
+        this.instructionsUsed = 0
+        this.applyHook()
 
         return () => {
-            this.limits = previousLimits
+            const used = this.instructionsUsed
+            this.active = previous
             this.instructionsUsed = previousUsed
+            // What the nested run executed counts against the run it was made from, or calling
+            // back and forth would be a way around the budget.
+            if (outer !== undefined) {
+                outer.instructionsUsed += used
+            }
             this.applyHook()
         }
     }
 
+    private resolveLimits(options: LuaLimits | undefined, outer: Thread | undefined): ActiveLimits | undefined {
+        const defaults = this.rootThread.defaultLimits
+        const timeout = options?.timeout ?? defaults.timeout
+        let maxInstructions = options?.maxInstructions ?? defaults.maxInstructions
+        let signal = options?.signal ?? defaults.signal
+        let deadline = timeout === undefined || timeout === Infinity ? undefined : Date.now() + timeout
+        if (maxInstructions === Infinity) {
+            maxInstructions = undefined
+        }
+
+        if (outer !== undefined && outer.active !== NO_LIMITS) {
+            const enclosing = outer.active
+            if (enclosing.deadline !== undefined && (deadline === undefined || enclosing.deadline < deadline)) {
+                deadline = enclosing.deadline
+            }
+            if (enclosing.maxInstructions !== undefined) {
+                const remaining = Math.max(0, enclosing.maxInstructions - outer.instructionsUsed)
+                if (maxInstructions === undefined || remaining < maxInstructions) {
+                    maxInstructions = remaining
+                }
+            }
+            signal ??= enclosing.signal
+        }
+
+        if (deadline === undefined && maxInstructions === undefined && signal === undefined) {
+            return undefined
+        }
+        return { deadline, maxInstructions, signal }
+    }
+
     private applyHook(): void {
-        // The restore that `applyRunOptions` hands back runs in a finally, so it reaches here after
+        // The restore that `enterRun` hands back runs in a finally, so it reaches here after
         // a state closed midway through its own run. Returning rather than throwing, because that
         // finally must not replace whatever error is already on its way out.
         if (this.isClosed()) {
             return
         }
 
-        const { deadline, maxInstructions, signal } = this.limits
+        const { deadline, maxInstructions, signal } = this.active
         if (deadline === undefined && maxInstructions === undefined && signal === undefined) {
             this.module.lua_sethook(this.address, null, 0, 0)
             return
@@ -870,11 +878,14 @@ export default class Thread {
 
         if (!this.hookFunctionPointer) {
             this.hookFunctionPointer = this.module.addFunction((hookL: LuaAddress): void => {
-                // Reads this.limits rather than closing over them, so a hook allocated for an
-                // earlier configuration still honours the current one.
+                // Reads the active limits rather than closing over them, so a hook allocated for
+                // an earlier run still honours the current one.
                 const run = this.module.activeRun ?? this
                 const error = run.checkHookLimits(hookL)
                 if (error) {
+                    if (hookL === run.address) {
+                        run.hookLost = true
+                    }
                     run.interruptWith(error, hookL)
                 }
             }, 'vii')
@@ -884,7 +895,7 @@ export default class Thread {
     }
 
     private checkHookLimits(hookL: LuaAddress): LuaInterruptError | undefined {
-        const { maxInstructions } = this.limits
+        const { maxInstructions } = this.active
         if (maxInstructions !== undefined) {
             this.instructionsUsed += this.hookCount
             const remaining = maxInstructions - this.instructionsUsed
@@ -900,7 +911,7 @@ export default class Thread {
     }
 
     private limitReached(): LuaInterruptError | undefined {
-        return limitError(this.limits.signal, this.limits.deadline)
+        return limitError(this.active.signal, this.active.deadline)
     }
 
     private assertLimits(): void {
@@ -916,16 +927,5 @@ export default class Thread {
      */
     private absIndex(index: number): number {
         return index > 0 ? index : this.module.lua_absindex(this.address, index)
-    }
-
-    /** Offers the value to each extension by descending priority. False if none claimed it. */
-    private pushWithExtension(decoration: Decoration<unknown>, cache: LuaPushCache | undefined): boolean {
-        const extensions = this.typeExtensions
-        for (let i = 0; i < extensions.length; i++) {
-            if (extensions[i].extension.pushValue(this, decoration, cache)) {
-                return true
-            }
-        }
-        return false
     }
 }

@@ -37,6 +37,12 @@ describe('Initialization', () => {
         expect(await state.doString('return type(null)')).to.be.equal('userdata')
     })
 
+    it('create state with an unknown objects option should fail', async () => {
+        const lua = await LuaRuntime.load()
+
+        expect(() => lua.createState({ objects: 'reference' })).to.throw("unknown objects option 'reference'")
+    })
+
     it('create with environment variables should succeed', async () => {
         const env = {
             ENV_TEST: 'test',
@@ -178,8 +184,8 @@ describe('Disposal', () => {
             resetThread: (state) => state.resetThread(),
             resume: (state) => state.resume(),
             runSync: (state) => state.runSync(),
-            setLimits: (state) => state.setLimits({ maxInstructions: 10 }),
-            setDeadline: (state) => state.setDeadline(Date.now() + 10),
+            defineType: (state) => state.defineType({ name: 'late', match: () => false }),
+            defineClass: (state) => state.defineClass(class Late {}),
         }
 
         for (const [name, use] of Object.entries(syncEntryPoints)) {

@@ -62,16 +62,34 @@ describe('Run limits', () => {
         expect(await state.doString('return 1 + 1')).to.be.equal(2)
     })
 
-    it('setLimits on the state reaches both the sync and the async path', async function () {
+    it('state.limits reaches both the sync and the async path', async function () {
         this.timeout(20_000)
         using state = await getState()
-        state.setLimits({ maxInstructions: 5_000 })
+        state.limits = { maxInstructions: 5_000 }
 
         await expect(state.doString(busyLoop)).to.eventually.be.rejectedWith(LuaInstructionLimitError)
         expect(() => state.doStringSync(busyLoop)).to.throw(LuaInstructionLimitError)
+
+        // A field of it changes the same way as the whole.
+        state.limits.maxInstructions = undefined
+        state.limits.timeout = 20
+        await expect(state.doString(busyLoop)).to.eventually.be.rejectedWith(LuaTimeoutError)
+        expect(() => state.doStringSync(busyLoop)).to.throw(LuaTimeoutError)
     })
 
-    it('a parked run keeps its deadline snapshot when the state deadline changes', async () => {
+    it('state.limits starts as a copy of the limits the state was created with', async () => {
+        const limits = { timeout: 1000, maxInstructions: 5_000 }
+        using state = await getState({ limits })
+
+        expect(state.limits).to.be.eql(limits)
+        state.limits.timeout = 5
+        expect(limits.timeout).to.be.equal(1000)
+
+        state.limits = undefined
+        expect(state.limits).to.be.eql({})
+    })
+
+    it('a parked run keeps the limits it started under when the ones of the state change', async () => {
         using state = await getState()
         let release
         state.set(
@@ -80,9 +98,9 @@ describe('Run limits', () => {
                 release = resolve
             }),
         )
-        state.setDeadline(Date.now() + 60_000)
+        state.limits.timeout = 60_000
         const pending = state.doString('gate:await() return 42')
-        state.setDeadline(Date.now() - 1)
+        state.limits.timeout = 0
         release()
         expect(await pending).to.equal(42)
         await expect(state.doString('gate:await()')).to.eventually.be.rejectedWith(LuaTimeoutError)
@@ -97,28 +115,197 @@ describe('Run limits', () => {
         }
     })
 
-    it('limits are restored after a scoped run', async () => {
-        using state = await getState()
-        state.setLimits({ maxInstructions: 999 })
+    it('the limits of a run replace the ones of the state field by field', async function () {
+        this.timeout(20_000)
+        using state = await getState({ limits: { maxInstructions: 5_000 } })
 
-        await state.doString('return 1', { maxInstructions: 10_000 })
-
-        expect(state.getLimits().maxInstructions).to.be.equal(999)
+        // The budget is replaced, so the loop below fits. No timeout came from either side.
+        expect(await state.doString('local x = 0 for i = 1, 20000 do x = x + 1 end return x', { maxInstructions: 1_000_000 })).to.be.equal(
+            20000,
+        )
+        // The timeout is added, and the budget of the state still applies.
+        await expect(state.doString(busyLoop, { timeout: 60_000 })).to.eventually.be.rejectedWith(LuaInstructionLimitError)
+        // Infinity lifts it.
+        expect(await state.doString('local x = 0 for i = 1, 20000 do x = x + 1 end return x', { maxInstructions: Infinity })).to.be.equal(
+            20000,
+        )
+        expect(state.limits).to.be.eql({ maxInstructions: 5_000 })
     })
 
-    // An interrupt used to be pushed into Lua as a JS error and recognised on the way back out by
-    // its identity, which only survived in a state whose extensions marshal an Error by reference.
-    // `objects: 'copy'` with `errors: false` -- a sandbox that keeps JS errors away from Lua, and so
-    // exactly the state most likely to set a limit in the first place -- turned every interrupt into
-    // an opaque `LuaError: table: 0x...`.
+    it('a run leaves no hook behind on the thread it used', async () => {
+        using state = await getState()
+
+        state.doStringSync('return 1', { maxInstructions: 10_000 })
+
+        expect(state.module.lua_gethook(state.address)).to.be.equal(0)
+    })
+
+    describe('every kind of run', () => {
+        const spin = 'while true do end'
+
+        it('a call of a Lua function is under the limits of the state', async function () {
+            this.timeout(20_000)
+            using state = await getState()
+            const fn = state.doStringSync(`return function() ${spin} end`)
+
+            state.limits = { timeout: 20 }
+            expect(() => fn()).to.throw(LuaTimeoutError)
+
+            state.limits = { maxInstructions: 5_000 }
+            expect(() => fn()).to.throw(LuaInstructionLimitError)
+
+            state.limits = { signal: AbortSignal.abort() }
+            expect(() => fn()).to.throw(LuaAbortError)
+        })
+
+        it('a call by name is under the limits of the state', async function () {
+            this.timeout(20_000)
+            using state = await getState({ limits: { maxInstructions: 5_000 } })
+            state.doStringSync(`function spin() ${spin} end`)
+
+            expect(() => state.call('spin')).to.throw(LuaInstructionLimitError)
+        })
+
+        it('a function that timed out does not put the next call beyond the limit', async function () {
+            this.timeout(20_000)
+            using state = await getState({ limits: { timeout: 20 } })
+            const fn = state.doStringSync(`return function() ${spin} end`)
+
+            // Lua leaves the debug hook disabled on a thread a hook raised an error out of, and
+            // calls reuse one thread: the second call used to run with no limit at all.
+            for (let call = 0; call < 3; call++) {
+                expect(() => fn(), `call ${call}`).to.throw(LuaTimeoutError)
+            }
+            expect(state.doStringSync('return 1 + 1')).to.be.equal(2)
+        })
+
+        it('a function that caught its interrupt keeps the limit for the next call', async function () {
+            this.timeout(20_000)
+            using state = await getState({ limits: { maxInstructions: 5_000 } })
+            const caught = state.doStringSync(`return function() return (pcall(function() ${spin} end)) end`)
+            const fn = state.doStringSync(`return function() ${spin} end`)
+
+            // The pcall swallows the interrupt and the function returns before the hook fires again.
+            expect(caught()).to.be.equal(false)
+            expect(() => fn()).to.throw(LuaInstructionLimitError)
+            expect(() => fn()).to.throw(LuaInstructionLimitError)
+        })
+    })
+
+    describe('a run made from inside another', () => {
+        const spin = 'while true do end'
+
+        // The run on the stack is a doString with limits of its own; the function below is what
+        // Lua hands to JS, which calls it back synchronously on another thread.
+        const callBack = (state, options, script = `each(function() ${spin} end)`) => {
+            state.set('each', (fn) => fn())
+            return state.doString(script, options)
+        }
+
+        it('cannot outlast the timeout of the outer one', async function () {
+            this.timeout(20_000)
+            using state = await getState()
+
+            await expect(callBack(state, { timeout: 20 })).to.eventually.be.rejectedWith(LuaTimeoutError)
+        })
+
+        it('spends from the instruction budget of the outer one', async function () {
+            this.timeout(20_000)
+            using state = await getState()
+
+            await expect(callBack(state, { maxInstructions: 5_000 })).to.eventually.be.rejectedWith(LuaInstructionLimitError)
+        })
+
+        it('is aborted by the signal of the outer one', async function () {
+            this.timeout(20_000)
+            using state = await getState()
+
+            await expect(callBack(state, { signal: AbortSignal.abort() })).to.eventually.be.rejectedWith(LuaAbortError)
+        })
+
+        it('counts what it executed against the outer one', async function () {
+            this.timeout(20_000)
+            // Each call back stays inside the budget on its own, and together they do not.
+            using state = await getState()
+            const run = callBack(
+                state,
+                { maxInstructions: 20_000 },
+                'for _ = 1, 100 do each(function() local x = 0 for i = 1, 2000 do x = x + 1 end end) end',
+            )
+
+            await expect(run).to.eventually.be.rejectedWith(LuaInstructionLimitError)
+        })
+
+        it('is interrupted where the JS function that made it can see', async function () {
+            this.timeout(20_000)
+            using state = await getState()
+            let seen
+            state.set('each', (fn) => {
+                try {
+                    fn()
+                } catch (error) {
+                    seen = error
+                    throw error
+                }
+            })
+
+            await expect(state.doString(`each(function() ${spin} end)`, { timeout: 20 })).to.eventually.be.rejectedWith(LuaTimeoutError)
+            expect(seen).to.be.an.instanceOf(LuaTimeoutError)
+        })
+
+        it('still has the limits of the state when the outer one has none', async function () {
+            this.timeout(20_000)
+            using state = await getState({ limits: { maxInstructions: 5_000 } })
+            state.set('each', (fn) => fn())
+
+            await expect(state.doString(`each(function() ${spin} end)`, { maxInstructions: Infinity })).to.eventually.be.rejectedWith(
+                LuaInstructionLimitError,
+            )
+        })
+
+        it('through doStringSync on the same thread stays inside the outer one too', async function () {
+            this.timeout(20_000)
+            using state = await getState()
+            state.set('nested', () => state.doStringSync(spin))
+
+            expect(() => state.doStringSync('nested()', { timeout: 20 })).to.throw(LuaTimeoutError)
+            expect(() => state.doStringSync('nested()', { maxInstructions: 5_000 })).to.throw(LuaInstructionLimitError)
+            expect(state.module.lua_gethook(state.address)).to.be.equal(0)
+        })
+
+        it('an asynchronous run started from inside another is on its own', async function () {
+            this.timeout(20_000)
+            using state = await getState()
+            state.set('sleep', (ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+
+            // The outer run returns the promise without waiting, well inside its 20ms; the run it
+            // started goes on for longer than that and is not cut short by it.
+            const started = await state.doString('return async(function() sleep(60):await() return "finished" end)()', { timeout: 20 })
+
+            expect(started).to.be.equal('finished')
+        })
+    })
+
+    it('a thread that a limit interrupted cannot be reset', async function () {
+        this.timeout(20_000)
+        using state = await getState()
+        const thread = state.newThread()
+        thread.loadString(busyLoop)
+        await expect(thread.run(0, { timeout: 20 })).to.eventually.be.rejectedWith(LuaTimeoutError)
+
+        // Lua leaves the hook of such a thread disabled, so a limit on its next run would be ignored.
+        expect(() => thread.resetThread()).to.throw('a thread that a limit interrupted cannot be reset')
+    })
+
+    // An interrupt is raised as a token rather than as a JS error pushed into Lua, so that reporting
+    // it does not depend on how the state marshals anything.
     describe('state configurations', () => {
         const configs = [
             ['the default proxy state', {}],
             ['objects: copy', { objects: 'copy' }],
-            ['objects: copy with errors off', { objects: 'copy', errors: false }],
             ['no injected globals', { inject: false }],
             ['no standard libraries', { libs: false }],
-            ['no libraries and nothing to marshal errors', { libs: false, objects: 'copy', errors: false, inject: false }],
+            ['no libraries and nothing injected', { libs: false, objects: 'copy', inject: false }],
         ]
 
         for (const [description, config] of configs) {
@@ -136,7 +323,7 @@ describe('Run limits', () => {
 
     it('an interrupt the script caught does not stand in for the error that followed', async function () {
         this.timeout(20_000)
-        using state = await getState({ objects: 'copy', errors: false })
+        using state = await getState({ objects: 'copy' })
 
         // The budget is spent inside the pcall, so the interrupt is raised and swallowed there. The
         // hook re-raises within another hookCount instructions, which is room enough for the error
@@ -169,7 +356,7 @@ describe('Run limits', () => {
 
     it('an interrupt token the script kept does not turn a later run into a limit error', async function () {
         this.timeout(20_000)
-        using state = await getState({ objects: 'copy', errors: false })
+        using state = await getState({ objects: 'copy' })
 
         state.doStringSync(`local ok, token = pcall(function () ${busyLoop} end) saved = token`, { maxInstructions: 5_000 })
 

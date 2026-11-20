@@ -304,8 +304,8 @@ describe('state.async', () => {
         await aborted
     })
 
-    it('falls back to the function timeout of the state', async () => {
-        using state = await getState({ limits: { functionTimeout: 10 } })
+    it('falls back to the timeout of the state', async () => {
+        using state = await getState({ limits: { timeout: 10 } })
         state.set('never', new Promise(() => {}))
         const fn = state.doStringSync('return function() never:await() end')
         await expect(state.async(fn)()).to.eventually.be.rejectedWith(LuaTimeoutError)
@@ -437,8 +437,8 @@ describe('async', () => {
         )
     })
 
-    it('runs under the function timeout of the state', async () => {
-        using state = await getState({ limits: { functionTimeout: 10 } })
+    it('runs under the timeout of the state', async () => {
+        using state = await getState({ limits: { timeout: 10 } })
         state.set('never', new Promise(() => {}))
         await expect(state.doStringSync('return async(function() never:await() end)()')).to.eventually.be.rejectedWith(LuaTimeoutError)
     })

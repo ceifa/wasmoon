@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events'
-import { LuaReturn, LuaThread, LuaType, decorate } from '../dist/index.js'
+import { LuaReturn, LuaThread, LuaType, copy, opaque, proxy } from '../dist/index.js'
 import { expect } from 'chai'
 import { getState, getLua } from './utils.js'
 import { setTimeout } from 'node:timers/promises'
@@ -403,7 +403,7 @@ describe('State', () => {
         await state.doString(`
             local success, err = pcall(throw)
             assert(success == false)
-            assert(tostring(err) == "Error: expected error")
+            assert(tostring(err) == "expected error")
             check()
         `)
 
@@ -641,9 +641,9 @@ describe('State', () => {
         using state = await getState()
         state.set('TestClass', {
             create: (name) => {
-                return decorate(
+                return copy(
                     {
-                        instance: decorate(new TestClass(name), { as: 'userdata' }),
+                        instance: opaque(new TestClass(name)),
                     },
                     {
                         metatable: {
@@ -679,26 +679,48 @@ describe('State', () => {
         expect(res).to.be.equal('demo name 2')
     })
 
-    it('calling a class from lua constructs it', async () => {
+    it('a function is a function, whatever it looks like', async () => {
         using state = await getState()
+        function Legacy(name) {
+            this.name = name
+        }
+        Legacy.prototype.getName = function () {
+            return this.name
+        }
         state.set('TestClass', TestClass)
+        state.set('Legacy', Legacy)
+
+        expect(await state.doString('return type(TestClass) .. "," .. type(Legacy)')).to.be.equal('function,function')
+        // A plain call stays a plain call, with the error JS gives for it.
+        await expect(state.doString('return TestClass("name")')).to.eventually.be.rejectedWith(
+            "Class constructor TestClass cannot be invoked without 'new'",
+        )
+        await expect(state.doString('return Legacy("legacy name")')).to.eventually.be.rejectedWith('Cannot set properties of undefined')
+        await expect(state.doString('return TestClass.hello()')).to.eventually.be.rejectedWith('attempt to index a function value')
+    })
+
+    it('a proxied class is indexable, and constructs through new', async () => {
+        using state = await getState()
+        state.set('TestClass', proxy(TestClass))
 
         const res = await state.doString(`
-        local instance = TestClass("demo name 3")
+        local instance = TestClass.new("demo name 3")
         return instance:getName() .. " " .. TestClass.hello()
     `)
         expect(res).to.be.equal('demo name 3 world')
+        expect(await state.doString('return TestClass.new == TestClass.new')).to.be.equal(true)
+        expect(state.get('TestClass')).to.be.equal(TestClass)
     })
 
-    it('calling a class with no methods still constructs it', async () => {
+    it('a proxied class with no methods still constructs', async () => {
         using state = await getState()
         class Empty {}
-        state.set('Empty', Empty)
+        state.set('Empty', proxy(Empty))
 
-        expect(await state.doString('return Empty()')).to.be.an.instanceOf(Empty)
+        expect(await state.doString('return Empty.new()')).to.be.an.instanceOf(Empty)
     })
 
-    it('a function-style class is indexable but called, not constructed', async () => {
+    it('a proxied function-style class is indexable, constructs through new, and is otherwise called', async () => {
         using state = await getState()
         function Legacy(name) {
             this.name = name
@@ -707,24 +729,35 @@ describe('State', () => {
             return this.name
         }
         Legacy.create = (name) => new Legacy(name)
-        state.set('Legacy', Legacy)
+        state.set('Legacy', proxy(Legacy))
 
         // Statics are reachable through the proxy.
         expect(await state.doString('return Legacy.create("legacy name"):getName()')).to.be.equal('legacy name')
+        expect(await state.doString('return Legacy.new("made new"):getName()')).to.be.equal('made new')
         // A plain call stays a plain call: strict-mode `this` is undefined, as it would be in JS.
         await expect(state.doString('return Legacy("legacy name")')).to.eventually.be.rejectedWith('Cannot set properties of undefined')
     })
 
-    it('calling Date constructs a date', async () => {
+    it('a member named new is the member, not the constructor', async () => {
         using state = await getState()
-        state.set('Date', Date)
+        const factory = () => 'called'
+        factory.new = () => 'its own new'
+        state.set('factory', proxy(factory))
 
-        expect(await state.doString('return Date()')).to.be.an.instanceOf(Date)
-        expect(await state.doString('return Date(0):getTime()')).to.be.equal(0)
-        expect(await state.doString('return Date.UTC(2020, 0, 1)')).to.be.equal(1577836800000)
+        expect(await state.doString('return factory.new()')).to.be.equal('its own new')
     })
 
-    it('builtins that must not be constructed are still called', async () => {
+    it('a proxied Date constructs through new and is a function when called', async () => {
+        using state = await getState()
+        state.set('Date', proxy(Date))
+
+        expect(await state.doString('return Date.new()')).to.be.an.instanceOf(Date)
+        expect(await state.doString('return Date.new(0):getTime()')).to.be.equal(0)
+        expect(await state.doString('return Date.UTC(2020, 0, 1)')).to.be.equal(1577836800000)
+        expect(await state.doString('return Date()')).to.be.a('string')
+    })
+
+    it('builtins that must not be constructed are called', async () => {
         using state = await getState()
         state.set('String', String)
         state.set('BigInt', BigInt)
@@ -734,9 +767,9 @@ describe('State', () => {
         expect(await state.doString('return BigInt(5)')).to.be.equal(5)
     })
 
-    it('a builtin function-style class is indexable and constructible', async () => {
+    it('a proxied builtin function-style class is indexable and constructible', async () => {
         using state = await getState()
-        state.set('Buffer', Buffer)
+        state.set('Buffer', proxy(Buffer))
 
         expect(await state.doString('return Buffer.from("abc"):toString("hex")')).to.be.equal('616263')
         expect(await state.doString('return Buffer.alloc(2).length')).to.be.equal(2)
@@ -749,7 +782,7 @@ describe('State', () => {
         }
         state.set('add', add)
         state.set('addArrow', (a, b) => a + b)
-        state.set('addProxied', decorate(add, { as: 'proxy' }))
+        state.set('addProxied', proxy(add))
 
         expect(await state.doString('return add(1, 2)')).to.be.equal(3)
         expect(await state.doString('return addArrow(1, 2)')).to.be.equal(3)
@@ -785,15 +818,33 @@ describe('State', () => {
         expect(res).to.be.equal('wrapped: demo')
     })
 
-    it('classes should be a userdata when proxied', async () => {
+    it('a defined class found on a proxied object is that class', async () => {
         using state = await getState()
+        state.defineClass(TestClass)
         state.set('obj', { TestClass })
 
-        const testClass = await state.doString(`
-        return obj.TestClass
-    `)
+        expect(await state.doString('return obj.TestClass')).to.be.equal(TestClass)
+        expect(await state.doString('return obj.TestClass("nested"):getName()')).to.be.equal('nested')
+    })
 
-        expect(testClass).to.be.equal(TestClass)
+    it('a proxied class found on a proxied object is that class', async () => {
+        using state = await getState()
+        state.set('obj', { TestClass: proxy(TestClass) })
+
+        expect(await state.doString('return obj.TestClass')).to.be.equal(TestClass)
+        expect(await state.doString('return obj.TestClass.new("nested"):getName()')).to.be.equal('nested')
+    })
+
+    it('a number indexes an array from 1 and any other object by the property it names', async () => {
+        using state = await getState()
+        state.set('arr', ['a', 'b'])
+        state.set('obj', { 0: 'zero', 1: 'one' })
+
+        expect(await state.doString('return arr[1] .. arr[2]')).to.be.equal('ab')
+        expect(await state.doString('return obj[0] .. obj[1]')).to.be.equal('zeroone')
+        await state.doString('arr[3] = "c" obj[2] = "two"')
+        expect(state.get('arr')).to.be.eql(['a', 'b', 'c'])
+        expect(state.get('obj')[2]).to.be.equal('two')
     })
 
     it('timeout blocking lua program', async () => {
@@ -806,29 +857,23 @@ describe('State', () => {
         await expect(state.run(0, { timeout: 5 })).eventually.to.be.rejectedWith('thread timeout exceeded')
     })
 
-    it('the most recently set timeout should be the one that applies', async function () {
+    it('the timeout of a run should replace the one of the state', async function () {
         this.timeout(30_000)
-        using state = await getState()
+        using state = await getState({ limits: { timeout: 20 } })
         const thread = state.newThread()
-
-        thread.setDeadline(Date.now() + 20)
-        thread.setDeadline(Date.now() + 20_000)
         thread.loadString('local x = 0 for i = 1, 20000000 do x = x + 1 end return x')
 
-        expect((await thread.run(0))[0]).to.be.equal(20000000)
+        expect((await thread.run(0, { timeout: 20_000 }))[0]).to.be.equal(20000000)
     })
 
-    it('clearing a timeout should disable the hook', async function () {
+    it('a timeout of Infinity should lift the one of the state', async function () {
         this.timeout(30_000)
-        using state = await getState()
+        using state = await getState({ limits: { timeout: 10 } })
         const thread = state.newThread()
-
-        thread.setDeadline(Date.now() + 10)
-        thread.setDeadline(undefined)
         thread.loadString('local x = 0 for i = 1, 5000000 do x = x + 1 end return 7')
 
-        expect(thread.getDeadline()).to.be.undefined
-        expect((await thread.run(0))[0]).to.be.equal(7)
+        expect((await thread.run(0, { timeout: Infinity }))[0]).to.be.equal(7)
+        expect(state.module.lua_gethook(thread.address)).to.be.equal(0)
     })
 
     it('overwrite lib function', async () => {
@@ -852,7 +897,7 @@ describe('State', () => {
 
     it('inject a userdata with a metatable should succeed', async () => {
         using state = await getState()
-        const obj = decorate(
+        const obj = copy(
             {},
             {
                 metatable: { __index: (_, k) => `Hello ${k}!` },
@@ -897,6 +942,7 @@ describe('State', () => {
 
     it('static methods should be callable on classes', async () => {
         using state = await getState()
+        state.defineClass(TestClass)
         state.set('TestClass', TestClass)
 
         const testHello = await state.doString(`return TestClass.hello()`)
@@ -908,7 +954,7 @@ describe('State', () => {
         using state = await getState()
         const testFunction = () => undefined
         testFunction.hello = 'world'
-        state.set('TestFunction', decorate(testFunction, { as: 'proxy' }))
+        state.set('TestFunction', proxy(testFunction))
 
         const testHello = await state.doString(`return TestFunction.hello`)
 
@@ -1210,13 +1256,13 @@ describe('State', () => {
       `)
 
         testEmitter.emit('resolve')
-        await expect(resPromise).to.eventually.be.rejectedWith('Error: attempt to yield across a C-call boundary')
+        await expect(resPromise).to.eventually.be.rejectedWith('attempt to yield across a C-call boundary')
 
         expect(await state.doString(`return 42`)).to.equal(42)
     })
 
     it('forced yield within JS callback from Lua doesnt cause vm to crash', async () => {
-        using state = await getState({ limits: { functionTimeout: 10 } })
+        using state = await getState({ limits: { timeout: 10 } })
         state.set('promise', Promise.resolve())
         const thread = state.newThread()
         thread.loadString(`
@@ -1397,7 +1443,7 @@ describe('Load mode', () => {
     })
 })
 
-describe('Decoration', () => {
+describe('Marshalling', () => {
     class Thing {
         constructor(name) {
             this.name = name
@@ -1407,30 +1453,35 @@ describe('Decoration', () => {
         }
     }
 
-    it('as userdata hides the members', async () => {
+    it('opaque hides the members and reads back as the same value', async () => {
         using state = await getState()
-        state.set('thing', decorate(new Thing('bob'), { as: 'userdata' }))
+        const thing = new Thing('bob')
+        state.set('thing', opaque(thing))
 
         // An opaque userdata has no __index of its own, so Lua refuses to index it at all.
         await expect(state.doString('return thing.name')).to.eventually.be.rejectedWith('attempt to index a js_userdata value')
+        expect(await state.doString('return thing')).to.be.equal(thing)
     })
 
-    it('as userdata still cannot take a metatable of its own', async () => {
+    it('a metatable can only go on a value copied into a table', async () => {
         using state = await getState()
 
-        // The userdata extension owns the metatable slot. That is a constraint of the extension,
-        // not of the decoration API, so a custom metatable has to go on a wrapper.
-        expect(() => state.set('thing', decorate(new Thing('bob'), { as: 'userdata', metatable: { __name: 'js_thing' } }))).to.throw(
-            'data already has associated metatable: js_userdata',
-        )
+        // Lua has one metatable for every function, so setting it through one would change them all.
+        expect(() =>
+            state.set(
+                'fn',
+                copy(() => undefined, { metatable: { __name: 'js_fn' } }),
+            ),
+        ).to.throw('only a value copied into a Lua table can be given a metatable')
+        expect(await state.doString('return getmetatable(print) == nil')).to.be.equal(true)
     })
 
-    it('a wrapper carries the metatable around an opaque userdata', async () => {
+    it('a copied wrapper carries the metatable around an opaque userdata', async () => {
         using state = await getState()
         state.set(
             'thing',
-            decorate(
-                { inner: decorate(new Thing('bob'), { as: 'userdata' }) },
+            copy(
+                { inner: opaque(new Thing('bob')) },
                 { metatable: { __name: 'js_thing', __index: (self, key) => (key === 'name' ? self.inner.getName() : null) } },
             ),
         )
@@ -1438,20 +1489,84 @@ describe('Decoration', () => {
         expect(await state.doString('return thing.name')).to.be.equal('bob')
     })
 
-    it('as value copies an object instead of proxying it', async () => {
+    it('copy copies an object instead of proxying it, and everything inside it', async () => {
         using state = await getState()
-        state.set('plain', decorate({ a: 1 }, { as: 'value' }))
+        state.set('plain', copy({ a: 1, list: [{ deep: true }], thing: new Thing('bob') }))
 
         expect(await state.doString('return type(plain)')).to.be.equal('table')
+        expect(await state.doString('return type(plain.list) .. "," .. type(plain.list[1])')).to.be.equal('table,table')
+        expect(await state.doString('return plain.list[1].deep')).to.be.equal(true)
+        // An instance is copied like any object: its own fields, and nothing of its prototype.
+        expect(await state.doString('return type(plain.thing) .. "," .. plain.thing.name .. "," .. type(plain.thing.getName)')).to.be.equal(
+            'table,bob,nil',
+        )
     })
 
-    it('as proxy forces a function through the proxy layer', async () => {
+    it('copy leaves what has a representation of its own, and what is wrapped to cross another way', async () => {
+        using state = await getState()
+        const thing = new Thing('bob')
+        state.set(
+            'plain',
+            copy({
+                fn: () => 'called',
+                promise: Promise.resolve(1),
+                error: new Error('kept'),
+                proxied: proxy(thing),
+                hidden: opaque(thing),
+            }),
+        )
+
+        expect(await state.doString('return plain.fn()')).to.be.equal('called')
+        expect(await state.doString('return plain.promise:await()')).to.be.equal(1)
+        expect(await state.doString('return tostring(plain.error)')).to.be.equal('kept')
+        expect(await state.doString('return plain.proxied:getName()')).to.be.equal('bob')
+        expect(await state.doString('return plain.hidden')).to.be.equal(thing)
+    })
+
+    it('copy keeps cycles and shared references', async () => {
+        using state = await getState()
+        const shared = { n: 1 }
+        const root = { a: shared, b: shared }
+        root.self = root
+        state.set('root', copy(root))
+
+        expect(await state.doString('return root.self == root and root.a == root.b')).to.be.equal(true)
+    })
+
+    it('proxy forces a function through the proxy layer', async () => {
         using state = await getState()
         const fn = () => undefined
         fn.hello = 'world'
-        state.set('fn', decorate(fn, { as: 'proxy' }))
+        state.set('fn', proxy(fn))
 
         expect(await state.doString('return fn.hello')).to.be.equal('world')
+    })
+
+    it('proxy keeps an object by reference in a state that copies', async () => {
+        using state = await getState({ objects: 'copy' })
+        const thing = new Thing('bob')
+        state.set('copied', thing)
+        state.set('proxied', proxy(thing))
+
+        expect(await state.doString('return type(copied) .. "," .. type(proxied)')).to.be.equal('table,userdata')
+        await state.doString('proxied.name = "alice"')
+        expect(thing.name).to.be.equal('alice')
+    })
+
+    it('the last wrapper is the one that counts', async () => {
+        using state = await getState()
+        state.set('thing', copy(opaque({ a: 1 })))
+
+        expect(await state.doString('return thing.a')).to.be.equal(1)
+    })
+
+    it('a wrapped primitive is the primitive', async () => {
+        using state = await getState()
+        state.set('n', copy(5))
+        state.set('s', opaque('text'))
+
+        expect(await state.doString('return n + 1')).to.be.equal(6)
+        expect(await state.doString('return s')).to.be.equal('text')
     })
 })
 
@@ -1498,6 +1613,6 @@ describe('Synchronous runs', () => {
 
         state.doStringSync('return 1', { timeout: 1000 })
 
-        expect(state.getDeadline()).to.be.undefined
+        expect(state.module.lua_gethook(state.address)).to.be.equal(0)
     })
 })
