@@ -116,7 +116,7 @@ describe('Filesystem', () => {
         const lua = await getLua()
         lua.writeFile('fs-probe.lua', 'return 1')
 
-        expect(lua.filesystem.analyzePath('/fs-probe.lua').exists).to.be.true
+        expect(lua.filesystem.readFile('/fs-probe.lua', { encoding: 'utf8' })).to.be.equal('return 1')
     })
 
     it('path should expose the emscripten path helpers', async () => {

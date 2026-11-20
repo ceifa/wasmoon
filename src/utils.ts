@@ -9,18 +9,11 @@ export const isPromise = (target: unknown): target is PromiseLike<unknown> => {
     return typeof target === 'object' && target !== null && typeof (target as PromiseLike<unknown>).then === 'function'
 }
 
-/** Read by the build, which brands the glue's unwind classes with it. */
-export const UNWIND_BRAND = '__emscriptenUnwind'
-
 /**
  * A Lua longjmp out of a C function that a JS callback is on the stack of, which has to be rethrown
  * rather than turned into a Lua error. With `SUPPORT_LONGJMP=wasm` it is a `WebAssembly.Exception`
- * the wasm caller resumes unwinding from; the branded `EmscriptenEH` covers the other unwinds
- * Emscripten still throws from JS (its class is module local, hence the brand).
+ * the wasm caller resumes unwinding from, and the glue throws no unwind of its own from JS.
  */
 export const isEmscriptenUnwind = (value: unknown): boolean => {
-    if (typeof WebAssembly.Exception === 'function' && value instanceof WebAssembly.Exception) {
-        return true
-    }
-    return (value as Record<string, unknown> | null | undefined)?.[UNWIND_BRAND] === true
+    return value instanceof WebAssembly.Exception
 }

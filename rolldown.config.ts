@@ -1,7 +1,6 @@
 import { copyFile } from 'node:fs/promises'
 import { defineConfig } from 'rolldown'
 import pkg from './package.json' with { type: 'json' }
-import { UNWIND_BRAND } from './src/utils'
 
 export default defineConfig({
     // The CLI is an entry of its own: it imports the library by package name at run time rather
@@ -41,25 +40,6 @@ export default defineConfig({
                 if (id === 'package-version') {
                     return `export default '${pkg.version}'`
                 }
-            },
-        },
-        {
-            // A consumer's minifier renames the glue's unwind class but not a string compared
-            // against its name, so isEmscriptenUnwind goes by a brand on the prototype instead.
-            name: 'emscripten-unwind-brand',
-            transform(code, id) {
-                if (!id.endsWith('glue.js')) {
-                    return
-                }
-                const branded = code.replace(/class EmscriptenEH\s*\{\s*\}/, (match) => {
-                    return `${match}EmscriptenEH.prototype.${UNWIND_BRAND}=true;`
-                })
-                if (branded === code) {
-                    // A silent miss would ship a build where every Lua error path is subtly wrong.
-                    this.error('EmscriptenEH declaration not found in the glue, so the unwind brand would be a no-op')
-                }
-                // Generated code with no sourcemap of its own, so there is nothing to preserve.
-                return { code: branded, map: null }
             },
         },
         {

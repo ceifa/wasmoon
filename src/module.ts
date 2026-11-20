@@ -40,13 +40,9 @@ export interface LuaEmscriptenModule extends EmscriptenModule {
     removeFunction: typeof removeFunction
     setValue: typeof setValue
     getValue: typeof getValue
-    // `filesystems` is the only member missing upstream; mkdirTree and the rest come from typeof FS.
-    FS: typeof FS & {
-        filesystems: {
-            NODEFS: Emscripten.FileSystemType
-            MEMFS: Emscripten.FileSystemType
-        }
-    }
+    FS: typeof FS
+    // Exported by the build, since Emscripten 7 no longer hangs the backends off FS.filesystems.
+    NODEFS: Emscripten.FileSystemType
     PATH: EmscriptenPath
     stringToNewUTF8: typeof stringToNewUTF8
     lengthBytesUTF8: typeof lengthBytesUTF8
@@ -262,9 +258,9 @@ function assertMountFits(live: readonly ResolvedMount[], candidate: ResolvedMoun
     }
 }
 
-function mountHostDirectory(fs: EmscriptenFS, { virtualPath, hostPath }: ResolvedMount): void {
-    fs.mkdirTree(virtualPath)
-    fs.mount(fs.filesystems.NODEFS, { root: hostPath }, virtualPath)
+function mountHostDirectory(emscripten: LuaEmscriptenModule, { virtualPath, hostPath }: ResolvedMount): void {
+    emscripten.FS.mkdirTree(virtualPath)
+    emscripten.FS.mount(emscripten.NODEFS, { root: hostPath }, virtualPath)
 }
 
 /** Everything the wasm module needs before it starts, and nothing that outlives that. */
@@ -294,7 +290,7 @@ function createPreRun(config: PreRunConfig): (initializedModule: LuaEmscriptenMo
         // Nothing to do for `fs: 'host'`: that glue is NODERAWFS, so the filesystem already is the
         // host's, working directory included.
         for (const mount of config.mounts) {
-            mountHostDirectory(initializedModule.FS, mount)
+            mountHostDirectory(initializedModule, mount)
         }
 
         if (config.stdin || config.stdout || config.stderr) {
@@ -608,7 +604,7 @@ export default class LuaModule extends LuaBindings {
 
         const mount = resolveMount(virtualPath, hostPath)
         assertMountFits(this.mounts, mount)
-        mountHostDirectory(this.emscripten.FS, mount)
+        mountHostDirectory(this.emscripten, mount)
         this.mounts.push(mount)
     }
 
