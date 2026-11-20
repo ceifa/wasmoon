@@ -26,12 +26,12 @@ describe('Bundling', () => {
             input: join(DIST_DIR, 'index.js'),
             external: ['node:module'],
         })
-        // A directory rather than a single file, because the host filesystem glue stays a chunk of
-        // its own -- which is also how a consumer has to bundle us when they target Node.
+        // A directory rather than a single file, because each glue stays a chunk of its own --
+        // which is also how a consumer has to bundle us when they target Node.
         await bundle.write({
             dir: tempDir,
             entryFileNames: 'index.js',
-            chunkFileNames: 'glue-host.js',
+            chunkFileNames: '[name]-[hash].js',
             format: 'esm',
             minify: true,
         })
@@ -62,6 +62,19 @@ describe('Bundling', () => {
         expect(pkg.browser[stubbed[0]]).to.be.false
         expect(join(DIST_DIR, stubbed[0].replace('./dist/', ''))).to.satisfy(existsSync)
         expect(await readFile(join(DIST_DIR, 'index.js'), 'utf8')).to.include(stubbed[0].replace('./dist/', './'))
+    })
+
+    it('every glue is a chunk of its own, so a load only downloads the one it uses', async () => {
+        // Emscripten resolves the wasm next to the glue, which is how a glue is told apart.
+        const resolvesWasm = /new URL\(\s*['"`]glue\.wasm['"`]/
+        const glues = ['glue-memory.js', 'glue-host.js', 'glue-none.js']
+        const index = await readFile(join(DIST_DIR, 'index.js'), 'utf8')
+
+        expect(index).to.not.match(resolvesWasm)
+        for (const glue of glues) {
+            expect(index).to.include(`./${glue}`)
+            expect(await readFile(join(DIST_DIR, glue), 'utf8')).to.match(resolvesWasm)
+        }
     })
 
     it('minifying the bundle renames the unwind classes', async () => {

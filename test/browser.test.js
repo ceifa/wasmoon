@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect } from 'chai'
 import { chromium } from 'playwright'
+import { rolldown } from 'rolldown'
 
 const DIST_DIR = fileURLToPath(new URL('../dist', import.meta.url))
 
@@ -160,6 +161,19 @@ describe('Browser environment', () => {
             }
         `)
         expect(result).to.eql({ fair: true, error: 'LuaTimeoutError', other: 42 })
+    })
+
+    it('fs: none downloads its own glue and not the default one', async function () {
+        this.timeout(30_000)
+        const result = await runInBrowser(`
+            const lua = await LuaRuntime.load({ fs: 'none' })
+            return await lua.createState().doString('return 6 * 7')
+        `)
+
+        expect(result).to.be.equal(42)
+        const glues = requested.filter((url) => /\/glue-\w+\.js$/.test(url)).map((url) => url.split('/').pop())
+        expect(glues).to.be.deep.equal(['glue-none.js'])
+        expectNoExternalRequests()
     })
 
     it('load Lua engine in browser should succeed', async function () {
@@ -343,12 +357,16 @@ describe('Browser environment', () => {
 
 /**
  * A single self contained HTML file, the only shape that works from `file:`: Chromium refuses to
- * load an ES module over that protocol, so the bundle is inlined. It is already a single chunk, and
- * its exported bindings are in scope of the inline module.
+ * load an ES module over that protocol, so the bundle is inlined. Rebundled into one chunk first,
+ * glues included, the way a consumer's bundler builds such a page; its exported bindings are then
+ * in scope of the inline module.
  */
 async function writeInlinedPage() {
     const tempDir = await mkdtemp(join(tmpdir(), 'wasmoon-file-'))
-    const bundle = await readFile(join(DIST_DIR, 'index.js'), 'utf8')
+    const build = await rolldown({ input: join(DIST_DIR, 'index.js'), platform: 'browser' })
+    const { output } = await build.generate({ format: 'esm', codeSplitting: false })
+    await build.close()
+    const bundle = output[0].code
 
     const htmlFile = join(tempDir, 'page.html')
     await writeFile(

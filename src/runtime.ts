@@ -77,9 +77,11 @@ export default class LuaRuntime {
     }
 
     public exists(path: string): boolean {
+        // Outside the try, so that having no filesystem is an error rather than a missing file.
+        const filesystem = this.filesystem
         // Emscripten 7 dropped FS.analyzePath, which did this same lookup and caught its error.
         try {
-            this.filesystem.lookupPath(path, { follow: true })
+            filesystem.lookupPath(path, { follow: true })
             return true
         } catch {
             return false
@@ -108,10 +110,10 @@ export default class LuaRuntime {
 
     /** Emscripten's own filesystem API, for everything the methods above do not cover. */
     public get filesystem(): EmscriptenFS {
-        return this.module.emscripten.FS
+        return this.module.filesystem
     }
 
     public get path(): EmscriptenPath {
-        return this.module.emscripten.PATH
+        return this.module.path
     }
 }

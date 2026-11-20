@@ -2,7 +2,6 @@
 // lists "emscripten" in their own tsconfig `types`, so utils/reference-types.js puts a
 // `/// <reference types="emscripten" />` at the top of the emitted declarations to cover everyone
 // else. tsc drops the directive when it is written here, hence the build step.
-import initWasmModule from '../build/glue.js'
 import LuaBindings from './bindings.gen'
 import { canSuspend, limitError, type PendingSuspend, settleOrInterrupt, type SettleOutcome, yieldToEventLoop } from './async'
 import type Thread from './thread'
@@ -21,8 +20,11 @@ export type EnvironmentVariables = Record<string, string | undefined>
  * - `'host'`: the real filesystem, through Node. Paths, the working directory, symlinks and
  *   permissions are the host's own, because every operation goes straight to `node:fs`. Node only,
  *   and no sandbox: Lua can read and write anything the process can.
+ * - `'none'`: no filesystem at all, for a smaller download. Opening, removing or renaming a file
+ *   fails, so does `require` of anything but a preloaded module, and the runtime's file methods
+ *   throw. Stdio still works, through the stdin, stdout and stderr options.
  */
-export type LuaFileSystem = 'memory' | 'host'
+export type LuaFileSystem = 'memory' | 'host' | 'none'
 
 /** Emscripten's own path helpers, which work on the virtual filesystem rather than the host one. */
 export interface EmscriptenPath {
@@ -40,6 +42,7 @@ export interface LuaEmscriptenModule extends EmscriptenModule {
     removeFunction: typeof removeFunction
     setValue: typeof setValue
     getValue: typeof getValue
+    // FS, NODEFS and PATH are missing from the glue for `fs: 'none'`.
     FS: typeof FS
     // Exported by the build, since Emscripten 7 no longer hangs the backends off FS.filesystems.
     NODEFS: Emscripten.FileSystemType
@@ -185,7 +188,7 @@ interface ResolvedMount {
 
 // The only rule about `mounts` that is not about a single mount, so both the option and the method
 // report it with one voice.
-const MOUNTS_NEED_MEMORY_FS = `mounts belong to fs: 'memory'; with 'host' every host path is already reachable`
+const MOUNTS_NEED_MEMORY_FS = `mounts belong to fs: 'memory'; with 'host' every host path is already reachable, and 'none' has nothing to mount into`
 
 /**
  * Synchronous and lazy, which is what lets a mount be added after loading without the load path
@@ -267,9 +270,9 @@ function mountHostDirectory(emscripten: LuaEmscriptenModule, { virtualPath, host
 interface PreRunConfig {
     env: EnvironmentVariables | undefined
     mounts: readonly ResolvedMount[]
-    stdin: LuaModuleOptions['stdin']
-    stdout: LuaModuleOptions['stdout']
-    stderr: LuaModuleOptions['stderr']
+    stdin?: LuaModuleOptions['stdin']
+    stdout?: LuaModuleOptions['stdout']
+    stderr?: LuaModuleOptions['stderr']
 }
 
 interface ReferenceEntry {
@@ -312,7 +315,7 @@ export default class LuaModule extends LuaBindings {
         if (fs === 'host' && !isNode) {
             throw new Error(`fs: 'host' is the real filesystem, which only Node has; elsewhere use the default 'memory' one`)
         }
-        if (fs === 'host' && mountEntries.length > 0) {
+        if (fs !== 'memory' && mountEntries.length > 0) {
             throw new Error(MOUNTS_NEED_MEMORY_FS)
         }
 
@@ -337,12 +340,33 @@ export default class LuaModule extends LuaBindings {
             }
         }
 
-        const preRun = createPreRun({ env: opts.env, mounts, stdin: opts.stdin, stdout: opts.stdout, stderr: opts.stderr })
+        // Without a filesystem there is no FS.init to hand stdio to, so that glue takes it directly,
+        // with the defaults the other glues fall back to when given nothing.
+        const stdio =
+            fs === 'none'
+                ? {
+                      stdin: createInputReader(opts.stdin),
+                      stdout: createOutputWriter(opts.stdout ?? ((line) => console.log(line))),
+                      stderr: createOutputWriter(opts.stderr ?? printErr),
+                  }
+                : {}
+        const preRun = createPreRun({
+            env: opts.env,
+            mounts,
+            ...(fs === 'none' ? {} : { stdin: opts.stdin, stdout: opts.stdout, stderr: opts.stderr }),
+        })
 
-        // Two glues over the one wasm, differing only in their filesystem (see
-        // utils/build-wasm.sh). The host one is imported on demand, both because it throws outside
-        // Node and so that a browser bundle leaves it in a chunk it never loads.
-        const init = fs === 'host' ? (await import('../build/host/glue.js')).default : initWasmModule
+        // Three glues over the one wasm, differing only in their filesystem (see
+        // utils/build-wasm.sh). Each is a chunk of its own, imported on demand, so a load only
+        // downloads the one it asked for -- and a browser bundle never loads the host one, which
+        // throws outside Node.
+        const init = (
+            fs === 'host'
+                ? await import('../build/host/glue.js')
+                : fs === 'none'
+                  ? await import('../build/none/glue.js')
+                  : await import('../build/glue.js')
+        ).default
         if (typeof init !== 'function') {
             // The `browser` field points bundlers at a stub, since the glue only runs under Node.
             throw new Error(`fs: 'host' needs glue-host.js, which the bundle replaced with a stub because it targets the browser`)
@@ -350,7 +374,7 @@ export default class LuaModule extends LuaBindings {
 
         const load = async (wasmFile?: string): Promise<LuaModule> => {
             return new LuaModule(
-                await init({ ...(wasmFile === undefined ? {} : { locateFile: () => wasmFile }), preRun, printErr }),
+                await init({ ...(wasmFile === undefined ? {} : { locateFile: () => wasmFile }), preRun, printErr, ...stdio }),
                 opts.onWarn,
                 fs,
                 mounts,
@@ -598,7 +622,7 @@ export default class LuaModule extends LuaBindings {
      * does at load time and with the same checks. Node only, and only with `fs: 'memory'`.
      */
     public mount(virtualPath: string, hostPath: string): void {
-        if (this.fs === 'host') {
+        if (this.fs !== 'memory') {
             throw new Error(MOUNTS_NEED_MEMORY_FS)
         }
 
@@ -608,9 +632,27 @@ export default class LuaModule extends LuaBindings {
         this.mounts.push(mount)
     }
 
+    /** The emscripten module's `FS`, which a module loaded with `fs: 'none'` does not have. */
+    public get filesystem(): EmscriptenFS {
+        this.assertFilesystem()
+        return this.emscripten.FS
+    }
+
+    /** The emscripten module's `PATH`, which comes and goes with the filesystem. */
+    public get path(): EmscriptenPath {
+        this.assertFilesystem()
+        return this.emscripten.PATH
+    }
+
+    private assertFilesystem(): void {
+        if (this.fs === 'none') {
+            throw new Error(`there is no filesystem with fs: 'none'; load with 'memory' (the default) or 'host' to have one`)
+        }
+    }
+
     /** Detaches a {@link LuaModule.mount}, leaving its mount point behind as an empty directory. */
     public unmount(virtualPath: string): void {
-        this.emscripten.FS.unmount(virtualPath)
+        this.filesystem.unmount(virtualPath)
         // Dropped only once Emscripten agrees it was a mount point, so a failed unmount leaves the
         // bookkeeping matching what is actually mounted.
         const index = this.mounts.findIndex((mount) => mount.virtualPath === virtualPath)

@@ -10,6 +10,10 @@ declare module '*/glue.js' {
     const initWasmModule: (
         moduleArg?: Partial<Pick<EmscriptenModule, 'locateFile' | 'print' | 'printErr'>> & {
             preRun?: (module: import('./module').LuaEmscriptenModule) => void
+            // Read by the glue without a filesystem only; see utils/no-filesystem.js.
+            stdin?: (() => number | null) | null
+            stdout?: ((charCode: number | null) => void) | null
+            stderr?: ((charCode: number | null) => void) | null
         },
     ) => Promise<import('./module').LuaEmscriptenModule>
     export default initWasmModule
