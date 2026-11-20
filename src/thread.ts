@@ -573,9 +573,9 @@ export default class Thread {
                 return null
             case LuaType.Number: {
                 const value = this.module.lua_tonumberx(this.address, index, null)
-                // Only outside the safe range can the integer subtype change the result, and
-                // checking that first keeps the common case to a single wasm call.
-                if (Number.isSafeInteger(value) || !this.module.lua_isinteger(this.address, index)) {
+                // Only a whole number outside the safe range can be an integer the double got
+                // wrong, and checking that first keeps every other read to a single wasm call.
+                if (Number.isSafeInteger(value) || !Number.isInteger(value) || !this.module.lua_isinteger(this.address, index)) {
                     return value
                 }
                 return this.module.lua_tointegerx(this.address, index, null)

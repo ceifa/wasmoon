@@ -138,7 +138,7 @@ const INLINE_DECODE_LIMIT = 32
 // The short strings read out of Lua are mostly the same few names over and over -- table keys,
 // globals, metamethod names -- so the string built for a run of bytes is kept and handed back the
 // next time those bytes are read, which also gives the property lookups it usually feeds the
-// same, already internalized string. Direct mapped on a hash of the bytes; a power of two.
+// same, already internalized string. Direct mapped on the address of the bytes; a power of two.
 const DECODED_STRING_CACHE_SIZE = 32
 
 // The wasm value types Emscripten's function signature letters map to. `p` is a pointer, which is
@@ -482,12 +482,13 @@ export default class LuaModule extends LuaBindings {
         return yieldToEventLoop()
     }
     private stringBuffer = 0
+    private stringBufferView: Uint8Array | undefined
     // Initialized together on the first short ASCII read. Numeric-only runtimes need no cache.
-    // Empty slots hold '', which no non-empty read can match, under a hash of 0.
+    // Empty slots hold '', which no non-empty read can match, under the null pointer.
     private decodedStrings: string[] | undefined
-    private decodedStringHashes!: Int32Array
-    // The hash last missed in each slot, so a string is kept only once it has been read twice.
-    private candidateStringHashes!: Int32Array
+    private decodedStringPointers!: Int32Array
+    // The address last missed in each slot, so a string is kept only once it has been read twice.
+    private candidateStringPointers!: Int32Array
     /** Built on first use by {@link referenceGcFunction}, then kept for the module's lifetime. */
     private referenceGcPointer: number | undefined
 
@@ -682,41 +683,36 @@ export default class LuaModule extends LuaBindings {
         }
         const heap = this.heap
         if (length <= INLINE_DECODE_LIMIT) {
-            let hash = length
-            let index = 0
-            while (index < length) {
-                const code = heap[pointer + index]
-                if (code > 0x7f) {
-                    break
+            let strings = this.decodedStrings
+            if (!strings) {
+                this.decodedStringPointers = new Int32Array(DECODED_STRING_CACHE_SIZE)
+                this.candidateStringPointers = new Int32Array(DECODED_STRING_CACHE_SIZE)
+                this.decodedStrings = strings = new Array<string>(DECODED_STRING_CACHE_SIZE).fill('')
+            }
+            // Lua interns a string this short, so one that is read again is read at the same
+            // address. What was read there before is still compared, in one pass over the bytes:
+            // the address outlives the string, and Lua puts another at it once that is collected.
+            const slot = (pointer >>> 3) & (DECODED_STRING_CACHE_SIZE - 1)
+            if (this.decodedStringPointers[slot] === pointer) {
+                const cached = strings[slot]
+                if (cached.length === length && isAsciiAt(cached, heap, pointer)) {
+                    return cached
                 }
-                hash = (Math.imul(hash, 31) + code) | 0
+            }
+            let index = 0
+            while (index < length && heap[pointer + index] <= 0x7f) {
                 index++
             }
             if (index === length) {
-                let strings = this.decodedStrings
-                if (!strings) {
-                    this.decodedStringHashes = new Int32Array(DECODED_STRING_CACHE_SIZE)
-                    this.candidateStringHashes = new Int32Array(DECODED_STRING_CACHE_SIZE)
-                    this.decodedStrings = strings = new Array<string>(DECODED_STRING_CACHE_SIZE).fill('')
-                }
-                // The bytes are only compared once the whole hash matches, so a miss costs little
-                // more than the hashing pass.
-                const slot = hash & (DECODED_STRING_CACHE_SIZE - 1)
-                if (this.decodedStringHashes[slot] === hash) {
-                    const cached = strings[slot]
-                    if (cached.length === length && isAsciiAt(cached, heap, pointer)) {
-                        return cached
-                    }
-                }
                 const text = decodeAscii(heap, pointer, length)
-                // Kept on a repeated hash. A string seen once -- each value of a table being
+                // Kept on a repeated read. A string seen once -- each value of a table being
                 // copied, say -- is normally not stored, which spares the store and keeps such a
                 // stream from pushing out the names read in between.
-                if (this.candidateStringHashes[slot] === hash) {
+                if (this.candidateStringPointers[slot] === pointer) {
                     strings[slot] = text
-                    this.decodedStringHashes[slot] = hash
+                    this.decodedStringPointers[slot] = pointer
                 } else {
-                    this.candidateStringHashes[slot] = hash
+                    this.candidateStringPointers[slot] = pointer
                 }
                 return text
             }
@@ -767,7 +763,22 @@ export default class LuaModule extends LuaBindings {
             // Anything non-ASCII is re-encoded from the start, overwriting what was copied above.
         }
 
-        return textEncoder.encodeInto(value, heap.subarray(pointer, pointer + capacity)).written
+        return textEncoder.encodeInto(value, this.encodeTarget(heap, pointer, capacity)).written
+    }
+
+    /**
+     * Where TextEncoder writes a string bound for `pointer`. Nearly always that is the shared string
+     * buffer, whose view is kept: making one per string cost about as much as encoding into it. A
+     * heap that has grown since has a new buffer, which is what tells the kept view is stale.
+     */
+    private encodeTarget(heap: Uint8Array, pointer: number, capacity: number): Uint8Array {
+        if (pointer !== this.stringBuffer) {
+            return heap.subarray(pointer, pointer + capacity)
+        }
+        if (this.stringBufferView?.buffer !== heap.buffer) {
+            this.stringBufferView = heap.subarray(pointer, pointer + REUSABLE_STRING_BUFFER_LIMIT)
+        }
+        return this.stringBufferView
     }
 
     /**

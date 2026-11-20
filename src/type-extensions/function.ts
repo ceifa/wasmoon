@@ -82,11 +82,30 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
             try {
                 let result: unknown
                 if (typeof reference === 'function') {
-                    const args = []
-                    for (let i = 1; i <= argsQuantity; i++) {
-                        args.push(calledThread.getValue(i))
+                    const fn = reference as FunctionType
+                    // Spelled out for the few arguments nearly every call passes, metamethods
+                    // included: the array a spread needs was a fifth of what the call cost.
+                    switch (argsQuantity) {
+                        case 0:
+                            result = fn()
+                            break
+                        case 1:
+                            result = fn(calledThread.getValue(1))
+                            break
+                        case 2:
+                            result = fn(calledThread.getValue(1), calledThread.getValue(2))
+                            break
+                        case 3:
+                            result = fn(calledThread.getValue(1), calledThread.getValue(2), calledThread.getValue(3))
+                            break
+                        default: {
+                            const args = []
+                            for (let i = 1; i <= argsQuantity; i++) {
+                                args.push(calledThread.getValue(i))
+                            }
+                            result = fn(...args)
+                        }
                     }
-                    result = (reference as FunctionType)(...args)
                 } else if (reference instanceof BoundMethod) {
                     const { self } = reference
                     const args = []
@@ -229,8 +248,9 @@ export class FunctionTypeExtension extends TypeExtension<FunctionType> {
                     this.assertHasCallMetamethod(callThread, internalType)
                 }
 
-                for (const arg of args) {
-                    callThread.pushValue(arg)
+                // By index: a for..of over the rest arguments made the whole call measurably slower.
+                for (let i = 0; i < args.length; i++) {
+                    callThread.pushValue(args[i])
                 }
 
                 // Resumed rather than pcalled, which costs the same and reports a yield as a status

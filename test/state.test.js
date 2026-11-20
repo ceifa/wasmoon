@@ -425,6 +425,17 @@ describe('State', () => {
         expect(sum.mock.calls[0].arguments).to.be.eql([10, 20])
     })
 
+    it('a JS function should receive exactly the arguments Lua called it with', async () => {
+        using state = await getState()
+        state.set('collect', (...args) => `${args.length}:${args.join(',')}`)
+
+        // Few arguments are passed one way and many another, so both sides of that are covered.
+        for (let count = 0; count <= 6; count++) {
+            const args = Array.from({ length: count }, (_, index) => index + 1).join(',')
+            expect(await state.doString(`return collect(${args})`)).to.be.equal(`${count}:${args}`)
+        }
+    })
+
     it('get callable table as function should succeed', async () => {
         using state = await getState()
         await state.doString(`
@@ -1086,6 +1097,39 @@ describe('State', () => {
         }
     })
 
+    it('a short string should be read afresh once another one sits at its address', async () => {
+        using state = await getState()
+        const { module } = state
+        const pointer = module.emscripten._malloc(8)
+
+        try {
+            // Lua reuses the memory of a collected string, so one address holds different bytes
+            // over time: the same length, a prefix, and one that is not ASCII any more.
+            for (const text of ['first', 'first', 'first', 'other', 'other', 'other', 'oth', 'oth', 'oth', 'f\u00e9', 'f\u00e9']) {
+                const bytes = new TextEncoder().encode(text)
+                module.emscripten.HEAPU8.set(bytes, pointer)
+                expect(module.readString(pointer, bytes.length)).to.be.equal(text)
+            }
+        } finally {
+            module.emscripten._free(pointer)
+        }
+    })
+
+    it('a long string should still be pushed whole after the heap has grown', async () => {
+        using state = await getState()
+        const str = `${'x'.repeat(100)}\u00e9`
+        state.set('before', str)
+
+        // Growing replaces the buffer under every view of the heap made so far.
+        const buffer = state.module.emscripten.HEAPU8.buffer
+        state.doStringSync('big = string.rep("y", 8 * 1024 * 1024)')
+        expect(state.module.emscripten.HEAPU8.buffer).to.not.be.equal(buffer)
+
+        state.set('after', str)
+        expect(state.get('before')).to.be.equal(str)
+        expect(state.get('after')).to.be.equal(str)
+    })
+
     it('getStringBytes should expose bytes that are not valid UTF-8', async () => {
         using state = await getState()
         await state.doString('value = string.char(0, 255, 128, 65)')
@@ -1215,6 +1259,17 @@ describe('State', () => {
 
         expect(await state.doString('return 1.5')).to.be.equal(1.5)
         expect(await state.doString('return math.type(1.5)')).to.be.equal('float')
+    })
+
+    it('whole floats outside the JS safe range and non finite ones should be retrieved as number', async () => {
+        using state = await getState()
+
+        expect(await state.doString('return 2.0 ^ 53')).to.be.equal(2 ** 53)
+        expect(await state.doString('return math.huge')).to.be.equal(Infinity)
+        expect(await state.doString('return -math.huge')).to.be.equal(-Infinity)
+        expect(await state.doString('return 0 / 0')).to.be.NaN
+        // The same value as an integer is what cannot be a number.
+        expect(await state.doString('return math.tointeger(2.0 ^ 53)')).to.be.equal(2n ** 53n)
     })
 
     it('a bigint should be pushed as a 64 bit lua integer', async () => {
