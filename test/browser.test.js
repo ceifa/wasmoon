@@ -365,34 +365,67 @@ describe('Browser environment', () => {
             }
         })
 
-        it('falls back to the CDN for a page opened from file:', async function () {
-            this.timeout(60_000)
-            // Served locally rather than for real, to keep the suite offline and because the
-            // published wasm belongs to another version.
+        /**
+         * Opens a self contained page from `file:`, where the only wasm to be had is the CDN's, and
+         * runs `code` on it. The CDN is served locally, to keep the suite offline and because the
+         * published wasm belongs to another version.
+         */
+        async function loadFromCdn(cdnWasm, code) {
             const { htmlFile, cleanup } = await writeInlinedPage()
             const page = await context.newPage()
             const cdnRequests = []
 
             try {
-                await page.route('https://unpkg.com/**', async (route) => {
+                await page.route('https://**/glue.wasm', async (route) => {
                     cdnRequests.push(route.request().url())
-                    await route.fulfill({ contentType: 'application/wasm', body: await readFile(join(DIST_DIR, 'glue.wasm')) })
+                    await route.fulfill({
+                        contentType: 'application/wasm',
+                        headers: { 'access-control-allow-origin': '*' },
+                        body: cdnWasm,
+                    })
                 })
 
                 await page.goto(`file://${htmlFile}`)
                 await page.waitForFunction(() => window.__ready === true, null, { timeout: 15_000 })
-                const result = await page.evaluate(async () => {
-                    const lua = await window.__LuaRuntime.load()
-                    return await lua.createState().doString('return 3 * 3')
-                })
-
-                expect(result).to.be.equal(9)
-                expect(cdnRequests).to.have.lengthOf(1)
-                expect(cdnRequests[0]).to.match(/^https:\/\/unpkg\.com\/wasmoon@[^/]+\/dist\/glue\.wasm$/)
+                const result = await page.evaluate(async (c) => {
+                    try {
+                        return { value: await new Function('LuaRuntime', `return (async () => {${c}})()`)(window.__LuaRuntime) }
+                    } catch (err) {
+                        return { error: String(err), cause: String(err.cause) }
+                    }
+                }, code)
+                return { result, cdnRequests }
             } finally {
                 await page.close()
                 await cleanup()
             }
+        }
+
+        it('falls back to jsDelivr for a page opened from file:', async function () {
+            this.timeout(60_000)
+            const { result, cdnRequests } = await loadFromCdn(
+                await readFile(join(DIST_DIR, 'glue.wasm')),
+                'const lua = await LuaRuntime.load(); return await lua.createState().doString("return 3 * 3")',
+            )
+
+            expect(result).to.be.eql({ value: 9 })
+            expect(cdnRequests).to.have.lengthOf(1)
+            expect(cdnRequests[0]).to.match(/^https:\/\/cdn\.jsdelivr\.net\/npm\/wasmoon@[^/]+\/dist\/glue\.wasm$/)
+        })
+
+        it('refuses a CDN wasm that is not byte for byte the one this build ships', async function () {
+            this.timeout(60_000)
+            // Still a valid module, with an empty custom section appended, so only the integrity
+            // check can tell it apart: what a CDN serves for a version published from other sources.
+            const wasm = await readFile(join(DIST_DIR, 'glue.wasm'))
+            const { result, cdnRequests } = await loadFromCdn(
+                Buffer.concat([wasm, Buffer.from([0x00, 0x02, 0x01, 0x78])]),
+                'await LuaRuntime.load(); return 1',
+            )
+
+            expect(cdnRequests).to.have.lengthOf(1)
+            expect(result.error).to.match(/failed to load the Lua wasm module/)
+            expect(result.cause).to.match(/Failed to fetch/)
         })
     })
 })

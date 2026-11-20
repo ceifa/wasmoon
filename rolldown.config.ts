@@ -1,4 +1,5 @@
-import { copyFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { copyFile, readFile } from 'node:fs/promises'
 import { defineConfig } from 'rolldown'
 import pkg from './package.json' with { type: 'json' }
 
@@ -47,6 +48,25 @@ export default defineConfig({
             load(id) {
                 if (id === 'package-version') {
                     return `export default '${pkg.version}'`
+                }
+            },
+        },
+        {
+            // The hash the CDN fallback holds the wasm it fetches to, so that a version published
+            // from other sources fails the fetch instead of instantiating against the wrong glue.
+            name: 'wasm-integrity',
+            resolveId(source) {
+                if (source === 'wasm-integrity') {
+                    return 'wasm-integrity'
+                }
+            },
+            async load(id) {
+                if (id === 'wasm-integrity') {
+                    this.addWatchFile('build/glue.wasm')
+                    const digest = createHash('sha256')
+                        .update(await readFile('build/glue.wasm'))
+                        .digest('base64')
+                    return `export default 'sha256-${digest}'`
                 }
             },
         },
