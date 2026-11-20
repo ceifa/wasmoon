@@ -17,7 +17,8 @@ fi
 RUNTIME_METHODS="'addFunction', 'removeFunction', 'ENV', 'getValue', 'setValue', 'lengthBytesUTF8', \
     'stringToUTF8', 'stringToNewUTF8', 'stringToUTF8OnStack', 'stackSave', 'stackRestore', \
     'UTF8ToString', 'HEAPU8', 'HEAPU32'"
-INCOMING_API="'locateFile', 'preRun', 'print', 'printErr'"
+# The wasm is never fetched by the glue: LuaModule compiles it and hands it over through instantiateWasm.
+INCOMING_API="'instantiateWasm', 'preRun', 'print', 'printErr'"
 
 # Everything that is not about the filesystem, shared by all three glues below so they can share
 # one `glue.wasm`.

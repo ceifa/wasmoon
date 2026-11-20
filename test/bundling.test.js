@@ -65,15 +65,15 @@ describe('Bundling', () => {
     })
 
     it('every glue is a chunk of its own, so a load only downloads the one it uses', async () => {
-        // Emscripten resolves the wasm next to the glue, which is how a glue is told apart.
-        const resolvesWasm = /new URL\(\s*['"`]glue\.wasm['"`]/
+        // Emscripten's abort message survives minification, which is how a glue is told apart.
+        const glueCode = /Aborted\(/
         const glues = ['glue-memory.js', 'glue-host.js', 'glue-none.js']
         const index = await readFile(join(DIST_DIR, 'index.js'), 'utf8')
 
-        expect(index).to.not.match(resolvesWasm)
+        expect(index).to.not.match(glueCode)
         for (const glue of glues) {
             expect(index).to.include(`./${glue}`)
-            expect(await readFile(join(DIST_DIR, glue), 'utf8')).to.match(resolvesWasm)
+            expect(await readFile(join(DIST_DIR, glue), 'utf8')).to.match(glueCode)
         }
     })
 

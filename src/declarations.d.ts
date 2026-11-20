@@ -8,7 +8,8 @@ declare module '*.wasm' {
 // (see INCOMING_MODULE_JS_API in utils/build-wasm.sh).
 declare module '*/glue.js' {
     const initWasmModule: (
-        moduleArg?: Partial<Pick<EmscriptenModule, 'locateFile' | 'print' | 'printErr'>> & {
+        moduleArg?: Partial<Pick<EmscriptenModule, 'print' | 'printErr'>> & {
+            instantiateWasm: (imports: WebAssembly.Imports, receive: (instance: WebAssembly.Instance) => void) => void
             preRun?: (module: import('./module').LuaEmscriptenModule) => void
             // Read by the glue without a filesystem only; see utils/no-filesystem.js.
             stdin?: (() => number | null) | null

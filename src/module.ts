@@ -198,6 +198,67 @@ function nodeBuiltin<T>(name: string): T | null {
     return (globalThis.process?.getBuiltinModule?.(name) as T | undefined) ?? null
 }
 
+// Compiled once per URL and shared by every load from it, so another runtime skips both the download
+// and the compile. A failure leaves the cache, so a later load can try again.
+const compiledWasm = new Map<string, Promise<WebAssembly.Module>>()
+
+function compileWasm(url: string, isNode: boolean): Promise<WebAssembly.Module> {
+    let compiled = compiledWasm.get(url)
+    if (!compiled) {
+        compiled = fetchAndCompileWasm(url, isNode)
+        compiledWasm.set(url, compiled)
+        compiled.catch(() => compiledWasm.delete(url))
+    }
+    return compiled
+}
+
+async function fetchAndCompileWasm(url: string, isNode: boolean): Promise<WebAssembly.Module> {
+    // Node's fetch takes no file: URL, and a wasmFile there may be a plain path too.
+    if (isNode && !/^(https?|data|blob):/.test(url)) {
+        const { readFile } = nodeBuiltin<typeof import('node:fs/promises')>('node:fs/promises')!
+        return await WebAssembly.compile(await readFile(url.startsWith('file:') ? new URL(url) : url))
+    }
+
+    const response = await fetch(url)
+    if (!response.ok) {
+        throw new Error(`fetching ${url} failed with status ${response.status}`)
+    }
+    // Streaming compiles while the bytes are still arriving, but refuses a response that was not
+    // served as application/wasm.
+    if (response.headers.get('content-type')?.split(';')[0]?.trim() === 'application/wasm') {
+        return await WebAssembly.compileStreaming(response)
+    }
+    return await WebAssembly.compile(await response.arrayBuffer())
+}
+
+/** The wasm next to the bundle, or the published copy on unpkg when a browser cannot reach that. */
+async function compileDefaultWasm(isNode: boolean, warn: LuaWarnHandler): Promise<WebAssembly.Module> {
+    try {
+        // Written in the shape bundlers look for, so they emit or inline the asset.
+        return await compileWasm(new URL('glue.wasm', import.meta.url).href, isNode)
+    } catch (err) {
+        // A browser can recover: a page opened from file: cannot fetch a sibling at all, and a
+        // bundler that neither emits nor inlines the asset leaves nothing there either. In Node it
+        // is just a broken install.
+        if (isNode) {
+            throw err
+        }
+
+        // Pinned to this version, so it only covers a published release.
+        const remoteWasmFile = `https://unpkg.com/wasmoon@${version}/dist/glue.wasm`
+        warn(`could not load glue.wasm from next to the bundle, falling back to ${remoteWasmFile}`, err)
+        try {
+            return await compileWasm(remoteWasmFile, isNode)
+        } catch (remoteErr) {
+            throw new Error(
+                `failed to load the Lua wasm module, both from next to the bundle and from ${remoteWasmFile}. ` +
+                    `The fallback only covers published versions of wasmoon, so pass wasmFile to point at your own copy.`,
+                { cause: remoteErr },
+            )
+        }
+    }
+}
+
 /**
  * Nothing here is left to fail later: an unreadable host path, or a mount point Emscripten would
  * put somewhere unexpected, is an error at once rather than a directory that silently turns up empty.
@@ -329,15 +390,22 @@ export default class LuaModule extends LuaBindings {
             mounts.push(mount)
         }
 
-        // Emscripten reports load failures itself, which is noise while one can still be recovered
-        // from below, so they are held until the outcome is known. Null once handed over.
-        let buffered: string[] | null = []
-        const printErr = (line: string): void => {
-            if (buffered) {
-                buffered.push(line)
-            } else {
-                warn(line)
-            }
+        // The wasm is fetched and compiled here rather than by the glue, so that it starts at once
+        // instead of after the glue chunk has arrived: the two downloads overlap, and the compile
+        // streams along with the wasm one.
+        const wasm = opts.wasmFile === undefined ? compileDefaultWasm(isNode, warn) : compileWasm(opts.wasmFile, isNode)
+
+        // Three glues over the one wasm, differing only in their filesystem (see
+        // utils/build-wasm.sh). Each is a chunk of its own, imported on demand, so a load only
+        // downloads the one it asked for -- and a browser bundle never loads the host one, which
+        // throws outside Node.
+        const glue =
+            fs === 'host' ? import('../build/host/glue.js') : fs === 'none' ? import('../build/none/glue.js') : import('../build/glue.js')
+
+        const [{ default: init }, wasmModule] = await Promise.all([glue, wasm])
+        if (typeof init !== 'function') {
+            // The `browser` field points bundlers at a stub, since the glue only runs under Node.
+            throw new Error(`fs: 'host' needs glue-host.js, which the bundle replaced with a stub because it targets the browser`)
         }
 
         // Without a filesystem there is no FS.init to hand stdio to, so that glue takes it directly,
@@ -347,7 +415,7 @@ export default class LuaModule extends LuaBindings {
                 ? {
                       stdin: createInputReader(opts.stdin),
                       stdout: createOutputWriter(opts.stdout ?? ((line) => console.log(line))),
-                      stderr: createOutputWriter(opts.stderr ?? printErr),
+                      stderr: createOutputWriter(opts.stderr ?? warn),
                   }
                 : {}
         const preRun = createPreRun({
@@ -356,71 +424,24 @@ export default class LuaModule extends LuaBindings {
             ...(fs === 'none' ? {} : { stdin: opts.stdin, stdout: opts.stdout, stderr: opts.stderr }),
         })
 
-        // Three glues over the one wasm, differing only in their filesystem (see
-        // utils/build-wasm.sh). Each is a chunk of its own, imported on demand, so a load only
-        // downloads the one it asked for -- and a browser bundle never loads the host one, which
-        // throws outside Node.
-        const init = (
-            fs === 'host'
-                ? await import('../build/host/glue.js')
-                : fs === 'none'
-                  ? await import('../build/none/glue.js')
-                  : await import('../build/glue.js')
-        ).default
-        if (typeof init !== 'function') {
-            // The `browser` field points bundlers at a stub, since the glue only runs under Node.
-            throw new Error(`fs: 'host' needs glue-host.js, which the bundle replaced with a stub because it targets the browser`)
-        }
-
-        const load = async (wasmFile?: string): Promise<LuaModule> => {
-            return new LuaModule(
-                await init({ ...(wasmFile === undefined ? {} : { locateFile: () => wasmFile }), preRun, printErr, ...stdio }),
-                opts.onWarn,
-                fs,
-                mounts,
-            )
-        }
-
-        try {
-            if (opts.wasmFile !== undefined) {
-                return await load(opts.wasmFile)
-            }
-
-            try {
-                // Left to emscripten, which resolves it with `new URL('glue.wasm', import.meta.url)`
-                // -- the shape bundlers look for to emit or inline the asset, and one a locateFile
-                // of our own would hide from them.
-                return await load()
-            } catch (err) {
-                // A browser can recover: a page opened from file: cannot fetch a sibling at all, and
-                // a bundler that neither emits nor inlines the asset leaves nothing there either. In
-                // Node it is just a broken install.
-                if (isNode) {
-                    throw err
-                }
-
-                // Pinned to this version, so it only covers a published release.
-                const remoteWasmFile = `https://unpkg.com/wasmoon@${version}/dist/glue.wasm`
-                warn(`could not load glue.wasm from next to the bundle, falling back to ${remoteWasmFile}`, err)
-                buffered = []
-
+        // Emscripten waits on instantiateWasm without a way to fail it, so a failed instantiation
+        // settles the load through this instead.
+        let instantiationFailed!: (error: unknown) => void
+        const failure = new Promise<never>((_, reject) => {
+            instantiationFailed = reject
+        })
+        const instantiateWasm = (imports: WebAssembly.Imports, receive: (instance: WebAssembly.Instance) => void): void => {
+            void (async () => {
                 try {
-                    return await load(remoteWasmFile)
-                } catch (remoteErr) {
-                    throw new Error(
-                        `failed to load the Lua wasm module, both from next to the bundle and from ${remoteWasmFile}. ` +
-                            `The fallback only covers published versions of wasmoon, so pass wasmFile to point at your own copy.`,
-                        { cause: remoteErr },
-                    )
+                    receive(await WebAssembly.instantiate(wasmModule, imports))
+                } catch (error) {
+                    instantiationFailed(error)
                 }
-            }
-        } finally {
-            // What is left belongs to the attempt that decided the outcome.
-            for (const line of buffered ?? []) {
-                warn(line)
-            }
-            buffered = null
+            })()
         }
+
+        const emscripten = await Promise.race([init({ instantiateWasm, preRun, printErr: (line) => warn(line), ...stdio }), failure])
+        return new LuaModule(emscripten, opts.onWarn, fs, mounts)
     }
 
     /** The handler passed to {@link LuaModule.initialize}, which states created on it inherit. */

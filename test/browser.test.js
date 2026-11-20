@@ -302,6 +302,48 @@ describe('Browser environment', () => {
             expectNoExternalRequests()
         })
 
+        it('fetches the wasm without waiting for the glue', async function () {
+            this.timeout(30_000)
+            await runInBrowser('await LuaRuntime.load(); return 1')
+
+            const wasm = requested.indexOf(`http://127.0.0.1:${port}/glue.wasm`)
+            const glue = requested.indexOf(`http://127.0.0.1:${port}/glue-memory.js`)
+            expect(wasm).to.be.at.least(0)
+            expect(glue).to.be.above(wasm)
+        })
+
+        it('compiles the wasm once for every runtime loaded from it', async function () {
+            this.timeout(30_000)
+            const result = await runInBrowser(`
+                const [first, second] = await Promise.all([LuaRuntime.load(), LuaRuntime.load()])
+                const third = await LuaRuntime.load()
+                return [first, second, third].map((lua) => lua.createState().doStringSync('return 1'))
+            `)
+
+            expect(result).to.be.deep.equal([1, 1, 1])
+            expect(requested.filter((url) => url.endsWith('/glue.wasm'))).to.have.lengthOf(1)
+        })
+
+        it('loads a wasm served without the wasm content type', async function () {
+            this.timeout(30_000)
+            const page = await openPage()
+
+            try {
+                await page.route('**/glue.wasm', async (route) => {
+                    await route.fulfill({ contentType: 'application/octet-stream', body: await readFile(join(DIST_DIR, 'glue.wasm')) })
+                })
+                const result = await page.evaluate(() =>
+                    window.__runTest('const lua = await LuaRuntime.load(); return lua.createState().doStringSync("return 5")'),
+                )
+
+                page.assertNoErrors()
+                expect(result).to.be.equal(5)
+                expectNoExternalRequests()
+            } finally {
+                await page.close()
+            }
+        })
+
         it('loads the wasm from the same origin inside a module worker', async function () {
             this.timeout(30_000)
             const page = await openPage()
