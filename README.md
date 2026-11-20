@@ -220,11 +220,6 @@ Building the wasm needs either [emscripten](https://emscripten.org/) or
 otherwise (always on Windows), so there is nothing to pick between. Drop the `:dev` for an optimized
 build.
 
-The Lua C API bindings in `src/bindings.gen.ts`, and the list of functions the wasm exports, are
-generated from the Lua headers by `utils/create-bindings.js`. `build:wasm` runs it, so after moving
-the `lua` submodule the bindings follow; anything a header cannot say (a function to leave out, a
-type to override) is listed at the top of that script.
-
 ## Edge Cases
 
 ### Null
