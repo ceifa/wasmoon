@@ -163,9 +163,9 @@ for (const fn of bound) {
     if (integerTwin) {
         assignments.push(`        this.${fn.name} = this.withIntegerArgument('${fn.name}'${fn.params.length === 2 ? ', true' : ''})`)
     } else if (signature.includes('s') && !override.raw) {
-        assignments.push(`        this.${fn.name} = this.wrapWithStringArguments(this.exported('${fn.name}'), '${signature}')`)
+        assignments.push(`        this.${fn.name} = withStrings('${fn.name}', '${signature}')`)
     } else {
-        assignments.push(`        this.${fn.name} = this.exported('${fn.name}')`)
+        assignments.push(`        this.${fn.name} = raw('${fn.name}')`)
     }
 }
 
@@ -190,6 +190,11 @@ ${declarations.join('\n')}
     // engine lay the bindings out as fixed fields of the instance, which every call reads one of.
     protected constructor(emscripten: LuaEmscriptenModule) {
         this.emscripten = emscripten
+
+        // Locals rather than the methods themselves, which nearly every line below would otherwise
+        // spell out in full: a minifier shortens a local and has to leave a method name alone.
+        const raw = (name: string): Binding => this.exported(name)
+        const withStrings = (name: string, signature: string): Binding => this.wrapWithStringArguments(raw(name), signature)
 
 ${assignments.join('\n')}
     }

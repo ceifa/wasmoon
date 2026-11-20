@@ -285,8 +285,8 @@ Both minified, and wasmoon counted as its JS plus `glue.wasm`:
 
 |             | wasmoon           | fengari |
 | ----------- | ----------------- | ------- |
-| **plain**   | 302kB (108 + 194) | 228kB   |
-| **gzipped** | 128kB (34 + 94)   | 74kB    |
+| **plain**   | 305kB (111 + 194) | 228kB   |
+| **gzipped** | 129kB (35 + 94)   | 74kB    |
 
 Almost all of wasmoon's weight is the wasm, which is a separate file: it is fetched in parallel
 with your JS rather than parsed as part of it, and it caches on its own across releases of your app.
