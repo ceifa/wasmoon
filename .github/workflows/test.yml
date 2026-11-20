@@ -25,6 +25,17 @@ jobs:
               with:
                   node-version: ${{ matrix.node-version }}
                   cache: npm
+            # The lua submodule follows release tags, never a commit in between them. Asked of the
+            # remote rather than the checkout, which fetches the submodule without its tags.
+            - name: Check the lua submodule is on a release tag
+              run: |
+                  commit=$(git -C lua rev-parse HEAD)
+                  tag=$(git ls-remote --tags https://github.com/lua/lua | awk -v c="$commit" '$1 == c { sub("refs/tags/", "", $2); sub(/\^\{\}$/, "", $2); print $2 }' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+                  if [ -z "$tag" ]; then
+                      echo "lua is at $commit, which is not a release tag of lua/lua" >&2
+                      exit 1
+                  fi
+                  echo "lua is at $tag"
             - run: npm ci
             - run: npm run lint:nofix
             - run: npm run build:wasm
