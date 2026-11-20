@@ -16,6 +16,9 @@ const execute = (command) => {
 }
 
 execute('git submodule update --init --recursive')
+// On the host rather than in the script below, which may run in a container: what it writes into
+// src/ would belong to that container's user.
+execute(`node "${resolve(rootdir, 'utils/create-bindings.js')}"`)
 
 if (isUnix) {
     let emccInstalled = false
