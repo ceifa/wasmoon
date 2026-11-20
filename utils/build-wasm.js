@@ -47,6 +47,9 @@ try {
 }
 
 const dockerVolume = `${rootdir}:/wasmoon`
-const command = `docker run --rm -v "${dockerVolume}" emscripten/emsdk /wasmoon/utils/build-wasm.sh ${args.join(' ')}`
+// Pinned to the version the workflows in .github/ install, so a local build makes the same glue CI
+// tests rather than whatever `latest` is today.
+const EMSDK_VERSION = '7.0.0'
+const command = `docker run --rm -v "${dockerVolume}" emscripten/emsdk:${EMSDK_VERSION} /wasmoon/utils/build-wasm.sh ${args.join(' ')}`
 
 execute(command)

@@ -16,7 +16,7 @@ jobs:
             - name: Setup EMSDK
               uses: emscripten-core/setup-emsdk@v16
               with:
-                  version: 6.0.4
+                  version: 7.0.0
                   actions-cache-folder: emsdk-cache
 
             - name: Use Node.js 26.x

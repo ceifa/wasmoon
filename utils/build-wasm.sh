@@ -22,6 +22,7 @@ COMMON=(
         'addFunction', \
         'removeFunction', \
         'FS', \
+        'NODEFS', \
         'PATH', \
         'ENV', \
         'getValue', \

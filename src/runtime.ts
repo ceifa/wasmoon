@@ -77,7 +77,13 @@ export default class LuaRuntime {
     }
 
     public exists(path: string): boolean {
-        return this.filesystem.analyzePath(path).exists
+        // Emscripten 7 dropped FS.analyzePath, which did this same lookup and caught its error.
+        try {
+            this.filesystem.lookupPath(path, { follow: true })
+            return true
+        } catch {
+            return false
+        }
     }
 
     /** Where relative paths resolve from, `/` unless something changed it or `fs` is `'host'`. */
