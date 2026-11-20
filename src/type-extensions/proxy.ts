@@ -65,7 +65,7 @@ class ProxyTypeExtension extends TypeExtension<any> {
                         return ret
                     },
                     self,
-                    null,
+                    undefined,
                 )
             },
             __eq: (self: any, other: any) => self === other,

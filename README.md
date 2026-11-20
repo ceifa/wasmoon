@@ -220,11 +220,49 @@ Building the wasm needs either [emscripten](https://emscripten.org/) or
 otherwise (always on Windows), so there is nothing to pick between. Drop the `:dev` for an optimized
 build.
 
+## Values
+
+### nil, undefined and null
+
+Lua's `nil` is JS's `undefined`, in both directions and everywhere: a global that is not set, a
+function that returned `nil` or nothing at all, a `nil` argument. A JS default parameter therefore
+applies to it:
+
+```js
+state.set('greet', (name = 'world') => `hello ${name}`)
+await state.doString('return greet(nil)') // "hello world"
+state.get('missing') // undefined
+```
+
+Lua has nothing for a JS `null` to be, so it becomes `nil` as well and reads back as `undefined`. To
+keep the two apart, inject the `null` sentinel (`inject: true`, or one that names `'null'`): a `null`
+is then marshalled as that userdata, and reads back as `null`. It works as expected except that, not
+being `nil`, it is truthy in Lua.
+
+### Several results
+
+Whatever runs Lua gives back the first result, or `undefined` when there was none. `returns: 'all'`
+asks for every one of them, as a `LuaMultiReturn`, which is an array:
+
+```js
+await state.doString('return 7 // 2, 7 % 2') // 3
+const [quotient, remainder] = await state.doString('return 7 // 2, 7 % 2', { returns: 'all' })
+
+const divmod = state.get('divmod')
+divmod(7, 2) // 3
+state.call(divmod, [7, 2], { returns: 'all' }) // [3, 1]
+await state.async(divmod, { returns: 'all' })(7, 2) // [3, 1]
+```
+
+`doString`, `doFile`, `doStringSync`, `doFileSync`, `state.call` and `state.async` all take it.
+`state.call(target, args, options)` is the synchronous counterpart of `state.async`: it calls a Lua
+function, or a global one by its name, with a place for the options a direct call has none for.
+Only the stack level `thread.run` and `thread.runSync` differ, which give back every value left on
+the stack.
+
+In the other direction, a JS function returns several values to Lua with `LuaMultiReturn.of(a, b)`.
+
 ## Edge Cases
-
-### Null
-
-`null` is injected as userdata type if `inject` is `true` or names `'null'`. This works as expected except that it will evaluate to `true` in Lua.
 
 ### Promises
 
@@ -314,9 +352,9 @@ process. Pass `onAsyncError` when creating the state to receive those errors ins
 const state = lua.createState({ inject: true, onAsyncError: (error) => console.error(error) })
 ```
 
-`inject: true` defines `Promise`, `async`, `Error` and `null`. That last one is a sentinel a JS
-`null` is marshalled as, and it is truthy in Lua; to leave it out, name the ones you want:
-`inject: ['Promise', 'async']`.
+`inject: true` defines `Promise`, `async`, `Error` and `null`. That last one is
+[the sentinel](#nil-undefined-and-null) a JS `null` is marshalled as, and it is truthy in Lua; to
+leave it out, name the ones you want: `inject: ['Promise', 'async']`.
 
 #### Interrupting a parked run
 

@@ -1,5 +1,6 @@
 import LuaGarbageCollector from './gc'
 import type LuaModule from './module'
+import type MultiReturn from './multireturn'
 import Thread from './thread'
 import type LuaTypeExtension from './type-extension'
 import createErrorType from './type-extensions/error'
@@ -13,10 +14,11 @@ import {
     type CreateStateOptions,
     LUA_REGISTRYINDEX,
     type LuaAddress,
+    type LuaAllReturns,
+    type LuaCallOptions,
     type LuaDoOptions,
     type LuaInjectName,
     type LuaMemoryOptions,
-    type LuaRunOptions,
     LuaType,
     resolveLibraryMask,
 } from './types'
@@ -121,6 +123,7 @@ export default class LuaState extends Thread {
 
     private readonly allocatorFunctionPointer: number | undefined
     private readonly defaultMaxInstructions: number | undefined
+    private readonly functionTimeout: number | undefined
     private readonly functions: FunctionTypeExtension
 
     public constructor(cmodule: LuaModule, options: CreateStateOptions = {}) {
@@ -171,6 +174,7 @@ export default class LuaState extends Thread {
         }
 
         this.defaultMaxInstructions = limits?.maxInstructions
+        this.functionTimeout = limits?.functionTimeout
 
         if (injects('async')) {
             this.functions.injectAsync()
@@ -179,18 +183,23 @@ export default class LuaState extends Thread {
 
     /**
      * Executes Lua code from a string asynchronously.
-     * @returns A Promise that resolves to the result returned by the Lua script execution. Nothing
-     * checks it against `T`, which only saves the caller a cast.
+     * @returns A Promise that resolves to the first result the script returned, or to all of them
+     * as a `LuaMultiReturn` with `returns: 'all'`. Nothing checks it against `T`, which only saves
+     * the caller a cast.
      */
-    public doString<T = any>(script: string, options?: LuaDoOptions): Promise<T> {
+    public doString<T = any>(script: string, options: LuaAllReturns<LuaDoOptions>): Promise<MultiReturn<T>>
+    public doString<T = any>(script: string, options?: LuaDoOptions): Promise<T>
+    public doString(script: string, options?: LuaDoOptions): Promise<unknown> {
         return this.callByteCode((thread) => thread.loadString(script, options), this.runOptions(options))
     }
 
     /**
      * Executes Lua code from a file asynchronously.
-     * @returns A Promise that resolves to the result returned by the Lua script execution.
+     * @returns A Promise that resolves like {@link doString}'s.
      */
-    public doFile<T = any>(filename: string, options?: LuaDoOptions): Promise<T> {
+    public doFile<T = any>(filename: string, options: LuaAllReturns<LuaDoOptions>): Promise<MultiReturn<T>>
+    public doFile<T = any>(filename: string, options?: LuaDoOptions): Promise<T>
+    public doFile(filename: string, options?: LuaDoOptions): Promise<unknown> {
         return this.callByteCode((thread) => thread.loadFile(filename, options), this.runOptions(options))
     }
 
@@ -198,7 +207,9 @@ export default class LuaState extends Thread {
      * Executes Lua code from a string synchronously. Nothing can suspend a synchronous run, so
      * `:await()` and a top level `coroutine.yield` are errors here.
      */
-    public doStringSync<T = any>(script: string, options?: LuaDoOptions): T {
+    public doStringSync<T = any>(script: string, options: LuaAllReturns<LuaDoOptions>): MultiReturn<T>
+    public doStringSync<T = any>(script: string, options?: LuaDoOptions): T
+    public doStringSync(script: string, options?: LuaDoOptions): unknown {
         return this.callByteCodeSync((thread) => thread.loadString(script, options), this.runOptions(options))
     }
 
@@ -206,15 +217,70 @@ export default class LuaState extends Thread {
      * Executes Lua code from a file synchronously. Nothing can suspend a synchronous run, so
      * `:await()` and a top level `coroutine.yield` are errors here.
      */
-    public doFileSync<T = any>(filename: string, options?: LuaDoOptions): T {
+    public doFileSync<T = any>(filename: string, options: LuaAllReturns<LuaDoOptions>): MultiReturn<T>
+    public doFileSync<T = any>(filename: string, options?: LuaDoOptions): T
+    public doFileSync(filename: string, options?: LuaDoOptions): unknown {
         return this.callByteCodeSync((thread) => thread.loadFile(filename, options), this.runOptions(options))
+    }
+
+    /**
+     * Calls a Lua function synchronously, with a place for options: a global by its name, or a
+     * function obtained from this state. It is to {@link async} what `doStringSync` is to
+     * `doString`.
+     *
+     * ```js
+     * state.call('greet', ['bob'])
+     * const [quotient, remainder] = state.call(divmod, [7, 2], { returns: 'all' })
+     * state.call(handler, [event], { timeout: 50 })
+     * ```
+     *
+     * Each call is a run like a `doStringSync`, under the same limits, with `limits.functionTimeout`
+     * on top unless `options.timeout` replaces it. Nothing can suspend it, so `:await()` and
+     * `coroutine.yield` are errors here.
+     */
+    public call<T = any>(
+        target: string | ((...args: any[]) => any),
+        args: readonly unknown[],
+        options: LuaAllReturns<LuaCallOptions>,
+    ): MultiReturn<T>
+    public call<T = any>(target: string | ((...args: any[]) => any), args?: readonly unknown[], options?: LuaCallOptions): T
+    public call(target: string | ((...args: any[]) => any), args: readonly unknown[] = [], options?: LuaCallOptions): unknown {
+        this.assertNotClosed()
+        if (!Array.isArray(args)) {
+            throw new TypeError('call takes the arguments as an array: call(target, [first, second])')
+        }
+
+        // On the state's own thread, as the synchronous do* are, which is what puts the call under
+        // the limits set on the state. Whatever it leaves there is rewound.
+        const startStackTop = this.getTop()
+        try {
+            if (typeof target !== 'string') {
+                this.functions.pushLuaFunction(this, target)
+            } else {
+                const type = this.module.lua_getglobal(this.address, target)
+                if (type !== LuaType.Function) {
+                    throw new TypeError(`cannot call '${target}': expected a function, got ${LuaType[type]}`)
+                }
+            }
+            for (const arg of args) {
+                this.pushValue(arg)
+            }
+
+            const timeout = options?.timeout ?? this.functionTimeout
+            const values = this.runSync(args.length, this.runOptions(timeout === undefined ? options : { ...options, timeout }))
+            return options?.returns === 'all' ? values : values[0]
+        } finally {
+            if (!this.isClosed()) {
+                this.setTop(startStackTop)
+            }
+        }
     }
 
     /**
      * The asynchronous counterpart of a Lua function obtained from this state, as `async function`
      * is to `function`. Called directly a Lua function runs synchronously, and an `:await()` in it
      * is an error; what this returns starts it as a run of its own instead, and gives back a
-     * promise of its first result.
+     * promise of its first result, or of all of them with `returns: 'all'`.
      *
      * ```js
      * emitter.on('request', state.async(handler))
@@ -224,8 +290,10 @@ export default class LuaState extends Thread {
      * Each call is a run like a `doString`, under the same limits, with `limits.functionTimeout`
      * on top unless `options.timeout` replaces it.
      */
-    public async<T = any>(fn: (...args: any[]) => any, options?: LuaRunOptions): (...args: any[]) => Promise<T> {
-        return this.functions.async(fn, options) as (...args: any[]) => Promise<T>
+    public async<T = any>(fn: (...args: any[]) => any, options: LuaAllReturns<LuaCallOptions>): (...args: any[]) => Promise<MultiReturn<T>>
+    public async<T = any>(fn: (...args: any[]) => any, options?: LuaCallOptions): (...args: any[]) => Promise<T>
+    public async(fn: (...args: any[]) => any, options?: LuaCallOptions): (...args: any[]) => Promise<unknown> {
+        return this.functions.async(fn, options)
     }
 
     /** Whether `value` is a Lua function obtained from this state, the kind {@link async} takes. */
@@ -250,7 +318,7 @@ export default class LuaState extends Thread {
         this.pop(1)
     }
 
-    /** Retrieves the value of a global variable. */
+    /** Retrieves the value of a global variable, which is undefined for one that is not set. */
     public get<T = any>(name: string): T {
         // Without this a read from a closed state returns whatever the freed memory now holds,
         // which is the one failure mode with nothing to notice it by.
@@ -313,14 +381,14 @@ export default class LuaState extends Thread {
     }
 
     /** Folds the state wide budget in, so run() does the save and restore in one place. */
-    private runOptions(options?: LuaDoOptions): LuaRunOptions | undefined {
+    private runOptions(options?: LuaDoOptions): LuaDoOptions | undefined {
         if (this.defaultMaxInstructions === undefined) {
             return options
         }
         return { maxInstructions: this.defaultMaxInstructions, ...options }
     }
 
-    private callByteCodeSync(loader: (thread: Thread) => void, options?: LuaRunOptions): any {
+    private callByteCodeSync(loader: (thread: Thread) => void, options?: LuaDoOptions): unknown {
         // Ahead of the stack bookkeeping below rather than left to the loader, so that a closed
         // state is refused before anything reads or rewinds the freed one.
         this.assertNotClosed()
@@ -330,7 +398,8 @@ export default class LuaState extends Thread {
         const startStackTop = this.getTop()
         try {
             loader(this)
-            return this.runSync(0, options)[0]
+            const values = this.runSync(0, options)
+            return options?.returns === 'all' ? values : values[0]
         } finally {
             // Closing runs the state's own teardown, which leaves nothing here to rewind.
             if (!this.isClosed()) {
@@ -340,7 +409,7 @@ export default class LuaState extends Thread {
     }
 
     // WARNING: It will not wait for open handles and can potentially cause bugs if JS code tries to reference Lua after executed
-    private async callByteCode(loader: (thread: Thread) => void, options?: LuaRunOptions): Promise<any> {
+    private async callByteCode(loader: (thread: Thread) => void, options?: LuaDoOptions): Promise<unknown> {
         this.assertNotClosed()
 
         // Anchored so the run doesn't pile threads up on the global stack.
@@ -351,7 +420,8 @@ export default class LuaState extends Thread {
             // so going through getLimits first would copy the same configuration twice.
             thread.setLimits(this.limits)
             loader(thread)
-            return (await thread.run(0, options))[0]
+            const values = await thread.run(0, options)
+            return options?.returns === 'all' ? values : values[0]
         } finally {
             thread.close()
             // The await above gives anything else a chance to close the state, and lua_close has

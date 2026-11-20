@@ -74,12 +74,14 @@ export interface LuaMemoryOptions {
 export interface LuaLimitOptions {
     /**
      * Milliseconds a Lua function called from JS may run before being interrupted, whether it is
-     * called directly or as a run of its own through `state.async` or Lua's `async`.
+     * called directly, through `state.call`, or as a run of its own through `state.async` or Lua's
+     * `async`.
      */
     functionTimeout?: number | undefined
     /**
      * Instructions a single run may execute before being interrupted. A run is a `doString` or
-     * `doFile`, or a function started through `state.async`, Lua's `async` or a promise reaction.
+     * `doFile`, a `state.call`, or a function started through `state.async`, Lua's `async` or a
+     * promise reaction.
      */
     maxInstructions?: number | undefined
 }
@@ -125,7 +127,9 @@ export interface CreateStateOptions {
      * - `async`: `async(fn)` returns a function that runs `fn` as a run of its own and gives back
      *   a promise of its first result, so that it can `:await()` whoever calls it.
      * - `Error`: `Error.create`, where the error bridge is registered (see `errors`).
-     * - `null`: a sentinel that a JS `null` is marshalled as instead of `nil`. It is truthy in Lua.
+     * - `null`: a sentinel that a JS `null` is marshalled as instead of `nil`, and that reads back
+     *   as `null`. It is truthy in Lua. Without it `null` becomes `nil`, which reads back as
+     *   `undefined` like every other `nil`.
      */
     inject?: LuaInjectName[] | boolean | undefined
     /**
@@ -176,7 +180,21 @@ export interface LuaLoadOptions {
     name?: string | undefined
 }
 
-export type LuaDoOptions = LuaRunOptions & LuaLoadOptions
+export interface LuaReturnOptions {
+    /**
+     * Which of the results Lua returned to give back. `'first'`, the default, gives the first one,
+     * or undefined when there was none; `'all'` gives every one of them as a `LuaMultiReturn`.
+     */
+    returns?: 'first' | 'all' | undefined
+}
+
+/** Options that ask for every result, which is what makes a call give back a `LuaMultiReturn`. */
+export type LuaAllReturns<Options> = Options & { returns: 'all' }
+
+/** What calling a Lua function takes: `state.call` and `state.async`. */
+export type LuaCallOptions = LuaRunOptions & LuaReturnOptions
+
+export type LuaDoOptions = LuaCallOptions & LuaLoadOptions
 
 /**
  * Deadline and budget enforced by the debug hook while a thread runs. Every field accepts an

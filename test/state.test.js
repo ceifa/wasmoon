@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events'
-import { LuaReturn, LuaThread, LuaType, decorate } from '../dist/index.js'
+import { LuaInstructionLimitError, LuaMultiReturn, LuaReturn, LuaThread, LuaTimeoutError, LuaType, decorate } from '../dist/index.js'
 import { expect } from 'chai'
 import { getState, getLua } from './utils.js'
 import { setTimeout } from 'node:timers/promises'
@@ -347,10 +347,73 @@ describe('State', () => {
             end
         `)
 
-        const returns = state.call('f', 10, 25)
+        expect(state.call('f', [10, 25])).to.be.equal(1)
+
+        const returns = state.call('f', [10, 25], { returns: 'all' })
+        expect(returns).to.be.instanceOf(LuaMultiReturn)
         expect(returns).to.have.length(6)
         expect(returns.slice(0, -1)).to.eql([1, 10, 25, 'Hello World', {}])
         expect(returns.at(-1)).to.be.a('function')
+    })
+
+    it('call a lua function with options should succeed', async () => {
+        using state = await getState()
+        const divmod = state.doStringSync('return function(a, b) return a // b, a % b end')
+
+        expect(state.call(divmod, [7, 2])).to.be.equal(3)
+        expect(state.call(divmod, [7, 2], { returns: 'all' })).to.be.eql([3, 1])
+
+        const spin = state.doStringSync('return function() while true do end end')
+        expect(() => state.call(spin, [], { timeout: 5 })).to.throw(LuaTimeoutError)
+        expect(() => state.call(spin, [], { maxInstructions: 1000 })).to.throw(LuaInstructionLimitError)
+        // A limit set for one call is gone by the next.
+        expect(state.call(divmod, [9, 2])).to.be.equal(4)
+    })
+
+    it('call should run under limits.functionTimeout like a direct call', async () => {
+        using state = await getState({ limits: { functionTimeout: 5 } })
+        state.doStringSync('function spin() while true do end end')
+
+        expect(() => state.call('spin')).to.throw(LuaTimeoutError)
+        expect(() => state.get('spin')()).to.throw(LuaTimeoutError)
+    })
+
+    it('call should run under the limits set on the state', async () => {
+        using state = await getState({ limits: { maxInstructions: 1000 } })
+        const spin = state.doStringSync('function spin() while true do end end return spin')
+
+        expect(() => state.call('spin')).to.throw(LuaInstructionLimitError)
+        expect(() => state.call(spin)).to.throw(LuaInstructionLimitError)
+
+        using timed = await getState()
+        timed.doStringSync('function spin() while true do end end')
+        timed.setDeadline(Date.now() + 5)
+        expect(() => timed.call('spin')).to.throw(LuaTimeoutError)
+    })
+
+    it('call should refuse anything but an array of arguments and a lua function', async () => {
+        using state = await getState()
+        using other = await getState()
+        state.doStringSync('function f(...) return ... end')
+
+        expect(() => state.call('f', 10, 25)).to.throw('call takes the arguments as an array')
+        expect(() => state.call('missing')).to.throw(`cannot call 'missing': expected a function, got Nil`)
+        expect(() => state.call(() => 1)).to.throw('expected a Lua function obtained from this state')
+        expect(() => state.call(other.doStringSync('return function() end'))).to.throw('expected a Lua function obtained from this state')
+    })
+
+    it('call should not grow the lua stack', async () => {
+        using state = await getState()
+        state.doStringSync('function f(...) return ... end')
+        const top = state.getTop()
+
+        for (let i = 0; i < 100; i++) {
+            state.call('f', [1, 2, 3])
+            state.call('f', [1, 2, 3], { returns: 'all' })
+        }
+        expect(() => state.call('missing')).to.throw()
+
+        expect(state.getTop()).to.be.equal(top)
     })
 
     it('call a global function that raises should throw instead of panicking', async () => {
@@ -961,12 +1024,13 @@ describe('State', () => {
 
         const a = await state.doString(`return 1`)
         const b = state.doStringSync(`return 5`)
-        const values = state.call('hello', 'joao')
+        const value = state.call('hello', ['joao'])
+        const values = state.call('hello', ['joao'], { returns: 'all' })
 
         expect(a).to.be.equal(1)
         expect(b).to.be.equal(5)
-        expect(values).to.have.length(1)
-        expect(values[0]).to.be.equal('Hello joao!')
+        expect(value).to.be.equal('Hello joao!')
+        expect(values).to.be.eql(['Hello joao!'])
     })
 
     it('create a large string variable should succeed', async () => {
@@ -1265,7 +1329,20 @@ describe('State', () => {
       `)
         state.pushValue(null)
         const res = await state.run(1)
-        expect(res).to.deep.equal([null, null, 'nil'])
+        expect(res).to.deep.equal([undefined, undefined, 'nil'])
+    })
+
+    it('null and nil should stay apart when null is injected', async () => {
+        using state = await getState()
+        const seen = []
+        state.set('record', (...args) => void seen.push(args))
+
+        await state.doString('record(nil, null, 1)')
+        expect(seen).to.be.eql([[undefined, null, 1]])
+        expect(await state.doString('return nil, null', { returns: 'all' })).to.be.eql([undefined, null])
+        // And back again: undefined is nil, null is the sentinel.
+        state.set('echo', (...args) => LuaMultiReturn.of(...args))
+        expect(await state.doString('return type(echo(nil)), type(echo(null))', { returns: 'all' })).to.be.eql(['nil', 'userdata'])
     })
 
     it('reassigning the null global should not affect pushing null', async () => {
@@ -1363,6 +1440,71 @@ describe('State', () => {
         for (let i = 0; i < length; i++) {
             expect(results[i]).to.equal(i)
         }
+    })
+})
+
+describe('Value conventions', () => {
+    it('nil should read as undefined wherever it comes from', async () => {
+        using state = await getState({ inject: false })
+
+        expect(state.get('missing')).to.be.undefined
+        expect(state.doStringSync('return nil')).to.be.undefined
+        expect(await state.doString('return nil')).to.be.undefined
+        expect(state.doStringSync('return function() return nil end')()).to.be.undefined
+        expect(state.doStringSync('return function() end')()).to.be.undefined
+        expect(state.call('tostring', [1], { returns: 'all' })).to.be.eql(['1'])
+        expect(state.doStringSync('return { present = 1 }').absent).to.be.undefined
+    })
+
+    it('a nil argument should take the default of a JS parameter', async () => {
+        using state = await getState({ inject: false })
+        const seen = []
+        state.set('greet', (name = 'world', ...rest) => {
+            seen.push(rest)
+            return `hello ${name}`
+        })
+
+        expect(state.doStringSync('return greet()')).to.be.equal('hello world')
+        expect(state.doStringSync('return greet(nil)')).to.be.equal('hello world')
+        expect(state.doStringSync('return greet(nil, nil, 3)')).to.be.equal('hello world')
+        expect(seen).to.be.eql([[], [], [undefined, 3]])
+    })
+
+    it('a JS null and undefined should both be nil without the null sentinel', async () => {
+        using state = await getState({ inject: false })
+        state.set('values', () => LuaMultiReturn.of(null, undefined))
+
+        expect(
+            state.doStringSync('return select("#", values()), type((values())), type((select(2, values())))', { returns: 'all' }),
+        ).to.be.eql([2, 'nil', 'nil'])
+    })
+
+    for (const [name, run] of Object.entries({
+        doString: (state, options) => state.doString('return 1, nil, "three"', options),
+        doStringSync: (state, options) => state.doStringSync('return 1, nil, "three"', options),
+        doFile: (state, options) => state.doFile('/values.lua', options),
+        doFileSync: (state, options) => state.doFileSync('/values.lua', options),
+    })) {
+        it(`${name} should give the first result, and every one of them with returns all`, async () => {
+            const lua = await getLua()
+            lua.writeFile('/values.lua', 'return 1, nil, "three"')
+            using state = lua.createState()
+
+            expect(await run(state)).to.be.equal(1)
+            expect(await run(state, { returns: 'first' })).to.be.equal(1)
+
+            const values = await run(state, { returns: 'all' })
+            expect(values).to.be.instanceOf(LuaMultiReturn)
+            expect(values).to.be.eql([1, undefined, 'three'])
+        })
+    }
+
+    it('returns all should give an empty list for a script that returns nothing', async () => {
+        using state = await getState()
+
+        expect(await state.doString('', { returns: 'all' })).to.be.eql([])
+        expect(state.doStringSync('', { returns: 'all' })).to.be.eql([])
+        expect(await state.doString('')).to.be.undefined
     })
 })
 

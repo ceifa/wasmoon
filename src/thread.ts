@@ -384,22 +384,6 @@ export default class Thread {
         this.module.lua_pop(this.address, count)
     }
 
-    public call(name: string, ...args: any[]): MultiReturn {
-        this.assertNotClosed()
-        const type = this.module.lua_getglobal(this.address, name)
-        if (type !== LuaType.Function) {
-            throw new TypeError(`cannot call '${name}': expected a function, got ${LuaType[type]}`)
-        }
-
-        for (const arg of args) {
-            this.pushValue(arg)
-        }
-
-        const base = this.getTop() - args.length - 1 // The 1 is for the function to run
-        this.pcall(args.length)
-        return this.getStackValues(base)
-    }
-
     /** A synchronous call, which nothing can suspend: an `:await()` reached through it is an error. */
     private pcall(argCount: number): void {
         const module = this.module
@@ -548,10 +532,11 @@ export default class Thread {
         const type: LuaType = inputType ?? this.module.lua_type(this.address, index)
 
         switch (type) {
+            // nil is undefined, never null: a JS default parameter then applies to a nil argument,
+            // and an absent value reads the same whether Lua returned nil or nothing at all.
             case LuaType.None:
-                return undefined
             case LuaType.Nil:
-                return null
+                return undefined
             case LuaType.Number: {
                 const value = this.module.lua_tonumberx(this.address, index, null)
                 // Only outside the safe range can the integer subtype change the result, and

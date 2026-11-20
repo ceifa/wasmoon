@@ -90,8 +90,8 @@ describe('Standard libraries', () => {
         using state = lua.createState({ libs: false })
 
         // Without the base library there is no `type` either, so this reads the globals directly.
-        expect(state.get('print')).to.be.null
-        expect(state.get('tostring')).to.be.null
+        expect(state.get('print')).to.be.undefined
+        expect(state.get('tostring')).to.be.undefined
     })
 
     it('libs defaults to all of them', async () => {
@@ -170,7 +170,7 @@ describe('Disposal', () => {
             set: (state) => state.set('x', 1),
             doStringSync: (state) => state.doStringSync('return 1'),
             doFileSync: (state) => state.doFileSync('script.lua'),
-            call: (state) => state.call('print', 'hi'),
+            call: (state) => state.call('print', ['hi']),
             getTable: (state) => state.getTable('_G', () => undefined),
             loadString: (state) => state.loadString('return 1'),
             loadFile: (state) => state.loadFile('script.lua'),

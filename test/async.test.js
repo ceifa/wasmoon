@@ -254,6 +254,17 @@ describe('state.async', () => {
         expect(await state.doString('')).to.be.equal(undefined)
     })
 
+    it('resolves to every result with returns all', async () => {
+        using state = await getState()
+        state.set('later', later)
+        const fn = state.doStringSync('return function(a, b) return later(a):await() + b, nil, "kept" end')
+
+        const values = await state.async(fn, { returns: 'all' })(1, 2)
+        expect(values).to.be.instanceOf(LuaMultiReturn)
+        expect(values).to.be.eql([3, undefined, 'kept'])
+        expect(await state.async(state.doStringSync('return function() end'), { returns: 'all' })()).to.be.eql([])
+    })
+
     it('returns a function to hand to whatever takes a callback', async () => {
         using state = await getState()
         state.set('later', later)
@@ -494,7 +505,7 @@ describe('async', () => {
 
     it('is not there without inject, and does not need the standard libraries', async () => {
         using plain = await getState({ inject: false })
-        expect(plain.doStringSync('return async')).to.be.equal(null)
+        expect(plain.doStringSync('return async')).to.be.equal(undefined)
 
         using bare = await getState({ libs: false })
         bare.set('later', later)
