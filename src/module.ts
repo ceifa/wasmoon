@@ -6,8 +6,9 @@ import LuaBindings from './bindings.gen'
 import { canSuspend, limitError, type PendingSuspend, settleOrInterrupt, type SettleOutcome, yieldToEventLoop } from './async'
 import type Thread from './thread'
 import { defaultWarnHandler, LUA_REGISTRYINDEX, type LuaAddress, LuaReturn, LuaType, type LuaWarnHandler, PointerSize } from './types'
-// A rolldown plugin will resolve this to the current version on package.json
+// Rolldown plugins resolve these to the version on package.json and the hash of build/glue.wasm
 import version from 'package-version'
+import wasmIntegrity from 'wasm-integrity'
 
 export type EnvironmentVariables = Record<string, string | undefined>
 
@@ -69,7 +70,7 @@ export type EmscriptenFS = LuaEmscriptenModule['FS']
 
 export interface LuaModuleOptions {
     /**
-     * Where to load `glue.wasm` from. Defaults to next to this module, falling back to unpkg when
+     * Where to load `glue.wasm` from. Defaults to next to this module, falling back to jsDelivr when
      * there is nothing there to fetch (a page opened from `file:`, say).
      */
     wasmFile?: string | undefined
@@ -202,24 +203,24 @@ function nodeBuiltin<T>(name: string): T | null {
 // and the compile. A failure leaves the cache, so a later load can try again.
 const compiledWasm = new Map<string, Promise<WebAssembly.Module>>()
 
-function compileWasm(url: string, isNode: boolean): Promise<WebAssembly.Module> {
+function compileWasm(url: string, isNode: boolean, integrity = ''): Promise<WebAssembly.Module> {
     let compiled = compiledWasm.get(url)
     if (!compiled) {
-        compiled = fetchAndCompileWasm(url, isNode)
+        compiled = fetchAndCompileWasm(url, isNode, integrity)
         compiledWasm.set(url, compiled)
         compiled.catch(() => compiledWasm.delete(url))
     }
     return compiled
 }
 
-async function fetchAndCompileWasm(url: string, isNode: boolean): Promise<WebAssembly.Module> {
+async function fetchAndCompileWasm(url: string, isNode: boolean, integrity: string): Promise<WebAssembly.Module> {
     // Node's fetch takes no file: URL, and a wasmFile there may be a plain path too.
     if (isNode && !/^(https?|data|blob):/.test(url)) {
         const { readFile } = nodeBuiltin<typeof import('node:fs/promises')>('node:fs/promises')!
         return await WebAssembly.compile(await readFile(url.startsWith('file:') ? new URL(url) : url))
     }
 
-    const response = await fetch(url)
+    const response = await fetch(url, { integrity })
     if (!response.ok) {
         throw new Error(`fetching ${url} failed with status ${response.status}`)
     }
@@ -231,7 +232,7 @@ async function fetchAndCompileWasm(url: string, isNode: boolean): Promise<WebAss
     return await WebAssembly.compile(await response.arrayBuffer())
 }
 
-/** The wasm next to the bundle, or the published copy on unpkg when a browser cannot reach that. */
+/** The wasm next to the bundle, or the published copy on jsDelivr when a browser cannot reach that. */
 async function compileDefaultWasm(isNode: boolean, warn: LuaWarnHandler): Promise<WebAssembly.Module> {
     try {
         // Written in the shape bundlers look for, so they emit or inline the asset.
@@ -244,15 +245,16 @@ async function compileDefaultWasm(isNode: boolean, warn: LuaWarnHandler): Promis
             throw err
         }
 
-        // Pinned to this version, so it only covers a published release.
-        const remoteWasmFile = `https://unpkg.com/wasmoon@${version}/dist/glue.wasm`
+        // Pinned to this version and to this build's hash, so it only covers a published release.
+        const remoteWasmFile = `https://cdn.jsdelivr.net/npm/wasmoon@${version}/dist/glue.wasm`
         warn(`could not load glue.wasm from next to the bundle, falling back to ${remoteWasmFile}`, err)
         try {
-            return await compileWasm(remoteWasmFile, isNode)
+            return await compileWasm(remoteWasmFile, isNode, wasmIntegrity)
         } catch (remoteErr) {
             throw new Error(
                 `failed to load the Lua wasm module, both from next to the bundle and from ${remoteWasmFile}. ` +
-                    `The fallback only covers published versions of wasmoon, so pass wasmFile to point at your own copy.`,
+                    `The fallback only covers published builds of wasmoon, whose CDN copy matches this one byte for byte, ` +
+                    `so pass wasmFile to point at your own copy.`,
                 { cause: remoteErr },
             )
         }

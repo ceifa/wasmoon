@@ -309,8 +309,9 @@ means depends on your bundler:
 | esbuild | does not handle the asset, see below                               |
 | Rollup  | does not handle the asset, see below                               |
 
-esbuild and Rollup leave nothing beside the bundle to fetch, so wasmoon falls back to unpkg with a
-warning. That works, but it is a request to a third party pinned to wasmoon's version, so prefer
+esbuild and Rollup leave nothing beside the bundle to fetch, so wasmoon falls back to jsDelivr with a
+warning. That works, and the wasm it gets there is checked against the hash of the one your build
+ships, but it is still a request to a third party pinned to wasmoon's version, so prefer
 copying the wasm next to your output as part of the build, after which nothing else is needed:
 
 ```js
@@ -332,7 +333,7 @@ With Vite and webpack you want neither, since they already handle the asset. Ask
 ### A page opened from `file://`
 
 A page loaded over `file://` cannot fetch anything next to it, so the wasm has to come from
-somewhere else and wasmoon falls back to unpkg. To keep such a page self contained, inline the wasm
+somewhere else and wasmoon falls back to jsDelivr. To keep such a page self contained, inline the wasm
 and hand it over as a data URL:
 
 ```js
